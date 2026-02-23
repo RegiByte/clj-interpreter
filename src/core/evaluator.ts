@@ -190,6 +190,11 @@ export function evaluateList(list: CljList, env: Env): CljValue {
     throw new EvaluationError('Unexpected empty list', { list, env })
   }
   const first = list.value[0]
+
+  if (isSpecialForm(first)) {
+    return evaluateSpecialForm(first.name, list, env)
+  }
+
   if (isList(first)) {
     // if it's a list, we need to evaluate it first
     // if the list is a function, we will apply it to the arguments
@@ -210,10 +215,6 @@ export function evaluateList(list: CljList, env: Env): CljValue {
     )
   }
   const symbol = first.name
-
-  if (isSpecialForm(symbol)) {
-    return evaluateSpecialForm(symbol, list, env)
-  }
 
   // otherwise, it's a function call, we need to apply the function with the arguments
   // todo for now

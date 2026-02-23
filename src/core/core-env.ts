@@ -1,5 +1,6 @@
 import {
   isCollection,
+  isEqual,
   isFalsy,
   isList,
   isMap,
@@ -15,9 +16,11 @@ import {
   cljNativeFunction,
   cljNil,
   cljNumber,
+  cljString,
   cljVector,
 } from './factories'
 import { printString } from './printer'
+import { valueToString } from './transformations'
 import {
   valueKeywords,
   type CljList,
@@ -34,7 +37,9 @@ const nativeFunctions = {
       return cljNumber(0)
     }
     if (args.some((arg) => arg.kind !== 'number')) {
-      throw new Error('+ expects all arguments to be numbers')
+      throw new EvaluationError('+ expects all arguments to be numbers', {
+        args,
+      })
     }
     return args.reduce((acc, arg) => {
       return cljNumber((acc as CljNumber).value + (arg as CljNumber).value)
@@ -42,10 +47,12 @@ const nativeFunctions = {
   }),
   '-': cljNativeFunction('-', (...args: CljValue[]) => {
     if (args.length === 0) {
-      throw new Error('- expects at least one argument')
+      throw new EvaluationError('- expects at least one argument', { args })
     }
     if (args.some((arg) => arg.kind !== 'number')) {
-      throw new Error('- expects all arguments to be numbers')
+      throw new EvaluationError('- expects all arguments to be numbers', {
+        args,
+      })
     }
     return args.slice(1).reduce((acc, arg) => {
       return cljNumber((acc as CljNumber).value - (arg as CljNumber).value)
@@ -56,7 +63,9 @@ const nativeFunctions = {
       return cljNumber(1)
     }
     if (args.some((arg) => arg.kind !== 'number')) {
-      throw new Error('* expects all arguments to be numbers')
+      throw new EvaluationError('* expects all arguments to be numbers', {
+        args,
+      })
     }
     return args.slice(1).reduce((acc, arg) => {
       return cljNumber((acc as CljNumber).value * (arg as CljNumber).value)
@@ -64,12 +73,19 @@ const nativeFunctions = {
   }),
   '/': cljNativeFunction('/', (...args: CljValue[]) => {
     if (args.length === 0) {
-      throw new Error('/ expects at least one argument')
+      throw new EvaluationError('/ expects at least one argument', { args })
     }
     if (args.some((arg) => arg.kind !== 'number')) {
-      throw new Error('/ expects all arguments to be numbers')
+      throw new EvaluationError('/ expects all arguments to be numbers', {
+        args,
+      })
     }
     return args.slice(1).reduce((acc, arg) => {
+      if ((arg as CljNumber).value === 0) {
+        throw new EvaluationError('division by zero', {
+          args,
+        })
+      }
       return cljNumber((acc as CljNumber).value / (arg as CljNumber).value)
     }, args[0] as CljNumber)
   }),
@@ -132,8 +148,9 @@ const nativeFunctions = {
       case valueKeywords.map:
         return cljNumber((countable as CljMap).entries.length)
       default:
-        throw new Error(
-          `count expects a countable value, got ${printString(countable)}`
+        throw new EvaluationError(
+          `count expects a countable value, got ${printString(countable)}`,
+          { countable }
         )
     }
   }),
@@ -171,7 +188,7 @@ const nativeFunctions = {
       throw new EvaluationError('= expects at least two arguments', { args })
     }
     for (let i = 1; i < args.length; i++) {
-      if (printString(args[i]) !== printString(args[i - 1])) {
+      if (!isEqual(args[i], args[i - 1])) {
         return cljBoolean(false)
       }
     }
@@ -192,8 +209,9 @@ const nativeFunctions = {
         ? cljNil()
         : cljVector(collection.entries[0])
     }
-    throw new Error(
-      `first expects a collection, got ${printString(collection)}`
+    throw new EvaluationError(
+      `first expects a collection, got ${printString(collection)}`,
+      { collection }
     )
   }),
   rest: cljNativeFunction('rest', (collection: CljValue) => {
@@ -215,7 +233,10 @@ const nativeFunctions = {
       }
       return cljMap(collection.entries.slice(1))
     }
-    throw new Error(`rest expects a collection, got ${printString(collection)}`)
+    throw new EvaluationError(
+      `rest expects a collection, got ${printString(collection)}`,
+      { collection }
+    )
   }),
   conj: cljNativeFunction(
     'conj',
@@ -264,9 +285,7 @@ const nativeFunctions = {
             )
           }
           const key = pair.value[0]
-          const keyIdx = newEntries.findIndex(
-            (entry) => printString(entry[0]) === printString(key)
-          )
+          const keyIdx = newEntries.findIndex((entry) => isEqual(entry[0], key))
           if (keyIdx === -1) {
             newEntries.push([key, pair.value[1]])
           } else {
@@ -276,8 +295,9 @@ const nativeFunctions = {
         return cljMap([...newEntries])
       }
 
-      throw new Error(
-        `unhandled collection type, got ${printString(collection)}`
+      throw new EvaluationError(
+        `unhandled collection type, got ${printString(collection)}`,
+        { collection }
       )
     }
   ),
@@ -308,9 +328,12 @@ const nativeFunctions = {
         })
       }
       if (args.length % 2 !== 0) {
-        throw new EvaluationError('assoc expects an even number of binding arguments', {
-          args,
-        })
+        throw new EvaluationError(
+          'assoc expects an even number of binding arguments',
+          {
+            args,
+          }
+        )
       }
       if (isVector(collection)) {
         const newValues = [...collection.value]
@@ -338,8 +361,8 @@ const nativeFunctions = {
         for (let i = 0; i < args.length; i += 2) {
           const key = args[i]
           const value = args[i + 1]
-          const entryIdx = newEntries.findIndex(
-            (entry) => printString(entry[0]) === printString(key)
+          const entryIdx = newEntries.findIndex((entry) =>
+            isEqual(entry[0], key)
           )
           if (entryIdx === -1) {
             newEntries.push([key, value])
@@ -349,8 +372,9 @@ const nativeFunctions = {
         }
         return cljMap(newEntries)
       }
-      throw new Error(
-        `unhandled collection type, got ${printString(collection)}`
+      throw new EvaluationError(
+        `unhandled collection type, got ${printString(collection)}`,
+        { collection }
       )
     }
   ),
@@ -405,8 +429,8 @@ const nativeFunctions = {
         const newEntries: [CljValue, CljValue][] = [...collection.entries]
         for (let i = 0; i < args.length; i += 1) {
           const key = args[i]
-          const entryIdx = newEntries.findIndex(
-            (entry) => printString(entry[0]) === printString(key)
+          const entryIdx = newEntries.findIndex((entry) =>
+            isEqual(entry[0], key)
           )
           if (entryIdx === -1) {
             return collection // not found, unchanged
@@ -415,17 +439,65 @@ const nativeFunctions = {
         }
         return cljMap(newEntries)
       }
-      throw new Error(
-        `unhandled collection type, got ${printString(collection)}`
+      throw new EvaluationError(
+        `unhandled collection type, got ${printString(collection)}`,
+        { collection }
       )
     }
   ),
+  get: cljNativeFunction(
+    'get',
+    (target: CljValue, key: CljValue, notFound?: CljValue) => {
+      const defaultValue = notFound ?? cljNil()
+
+      switch (target.kind) {
+        case valueKeywords.map: {
+          const entries = target.entries
+          for (const [k, v] of entries) {
+            if (isEqual(k, key)) {
+              return v
+            }
+          }
+          return defaultValue
+        }
+        case valueKeywords.vector: {
+          const values = target.value
+          if (key.kind !== 'number') {
+            throw new EvaluationError(
+              'get on vectors expects a 0-based index as parameter',
+              { key }
+            )
+          }
+          if (key.value < 0 || key.value >= values.length) {
+            return defaultValue
+          }
+          return values[key.value]
+        }
+        default:
+          return defaultValue
+      }
+    }
+  ),
+  str: cljNativeFunction('str', (...args: CljValue[]) => {
+    return cljString(args.map(valueToString).join(''))
+  }),
 }
 
-export function makeCoreEnv(): Env {
+export function makeCoreEnv(output?: (text: string) => void): Env {
   const env = makeEnv()
   for (const [key, value] of Object.entries(nativeFunctions)) {
     define(key, value, env)
+  }
+  if (output) {
+    define(
+      'println',
+      cljNativeFunction('println', (...args: CljValue[]) => {
+        const text = args.map(valueToString).join(' ')
+        output(text)
+        return cljNil()
+      }),
+      env
+    )
   }
   return env
 }

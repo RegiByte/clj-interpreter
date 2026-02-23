@@ -16,7 +16,7 @@ import {
 } from '../factories'
 import { parseForms } from '../parser'
 import { tokenize } from '../tokenizer'
-import { define, getRootEnv, lookup } from '../env'
+import { define, lookup } from '../env'
 import type { CljValue } from '../types'
 import { isCljValue } from '../assertions'
 
@@ -175,6 +175,14 @@ describe('evaluator', () => {
       expect(result.value).toBe(expectedValue)
     }
   )
+
+  it('should throw on division by zero', () => {
+    const parsed = parseCode(`(/ 1 0)`)
+    const env = makeCoreEnv()
+    expect(() => {
+      evaluateForms(parsed, env)
+    }).toThrow(EvaluationError)
+  })
 
   it('should evaluate a user-defined function', () => {
     const parsed1 = parseCode(`((fn [a b] (+ a b)) 1 2)`)
@@ -449,6 +457,13 @@ describe('evaluator', () => {
     ["(= '(1) (quote (1)))", true],
     ["(= '(1) '(1))", true],
     ["(= '(1) '(1 2))", false],
+    // order independence
+    ['(= {"b" 2 "a" 1} {"a" 1 "b" 2})', true],
+    [
+      `(= {"b" 2 "a" 1 "c" {"d" 3 "e" 4}}
+          {"a" 1 "b" 2 "c" {"e" 4 "d" 3}})`,
+      true,
+    ],
   ])('should evalute = core function: %s should be %s', (code, expected) => {
     const parsed = parseCode(code)
     const env = makeCoreEnv()
@@ -682,4 +697,76 @@ describe('evaluator', () => {
     const result = evaluateForms(parsed, env)
     expect(result).toMatchObject(cljNumber(2))
   })
+
+  it.each([
+    ['(get [1 2 3] 0)', 1],
+    //
+    ['(get [1 2 3] 0)', 1],
+    ['(get [1 2 3] 1)', 2],
+    ['(get [1 2 3] 2)', 3],
+
+    ['(get [1 2 3] 3)', null],
+
+    ['(get [1 2 3] -2)', null],
+
+    ["(get '(1 2 3) 1)", null],
+    ['(get \'(1 2 3) 1 "default")', 'default'],
+    ['(get 20 0)', null],
+    ['(get 20 0 "default")', 'default'],
+    ['(get {:a 1 :b 2} :a)', 1],
+    ['(get {:a 1 :b 2} :b)', 2],
+    ['(get {:a 1 :b 2} :c)', null],
+    ['(get {:a 1 :b 2} :c "default")', 'default'],
+  ])(
+    'get should get a value from a collection: %s should be %s',
+    (code, expected) => {
+      const parsed = parseCode(code)
+      const env = makeCoreEnv()
+      const result = evaluateForms(parsed, env)
+      expect(result).toMatchObject(toCljValue(expected))
+    }
+  )
+
+  it.each([
+    ['(str)', ''],
+    ['(str "hello")', 'hello'],
+    ['(str "hello" " " "world")', 'hello world'],
+    ['(str 1 2 3)', '123'],
+    ['(str "x:" 42)', 'x:42'],
+    ['(str [1 2 3])', '[1 2 3]'],
+    ['(str {:a 1})', '{:a 1}'],
+    ['(str nil)', 'nil'],
+    ['(str true false)', 'truefalse'],
+  ])(
+    'str should concatenate arguments to string: %s should be %s',
+    (code, expected) => {
+      const parsed = parseCode(code)
+      const env = makeCoreEnv()
+      const result = evaluateForms(parsed, env)
+      expect(result).toMatchObject(cljString(expected))
+    }
+  )
+
+  it('println should call output callback and return nil', () => {
+    const outputs: string[] = []
+    const outputHandler = (text: string) => outputs.push(text)
+    const env = makeCoreEnv(outputHandler)
+
+    const parsed1 = parseCode('(println "Hello" "world")')
+    const result1 = evaluateForms(parsed1, env)
+    expect(result1).toMatchObject(cljNil())
+    expect(outputs).toEqual(['Hello world'])
+
+    const parsed2 = parseCode('(println 1 2 3)')
+    const result2 = evaluateForms(parsed2, env)
+    expect(result2).toMatchObject(cljNil())
+    expect(outputs).toEqual(['Hello world', '1 2 3'])
+  })
+
+  it('println should not be defined if no output callback provided', () => {
+    const env = makeCoreEnv()
+    const parsed = parseCode('(println "test")')
+    expect(() => evaluateForms(parsed, env)).toThrow('Symbol println not found')
+  })
 })
+

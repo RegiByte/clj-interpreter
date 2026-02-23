@@ -5,9 +5,13 @@ import { printString } from '../core/printer'
 import { tokenize } from '../core/tokenizer'
 import type { Env } from '../core/types'
 
-export type ReplEntryOk = {
-  kind: 'ok'
-  source: string
+export type ReplEntrySource = {
+  kind: 'source'
+  text: string
+}
+
+export type ReplEntryResult = {
+  kind: 'result'
   output: string
 }
 
@@ -17,7 +21,16 @@ export type ReplEntryError = {
   message: string
 }
 
-export type ReplEntry = ReplEntryOk | ReplEntryError
+export type ReplEntryOutput = {
+  kind: 'output'
+  text: string
+}
+
+export type ReplEntry =
+  | ReplEntrySource
+  | ReplEntryResult
+  | ReplEntryError
+  | ReplEntryOutput
 
 export interface ReplState {
   env: Env
@@ -25,52 +38,81 @@ export interface ReplState {
   history: string[]
   /** Rendered output entries */
   entries: ReplEntry[]
+  /** Output collector for current evaluation */
+  outputs: string[]
 }
 
 export function makeRepl(): ReplState {
-  return {
-    env: makeCoreEnv(),
+  const state: ReplState = {
+    env: undefined as any,
     history: [],
     entries: [],
+    outputs: [],
   }
+  
+  // Create env with output handler that writes to state.outputs
+  const outputHandler = (text: string) => {
+    state.outputs.push(text)
+  }
+  
+  state.env = makeCoreEnv(outputHandler)
+  return state
 }
 
-export function evalSource(state: ReplState, source: string): ReplEntry | null {
+export function evalSource(state: ReplState, source: string): ReplEntry[] {
   const trimmed = source.trim()
-  if (!trimmed) return null
+  if (!trimmed) return []
 
   state.history.push(trimmed)
+  
+  // Clear outputs from previous evaluation
+  state.outputs = []
 
   try {
     const tokens = tokenize(trimmed)
     const forms = parseForms(tokens)
-    if (forms.length === 0) return null
+    if (forms.length === 0) return []
 
     const result = evaluateForms(forms, state.env)
-    const entry: ReplEntryOk = {
-      kind: 'ok',
-      source: trimmed,
-      output: printString(result),
+
+    // Build entries in correct order: source, outputs, result
+    const entries: ReplEntry[] = []
+
+    // 1. Source entry
+    entries.push({ kind: 'source', text: trimmed })
+
+    // 2. Output entries from println
+    for (const text of state.outputs) {
+      entries.push({ kind: 'output', text })
     }
-    state.entries.push(entry)
-    return entry
+
+    // 3. Result entry
+    entries.push({ kind: 'result', output: printString(result) })
+
+    // Add to state
+    state.entries.push(...entries)
+
+    return entries
   } catch (e) {
     const entry = makeErrorEntry(trimmed, e)
     state.entries.push(entry)
-    return entry
+    return [entry]
   }
 }
 
 function makeErrorEntry(source: string, e: unknown): ReplEntryError {
   const message =
-    e instanceof EvaluationError || e instanceof Error
-      ? e.message
-      : String(e)
+    e instanceof EvaluationError || e instanceof Error ? e.message : String(e)
   return { kind: 'error', source, message }
 }
 
 export function resetEnv(state: ReplState): void {
-  state.env = makeCoreEnv()
+  // Create new env with output handler
+  const outputHandler = (text: string) => {
+    state.outputs.push(text)
+  }
+  state.env = makeCoreEnv(outputHandler)
+  state.outputs = []
 }
 
 export function getAllForms(state: ReplState): string {

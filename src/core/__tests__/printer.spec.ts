@@ -157,7 +157,7 @@ describe('printer', () => {
     ],
   ])(
     'should make a full roundtrip and print the same value as the input: %s',
-    (description, input, expected) => {
+    (_description, input, expected) => {
       const tokenized = tokenize(input)
       const parsed = parseForms(tokenized)
       expect(parsed).toEqual([expected])

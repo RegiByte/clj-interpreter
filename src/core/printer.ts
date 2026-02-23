@@ -1,3 +1,4 @@
+import { EvaluationError } from './evaluator'
 import { valueKeywords, type CljValue } from './types'
 
 export function printString(value: CljValue): string {
@@ -44,9 +45,11 @@ export function printString(value: CljValue): string {
       return `{${value.entries.map(([key, value]) => `${printString(key)} ${printString(value)}`).join(' ')}}`
     case valueKeywords.function:
       return `(fn [${value.params.map(printString).join(' ')}] ${value.body.map(printString).join(' ')})`
-    case valueKeywords.comment:
-      return `; ${value.value}`
     case valueKeywords.nativeFunction:
       return `(native-fn ${value.name})`
+    default:
+      throw new EvaluationError(`unhandled value type: ${value.kind}`, {
+        value,
+      })
   }
 }

@@ -40,21 +40,34 @@ function el<K extends keyof HTMLElementTagNameMap>(
 // ─── Output entry rendering ─────────────────────────────────────────────────
 
 function renderEntry(entry: ReplEntry): HTMLElement {
+  if (entry.kind === 'source') {
+    const sourceEl = el('div', 'repl-entry__source')
+    sourceEl.textContent = entry.text
+    return sourceEl
+  }
+
+  if (entry.kind === 'output') {
+    const outputEl = el('div', 'repl-entry__output')
+    outputEl.textContent = entry.text
+    return outputEl
+  }
+
+  if (entry.kind === 'result') {
+    const resultEl = el('div', 'repl-entry__result repl-entry__result--ok')
+    resultEl.textContent = entry.output
+    return resultEl
+  }
+
+  // error entry
   const wrapper = el('div', 'repl-entry')
 
   const sourceEl = el('div', 'repl-entry__source')
   sourceEl.textContent = entry.source
   wrapper.appendChild(sourceEl)
 
-  if (entry.kind === 'ok') {
-    const resultEl = el('div', 'repl-entry__result repl-entry__result--ok')
-    resultEl.textContent = entry.output
-    wrapper.appendChild(resultEl)
-  } else {
-    const errorEl = el('div', 'repl-entry__result repl-entry__result--error')
-    errorEl.textContent = `Error: ${entry.message}`
-    wrapper.appendChild(errorEl)
-  }
+  const errorEl = el('div', 'repl-entry__result repl-entry__result--error')
+  errorEl.textContent = `Error: ${entry.message}`
+  wrapper.appendChild(errorEl)
 
   return wrapper
 }
@@ -142,16 +155,20 @@ export function createReplUI(container: HTMLElement) {
     const source = getEditorContent(view)
     if (!source.trim()) return
 
-    const entry = evalSource(state, source)
+    const entriesCountBefore = state.entries.length
+    evalSource(state, source)
     nav.index = -1
     nav.draft = ''
     clearEditor(view)
 
-    if (entry) {
-      const entryEl = renderEntry(entry)
+    // Render all new entries (includes println outputs + final result)
+    const newEntries = state.entries.slice(entriesCountBefore)
+    for (const newEntry of newEntries) {
+      const entryEl = renderEntry(newEntry)
       outputInnerEl.appendChild(entryEl)
-      outputEl.scrollTop = outputEl.scrollHeight
     }
+    
+    outputEl.scrollTop = outputEl.scrollHeight
   }
 
   // ── Copy button ──────────────────────────────────────────────────────────
