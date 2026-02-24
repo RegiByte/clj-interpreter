@@ -22,7 +22,9 @@ export const isFalsy = (value: CljValue): boolean => {
 export const isTruthy = (value: CljValue): boolean => {
   return !isFalsy(value)
 }
-export const isSpecialForm = (value: CljValue): value is CljSymbol  & { name: keyof typeof specialFormKeywords } =>
+export const isSpecialForm = (
+  value: CljValue
+): value is CljSymbol & { name: keyof typeof specialFormKeywords } =>
   value.kind === 'symbol' && value.name in specialFormKeywords
 export const isComment = (value: CljValue): boolean => value.kind === 'comment'
 export const isSymbol = (value: CljValue): value is CljSymbol =>
@@ -36,6 +38,8 @@ export const isFunction = (value: CljValue): value is CljFunction =>
 export const isNativeFunction = (value: CljValue): value is CljNativeFunction =>
   value.kind === 'native-function'
 export const isMap = (value: CljValue): value is CljMap => value.kind === 'map'
+export const isKeyword = (value: CljValue): value is CljKeyword =>
+  value.kind === 'keyword'
 export const isAFunction = (
   value: CljValue
 ): value is CljFunction | CljNativeFunction =>

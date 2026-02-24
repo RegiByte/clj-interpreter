@@ -1,9 +1,10 @@
 import { EditorView, keymap, lineNumbers } from '@codemirror/view'
 import { defaultKeymap, historyKeymap, history } from '@codemirror/commands'
-import { syntaxHighlighting, defaultHighlightStyle, bracketMatching } from '@codemirror/language'
+import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language'
+import { closeBrackets } from '@codemirror/autocomplete'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { Prec } from '@codemirror/state'
-import { clojure } from '@nextjournal/lang-clojure'
+import { syntax } from '@nextjournal/clojure-mode'
 import { evalSource, getAllForms, makeRepl, resetEnv } from './repl'
 import type { ReplEntry, ReplState } from './repl'
 
@@ -39,7 +40,7 @@ function el<K extends keyof HTMLElementTagNameMap>(
 
 // ─── Output entry rendering ─────────────────────────────────────────────────
 
-function renderEntry(entry: ReplEntry): HTMLElement {
+function renderEntry(entry: ReplEntry): HTMLElement | HTMLElement[] {
   if (entry.kind === 'source') {
     const sourceEl = el('div', 'repl-entry__source')
     sourceEl.textContent = entry.text
@@ -58,18 +59,13 @@ function renderEntry(entry: ReplEntry): HTMLElement {
     return resultEl
   }
 
-  // error entry
-  const wrapper = el('div', 'repl-entry')
-
   const sourceEl = el('div', 'repl-entry__source')
   sourceEl.textContent = entry.source
-  wrapper.appendChild(sourceEl)
 
   const errorEl = el('div', 'repl-entry__result repl-entry__result--error')
   errorEl.textContent = `Error: ${entry.message}`
-  wrapper.appendChild(errorEl)
 
-  return wrapper
+  return [sourceEl, errorEl]
 }
 
 // ─── Editor helpers ─────────────────────────────────────────────────────────
@@ -165,9 +161,15 @@ export function createReplUI(container: HTMLElement) {
     const newEntries = state.entries.slice(entriesCountBefore)
     for (const newEntry of newEntries) {
       const entryEl = renderEntry(newEntry)
-      outputInnerEl.appendChild(entryEl)
+      if (Array.isArray(entryEl)) {
+        for (const el of entryEl) {
+          outputInnerEl.appendChild(el)
+        }
+      } else {
+        outputInnerEl.appendChild(entryEl)
+      }
     }
-    
+
     outputEl.scrollTop = outputEl.scrollHeight
   }
 
@@ -266,9 +268,9 @@ export function createReplUI(container: HTMLElement) {
       history(),
       keymap.of([...defaultKeymap, ...historyKeymap]),
       lineNumbers(),
-      bracketMatching(),
+      closeBrackets(),
       syntaxHighlighting(defaultHighlightStyle),
-      clojure(),
+      syntax(),
       oneDark,
       EditorView.theme({
         '&': {

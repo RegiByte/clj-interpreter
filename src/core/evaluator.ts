@@ -14,8 +14,11 @@ import {
 import {
   isAFunction,
   isComment,
+  isEqual,
   isFalsy,
+  isKeyword,
   isList,
+  isMap,
   isSpecialForm,
   isSymbol,
   isVector,
@@ -42,7 +45,7 @@ export class EvaluationError extends Error {
 export function applyFunction(
   fn: CljFunction | CljNativeFunction,
   args: CljValue[],
-  env: Env
+  env?: Env
 ): CljValue {
   if (fn.kind === 'native-function') {
     return fn.fn(...args)
@@ -195,30 +198,34 @@ export function evaluateList(list: CljList, env: Env): CljValue {
     return evaluateSpecialForm(first.name, list, env)
   }
 
-  if (isList(first)) {
-    // if it's a list, we need to evaluate it first
-    // if the list is a function, we will apply it to the arguments
-    const evaluatedList = evaluateList(first, env)
-    if (isAFunction(evaluatedList)) {
-      const args = list.value.slice(1).map((v) => evaluate(v, env))
-      return applyFunction(evaluatedList, args, env)
+  const evaledFirst = evaluate(first, env)
+  if (isAFunction(evaledFirst)) {
+    const args = list.value.slice(1).map((v) => evaluate(v, env))
+    return applyFunction(evaledFirst, args, env)
+  }
+  if (isKeyword(evaledFirst)) {
+    const next = evaluate(list.value[1], env)
+    const defaultReturn =
+      list.value.length > 2 ? evaluate(list.value[2], env) : cljNil()
+    if (isMap(next)) {
+      const entry = next.entries.find(([key]) => {
+        return isEqual(key, evaledFirst)
+      })
+      if (entry) {
+        return entry[1]
+      }
+      return defaultReturn
     }
-    throw new EvaluationError(
-      'First element of list must be a symbol or special form',
-      { list, env }
-    )
+    return defaultReturn
   }
   if (!isSymbol(first)) {
     throw new EvaluationError(
-      'First element of list must be a symbol or special form',
+      'First element of list must be a function or special form',
       { list, env }
     )
   }
   const symbol = first.name
 
-  // otherwise, it's a function call, we need to apply the function with the arguments
-  // todo for now
-  // check if the symbol exists in the env
   const fnSymbol = lookup(symbol, env)
   if (!isAFunction(fnSymbol)) {
     throw new EvaluationError(`${symbol} is not a function`, { list, env })

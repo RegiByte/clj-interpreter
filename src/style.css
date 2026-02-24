@@ -32,8 +32,8 @@ body {
   background-color: var(--bg);
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 14px;
-  line-height: 1.6;
+  font-size: 16px;
+  line-height: 1.4;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -120,7 +120,7 @@ body {
 .repl-output {
   flex: 1;
   overflow-y: auto;
-  padding: 0.75rem 0;
+  padding: 0.75rem 2rem;
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 }
@@ -148,6 +148,7 @@ body {
 }
 
 .repl-entry__source {
+  margin-top: 0.5rem;
   color: var(--text-dim);
   font-size: 0.9rem;
   white-space: pre-wrap;
@@ -160,7 +161,6 @@ body {
 }
 
 .repl-entry__result {
-  padding-left: 1.8rem;
   font-size: 0.9rem;
   white-space: pre-wrap;
   word-break: break-word;
@@ -170,8 +170,16 @@ body {
   color: var(--accent);
 }
 
+.repl-entry__result--ok::before {
+  content: '→  ';
+}
+
 .repl-entry__result--error {
   color: var(--error);
+}
+
+.repl-entry__result--error::before {
+  content: '🔴 ';
 }
 
 .repl-entry__output {
