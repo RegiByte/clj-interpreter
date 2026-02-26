@@ -316,4 +316,37 @@ describe('parser', () => {
       ]),
     ])
   })
+
+  it('should parse quasiquote', () => {
+    const input = '`(1 2 3)'
+    const result = parseForms(tokenize(input))
+    expect(result).toEqual([
+      cljList([
+        cljSymbol('quasiquote'),
+        cljList([cljNumber(1), cljNumber(2), cljNumber(3)]),
+      ]),
+    ])
+  })
+
+  it('should parse unquote', () => {
+    const input = '~(1 2 3)'
+    const result = parseForms(tokenize(input))
+    expect(result).toEqual([
+      cljList([
+        cljSymbol('unquote'),
+        cljList([cljNumber(1), cljNumber(2), cljNumber(3)]),
+      ]),
+    ])
+  })
+
+  it('should parse unquote splicing', () => {
+    const input = '~@(1 2 3)'
+    const result = parseForms(tokenize(input))
+    expect(result).toEqual([
+      cljList([
+        cljSymbol('unquote-splicing'),
+        cljList([cljNumber(1), cljNumber(2), cljNumber(3)]),
+      ]),
+    ])
+  })
 })

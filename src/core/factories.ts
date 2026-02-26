@@ -4,6 +4,7 @@ import type {
   CljFunction,
   CljKeyword,
   CljList,
+  CljMacro,
   CljMap,
   CljNativeFunction,
   CljNil,
@@ -35,11 +36,24 @@ export const cljVector = <T extends CljValue[]>(value: T) =>
   ({ kind: 'vector', value }) as const satisfies CljVector
 export const cljMap = <T extends [CljValue, CljValue][]>(entries: T) =>
   ({ kind: 'map', entries }) as const satisfies CljMap
-export const cljFunction = <T extends CljSymbol[], U extends CljValue[]>(
-  params: T,
-  body: U,
-  env: Env
-) => ({ kind: 'function', params, body, env }) as const satisfies CljFunction
+export const cljFunction = <
+  TParams extends CljSymbol[],
+  TRest extends CljSymbol | null,
+  TBody extends CljValue[],
+  TEnv extends Env,
+>(
+  params: TParams,
+  restParam: TRest,
+  body: TBody,
+  env: TEnv
+) =>
+  ({
+    kind: 'function',
+    params,
+    body,
+    env,
+    restParam,
+  }) as const satisfies CljFunction
 export const cljNativeFunction = <
   T extends string,
   U extends (...args: CljValue[]) => CljValue,
@@ -48,3 +62,21 @@ export const cljNativeFunction = <
   fn: U
 ) =>
   ({ kind: 'native-function', name, fn }) as const satisfies CljNativeFunction
+export const cljMacro = <
+  TParams extends CljSymbol[],
+  TRest extends CljSymbol | null,
+  TBody extends CljValue[],
+  TEnv extends Env,
+>(
+  params: TParams,
+  restParam: TRest,
+  body: TBody,
+  env: TEnv
+) =>
+  ({
+    kind: 'macro',
+    params,
+    body,
+    env,
+    restParam,
+  }) as const satisfies CljMacro

@@ -53,6 +53,18 @@ const toSeq = (collection: CljValue): CljValue[] => {
 
 function getCoreFunctions(globalEnv: Env) {
   const nativeFunctions = {
+    list: cljNativeFunction('list', (...args: CljValue[]) => {
+      if (args.length === 0) {
+        return cljList([])
+      }
+      return cljList(args)
+    }),
+    vector: cljNativeFunction('vector', (...args: CljValue[]) => {
+      if (args.length === 0) {
+        return cljVector([])
+      }
+      return cljVector(args)
+    }),
     '+': cljNativeFunction('+', (...args: CljValue[]) => {
       if (args.length === 0) {
         return cljNumber(0)
@@ -1006,10 +1018,7 @@ function getCoreFunctions(globalEnv: Env) {
       }
       const name = kindToKeyword[x.kind]
       if (!name) {
-        throw new EvaluationError(
-          `type: unhandled kind ${x.kind}`,
-          { x }
-        )
+        throw new EvaluationError(`type: unhandled kind ${x.kind}`, { x })
       }
       return cljKeyword(name)
     }),
@@ -1018,7 +1027,7 @@ function getCoreFunctions(globalEnv: Env) {
   return nativeFunctions
 }
 
-function loadCoreFunctions(env: Env, output?: (text: string) => void) {
+export function loadCoreFunctions(env: Env, output?: (text: string) => void) {
   const coreFunctions = getCoreFunctions(env)
   for (const [key, value] of Object.entries(coreFunctions)) {
     define(key, value, env)

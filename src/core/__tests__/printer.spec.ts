@@ -110,6 +110,7 @@ describe('printer', () => {
       printString(
         cljFunction(
           [cljSymbol('x'), cljSymbol('y')],
+          null,
           [cljList([cljSymbol('+'), cljSymbol('x'), cljSymbol('y')])],
           makeEnv()
         )

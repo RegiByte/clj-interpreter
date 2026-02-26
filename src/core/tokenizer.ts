@@ -19,7 +19,7 @@ export class TokenizerError extends Error {
 export type TokensResult = {
   tokens: Token[]
   error?: TokenizerError
-  scanner: Scanner
+  scanner: CharScanner
 }
 
 const isNewline = (char: string) => char === '\n'
@@ -34,6 +34,9 @@ const isLBrace = (char: string) => char === '{'
 const isRBrace = (char: string) => char === '}'
 const isDoubleQuote = (char: string) => char === '"'
 const isSingleQuote = (char: string) => char === "'"
+const isBacktick = (char: string) => char === '`'
+const isTilde = (char: string) => char === '~'
+const isAt = (char: string) => char === '@'
 const isNumber = (char: string) => {
   const parsed = parseInt(char)
   if (isNaN(parsed)) {
@@ -50,9 +53,11 @@ const isDelimiter = (char: string) =>
   isLBracket(char) ||
   isRBracket(char) ||
   isLBrace(char) ||
-  isRBrace(char)
+  isRBrace(char) ||
+  isBacktick(char) ||
+  isSingleQuote(char)
 
-const parseWhitespace = (scanner: Scanner): Token => {
+const parseWhitespace = (scanner: CharScanner): Token => {
   const start = scanner.position()
   scanner.consumeWhile(isWhitespace)
   return {
@@ -62,7 +67,7 @@ const parseWhitespace = (scanner: Scanner): Token => {
   }
 }
 
-const parseComment = (scanner: Scanner): Token => {
+const parseComment = (scanner: CharScanner): Token => {
   const start = scanner.position()
   scanner.advance() // skip the `;`
   const value = scanner.consumeWhile((char) => !isNewline(char))
@@ -77,7 +82,7 @@ const parseComment = (scanner: Scanner): Token => {
   }
 }
 
-const parseString = (scanner: Scanner): Token => {
+const parseString = (scanner: CharScanner): Token => {
   const start = scanner.position()
   scanner.advance() // consume opening "
   const buffer: string[] = []
@@ -133,7 +138,7 @@ const parseString = (scanner: Scanner): Token => {
   }
 }
 
-const parseKeyword = (scanner: Scanner): Token => {
+const parseKeyword = (scanner: CharScanner): Token => {
   const start = scanner.position()
   const value = scanner.consumeWhile(
     (char) =>
@@ -148,7 +153,7 @@ const parseKeyword = (scanner: Scanner): Token => {
   }
 }
 
-const parseNumber = (scanner: Scanner): Token => {
+const parseNumber = (scanner: CharScanner): Token => {
   const start = scanner.position()
   let value = ''
   if (scanner.peek() === '-') {
@@ -178,7 +183,7 @@ const parseNumber = (scanner: Scanner): Token => {
   }
 }
 
-const parseSymbol = (scanner: Scanner): Token => {
+const parseSymbol = (scanner: CharScanner): Token => {
   const start = scanner.position()
   const value = scanner.consumeWhile(
     (char) => !isWhitespace(char) && !isDelimiter(char) && !isComment(char)
@@ -192,7 +197,7 @@ const parseSymbol = (scanner: Scanner): Token => {
   }
 }
 
-function parseNextToken(scanner: Scanner): Token {
+function parseNextToken(scanner: CharScanner): Token {
   const char = scanner.peek()!
   if (isWhitespace(scanner.peek()!)) {
     return parseWhitespace(scanner)
@@ -289,12 +294,53 @@ function parseNextToken(scanner: Scanner): Token {
       end: scanner.position(),
     }
   }
+  if (isBacktick(char)) {
+    const start = scanner.position()
+    scanner.advance()
+
+    return {
+      kind: tokenKeywords.Quasiquote,
+      value: tokenSymbols.Quasiquote,
+      start,
+      end: scanner.position(),
+    }
+  }
+  if (isTilde(char)) {
+    const start = scanner.position()
+    // consume the tilde
+    scanner.advance()
+    // check if the next character is an @
+    const nextChar = scanner.peek()
+    if (!nextChar) {
+      throw new TokenizerError(
+        `Unexpected end of input while parsing unquote at ${start.offset}`,
+        start
+      )
+    }
+    if (isAt(nextChar)) {
+      // consume the @
+      scanner.advance()
+      return {
+        kind: tokenKeywords.UnquoteSplicing,
+        value: tokenSymbols.UnquoteSplicing,
+        start,
+        end: scanner.position(),
+      }
+    }
+
+    return {
+      kind: tokenKeywords.Unquote,
+      value: tokenSymbols.Unquote,
+      start,
+      end: scanner.position(),
+    }
+  }
 
   // catch-all symbol parsing
   return parseSymbol(scanner)
 }
 
-export function parseAllTokens(scanner: Scanner): TokensResult {
+export function parseAllTokens(scanner: CharScanner): TokensResult {
   const tokens: Token[] = []
   let error: TokenizerError | undefined = undefined
 
@@ -325,7 +371,7 @@ export function parseAllTokens(scanner: Scanner): TokensResult {
   return parsed
 }
 
-export function makeScanner(input: string) {
+export function makeCharScanner(input: string) {
   const cursor = createCursor(0, 0, 0)
 
   const api = {
@@ -368,11 +414,11 @@ export function makeScanner(input: string) {
   return api
 }
 
-export type Scanner = ReturnType<typeof makeScanner>
+export type CharScanner = ReturnType<typeof makeCharScanner>
 
 export function tokenize(input: string): Token[] {
   const inputLength = input.length
-  const scanner = makeScanner(input)
+  const scanner = makeCharScanner(input)
   const tokensResult = parseAllTokens(scanner)
   if (tokensResult.error) {
     throw tokensResult.error

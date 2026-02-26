@@ -11,6 +11,7 @@ export const valueKeywords = {
   function: 'function',
   nativeFunction: 'native-function',
   comment: 'comment',
+  macro: 'macro',
 } as const
 export type ValueKeywords = (typeof valueKeywords)[keyof typeof valueKeywords]
 
@@ -27,13 +28,23 @@ export type CljComment = { kind: 'comment'; value: string }
 export type Env = {
   bindings: Map<string, CljValue>
   outer: Env | null
+  namespace?: string // only present on namespace-root envs
 }
 
 export type CljFunction = {
   kind: 'function'
   params: CljSymbol[]
+  restParam: CljSymbol | null // the symbol after &, or null if not variadic
   body: CljValue[]
   env: Env // captured environment at the time of fn creation
+}
+
+export type CljMacro = {
+  kind: 'macro'
+  params: CljSymbol[]
+  restParam: CljSymbol | null // the symbol after &, or null if not variadic
+  body: CljValue[]
+  env: Env // captured environment at the time of macro creation
 }
 
 export type CljNativeFunction = {
@@ -55,6 +66,7 @@ export type CljValue =
   | CljFunction
   | CljComment // stripped during evaluation, kept on parsed values for tooling support
   | CljNativeFunction
+  | CljMacro
 
 /** Tokens */
 export const tokenKeywords = {
@@ -68,12 +80,18 @@ export const tokenKeywords = {
   Number: 'Number',
   Keyword: 'Keyword',
   Quote: 'Quote',
+  Quasiquote: 'Quasiquote',
+  Unquote: 'Unquote',
+  UnquoteSplicing: 'UnquoteSplicing',
   Comment: 'Comment',
   Whitespace: 'Whitespace',
   Symbol: 'Symbol',
 } as const
 export const tokenSymbols = {
   Quote: 'quote',
+  Quasiquote: 'quasiquote',
+  Unquote: 'unquote',
+  UnquoteSplicing: 'unquote-splicing',
   LParen: '(',
   RParen: ')',
   LBracket: '[',
@@ -141,6 +159,18 @@ export type TokenSymbol = {
   kind: 'Symbol'
   value: string
 }
+export type TokenQuasiquote = {
+  kind: 'Quasiquote'
+  value: 'quasiquote'
+}
+export type TokenUnquote = {
+  kind: 'Unquote'
+  value: 'unquote'
+}
+export type TokenUnquoteSplicing = {
+  kind: 'UnquoteSplicing'
+  value: 'unquote-splicing'
+}
 export type Token = (
   | TokenLParen
   | TokenRParen
@@ -155,4 +185,7 @@ export type Token = (
   | TokenComment
   | TokenWhitespace
   | TokenSymbol
+  | TokenQuasiquote
+  | TokenUnquote
+  | TokenUnquoteSplicing
 ) & { start: Cursor; end: Cursor }

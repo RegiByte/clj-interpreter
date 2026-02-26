@@ -53,3 +53,14 @@ export function getRootEnv(env: Env): Env {
   }
   return current!
 }
+
+export function getNamespaceEnv(env: Env): Env {
+  let current: Env | null = env
+  while (current) {
+    if (current.namespace) return current
+    current = current.outer
+  }
+  // fallback for un-namespaced envs for backwards compact
+  // eventually we'll remove this and require all envs to be namespaced
+  return getRootEnv(env)
+}

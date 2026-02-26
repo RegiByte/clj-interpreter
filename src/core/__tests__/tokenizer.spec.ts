@@ -192,4 +192,46 @@ bar"`,
   it('should throw an error for unterminated strings', () => {
     expect(() => tokenize('(show "hello)')).toThrow(TokenizerError)
   })
+
+  it('should parse code with quasiquote', () => {
+    const tokens = tokenize('`(1 2 3)')
+    expect(tokens).toMatchObject([
+      { kind: 'Quasiquote', value: 'quasiquote' },
+      { kind: 'LParen', value: '(' },
+      { kind: 'Number', value: 1 },
+      { kind: 'Number', value: 2 },
+      { kind: 'Number', value: 3 },
+      { kind: 'RParen', value: ')' },
+    ])
+  })
+  
+  it('should parse code with unquote', () => {
+    const tokens = tokenize('`(1 2 ~3.12)')
+    expect(tokens).toMatchObject([
+      { kind: 'Quasiquote', value: 'quasiquote' },
+      { kind: 'LParen', value: '(' },
+      { kind: 'Number', value: 1 },
+      { kind: 'Number', value: 2 },
+      { kind: 'Unquote', value: 'unquote' },
+      { kind: 'Number', value: 3.12 },
+      { kind: 'RParen', value: ')' },
+    ])
+  })
+  
+  it('should parse code with unquote splicing', () => {
+    const tokens = tokenize('`(1 2 ~@(3 4 5))')
+    expect(tokens).toMatchObject([
+      { kind: 'Quasiquote', value: 'quasiquote' },
+      { kind: 'LParen', value: '(' },
+      { kind: 'Number', value: 1 },
+      { kind: 'Number', value: 2 },
+      { kind: 'UnquoteSplicing', value: 'unquote-splicing' },
+      { kind: 'LParen', value: '(' },
+      { kind: 'Number', value: 3 },
+      { kind: 'Number', value: 4 },
+      { kind: 'Number', value: 5 },
+      { kind: 'RParen', value: ')' },
+      { kind: 'RParen', value: ')' },
+    ])
+  })
 })

@@ -3,7 +3,7 @@ import { getTokenValue } from './tokenizer'
 import { valueKeywords, tokenKeywords, type Token } from './types'
 import type { CljValue, TokenKinds } from './types'
 
-export function makeScanner(input: Token[]) {
+export function makeTokenScanner(input: Token[]) {
   let offset = 0
 
   const api = {
@@ -43,7 +43,7 @@ export function makeScanner(input: Token[]) {
   return api
 }
 
-export type Scanner = ReturnType<typeof makeScanner>
+export type TokenScanner = ReturnType<typeof makeTokenScanner>
 
 export class ParserError extends Error {
   context: any
@@ -54,7 +54,7 @@ export class ParserError extends Error {
   }
 }
 
-function parseAtom(scanner: Scanner): CljValue {
+function parseAtom(scanner: TokenScanner): CljValue {
   const token = scanner.peek()
   if (!token) {
     throw new ParserError('Unexpected end of input', scanner.position())
@@ -75,7 +75,7 @@ function parseAtom(scanner: Scanner): CljValue {
   throw new ParserError(`Unexpected token: ${token.kind}`, token)
 }
 
-const parseQuote = (scanner: Scanner) => {
+const parseQuote = (scanner: TokenScanner) => {
   const token = scanner.peek()
   if (!token) {
     throw new ParserError(
@@ -92,6 +92,57 @@ const parseQuote = (scanner: Scanner) => {
   return { kind: valueKeywords.list, value: [cljSymbol('quote'), value] }
 }
 
+const parseQuasiquote = (scanner: TokenScanner) => {
+  const token = scanner.peek()
+  if (!token) {
+    throw new ParserError(
+      'Unexpected end of input while parsing quasiquote',
+      scanner.position()
+    )
+  }
+  scanner.advance() // consume the quasiquote token
+  const value = parseForm(scanner)
+  if (!value) {
+    throw new ParserError(`Unexpected token: ${getTokenValue(token)}`, token)
+  }
+  return { kind: valueKeywords.list, value: [cljSymbol('quasiquote'), value] }
+}
+
+const parseUnquote = (scanner: TokenScanner) => {
+  const token = scanner.peek()
+  if (!token) {
+    throw new ParserError(
+      'Unexpected end of input while parsing unquote',
+      scanner.position()
+    )
+  }
+  scanner.advance() // consume the unquote token
+  const value = parseForm(scanner)
+  if (!value) {
+    throw new ParserError(`Unexpected token: ${getTokenValue(token)}`, token)
+  }
+  return { kind: valueKeywords.list, value: [cljSymbol('unquote'), value] }
+}
+
+const parseUnquoteSplicing = (scanner: TokenScanner) => {
+  const token = scanner.peek()
+  if (!token) {
+    throw new ParserError(
+      'Unexpected end of input while parsing unquote splicing',
+      scanner.position()
+    )
+  }
+  scanner.advance() // consume the unquote splicing token
+  const value = parseForm(scanner)
+  if (!value) {
+    throw new ParserError(`Unexpected token: ${getTokenValue(token)}`, token)
+  }
+  return {
+    kind: valueKeywords.list,
+    value: [cljSymbol('unquote-splicing'), value],
+  }
+}
+
 const isClosingToken = (token: Token) => {
   return (
     [
@@ -103,7 +154,7 @@ const isClosingToken = (token: Token) => {
 }
 
 const parseCollection = (
-  scanner: Scanner,
+  scanner: TokenScanner,
   valueType: 'list' | 'vector',
   closeToken: string
 ) => {
@@ -145,15 +196,15 @@ const parseCollection = (
   return { kind: valueType, value: values }
 }
 
-const parseList = (scanner: Scanner) => {
+const parseList = (scanner: TokenScanner) => {
   return parseCollection(scanner, valueKeywords.list, tokenKeywords.RParen)
 }
 
-const parseVector = (scanner: Scanner) => {
+const parseVector = (scanner: TokenScanner) => {
   return parseCollection(scanner, valueKeywords.vector, tokenKeywords.RBracket)
 }
 
-const parseSymbol = (scanner: Scanner) => {
+const parseSymbol = (scanner: TokenScanner) => {
   const token = scanner.peek()
   if (!token) {
     throw new ParserError('Unexpected end of input', scanner.position())
@@ -173,7 +224,7 @@ const parseSymbol = (scanner: Scanner) => {
   }
 }
 
-const parseMap = (scanner: Scanner) => {
+const parseMap = (scanner: TokenScanner) => {
   const startToken = scanner.peek()
   if (!startToken) {
     throw new ParserError(
@@ -235,7 +286,7 @@ const parseMap = (scanner: Scanner) => {
   return { kind: valueKeywords.map, entries }
 }
 
-const parseComment = (scanner: Scanner) => {
+const parseComment = (scanner: TokenScanner) => {
   const token = scanner.peek()
   if (!token) {
     throw new ParserError('Unexpected end of input', scanner.position())
@@ -248,7 +299,7 @@ const parseComment = (scanner: Scanner) => {
   return { kind: valueKeywords.comment, value: token.value }
 }
 
-function parseForm(scanner: Scanner): CljValue {
+function parseForm(scanner: TokenScanner): CljValue {
   const token = scanner.peek()
   if (!token) {
     throw new ParserError('Unexpected end of input', scanner.position())
@@ -267,6 +318,12 @@ function parseForm(scanner: Scanner): CljValue {
       return parseVector(scanner)
     case tokenKeywords.Quote:
       return parseQuote(scanner)
+    case tokenKeywords.Quasiquote:
+      return parseQuasiquote(scanner)
+    case tokenKeywords.Unquote:
+      return parseUnquote(scanner)
+    case tokenKeywords.UnquoteSplicing:
+      return parseUnquoteSplicing(scanner)
     case tokenKeywords.Comment:
       return parseComment(scanner)
     default:
@@ -279,7 +336,7 @@ function parseForm(scanner: Scanner): CljValue {
 
 // initializes the scanner and parses the forms, returning a tree of values
 export function parseForms(input: Token[]): CljValue[] {
-  const scanner = makeScanner(input)
+  const scanner = makeTokenScanner(input)
   const values: CljValue[] = []
   while (!scanner.isAtEnd()) {
     values.push(parseForm(scanner))

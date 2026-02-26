@@ -7,6 +7,7 @@ import {
   cljFunction,
   cljKeyword,
   cljList,
+  cljMacro,
   cljMap,
   cljNil,
   cljNumber,
@@ -19,6 +20,7 @@ import { tokenize } from '../tokenizer'
 import { define, lookup } from '../env'
 import type { CljValue } from '../types'
 import { isCljValue } from '../assertions'
+import { createSession } from '../session'
 
 function parseCode(code: string) {
   return parseForms(tokenize(code))
@@ -78,7 +80,7 @@ describe('evaluator spec', () => {
 
     it('should evaluate functions to self', () => {
       const env = makeCoreEnv()
-      const form = cljFunction([cljSymbol('n1')], [cljNumber(1)], env)
+      const form = cljFunction([cljSymbol('n1')], null, [cljNumber(1)], env)
       const result = evaluateForms([form], env)
       expect(result).toMatchObject(form)
     })
@@ -104,6 +106,7 @@ describe('evaluator spec', () => {
       expect(result).toMatchObject(
         cljFunction(
           [cljSymbol('a'), cljSymbol('b')],
+          null,
           [cljList([cljSymbol('+'), cljSymbol('a'), cljSymbol('b')])],
           env
         )
@@ -1797,5 +1800,177 @@ describe('evaluator spec', () => {
         expect(result).toMatchObject(toCljValue(expected))
       }
     )
+  })
+
+  describe('rest parameters', () => {
+    it('should capture rest parameter in user defined function', () => {
+      const parsed = parseCode(`(fn [a b c & rest] [a b c rest])`)
+      const env = makeCoreEnv()
+      const result = evaluateForms(parsed, env)
+      expect(result).toMatchObject(
+        cljFunction(
+          [cljSymbol('a'), cljSymbol('b'), cljSymbol('c')],
+          cljSymbol('rest'),
+          [
+            cljVector([
+              cljSymbol('a'),
+              cljSymbol('b'),
+              cljSymbol('c'),
+              cljSymbol('rest'),
+            ]),
+          ],
+          env
+        )
+      )
+    })
+
+    it.each([
+      ['(fn [a b & c & rest] [a b c rest])', '& can only appear once'],
+      [`(fn [a b & c rest] [a b c rest])`, '& must be second-to-last argument'],
+    ])('should throw on invalid rest usage: %s → "%s"', (code, expected) => {
+      const parsed = parseCode(code)
+      const env = makeCoreEnv()
+      let error: EvaluationError | undefined
+      expect(() => {
+        try {
+          evaluateForms(parsed, env)
+        } catch (e) {
+          if (e instanceof EvaluationError) error = e
+          throw e
+        }
+      }).toThrow(EvaluationError)
+      expect(error?.message).toContain(expected)
+    })
+
+    it.each([
+      [
+        '((fn [a b & rest] [a b rest]) 1 2 3 4 5)',
+        [1, 2, cljList([cljNumber(3), cljNumber(4), cljNumber(5)])],
+      ],
+      ['((fn [a b & rest] [a b rest]) 1 2)', [1, 2, null]],
+    ])(
+      'should hydrate rest parameter with extra bindings: %s → %o',
+      (code, expected) => {
+        const parsed = parseCode(code)
+        const env = makeCoreEnv()
+        const result = evaluateForms(parsed, env)
+        expect(result).toMatchObject(toCljValue(expected))
+      }
+    )
+
+    it.each([
+      [
+        '((fn [a b & rest] [a b rest]) 1)',
+        'Arguments length mismatch: fn expects at least 2 arguments, but 1 were provided',
+      ],
+      [
+        '((fn [a b] [a b]) 1 2 3)',
+        'Arguments length mismatch: fn accepts 2 arguments, but 3 were provided',
+      ],
+    ])('should throw on invalid rest usage: %s → "%s"', (code, expected) => {
+      const parsed = parseCode(code)
+      const env = makeCoreEnv()
+      let error: EvaluationError | undefined
+      expect(() => {
+        try {
+          evaluateForms(parsed, env)
+        } catch (e) {
+          if (e instanceof EvaluationError) error = e
+          throw e
+        }
+      }).toThrow(EvaluationError)
+      expect(error?.message).toContain(expected)
+    })
+  })
+
+  describe('macros', () => {
+    it.each([
+      ['(defmacro pass-through [x] x) (pass-through 42)', 42],
+      ['(defmacro pass-through [x] x) (pass-through "hello")', 'hello'],
+      ['(defmacro pass-through [x] x) (pass-through true)', true],
+      ['(defmacro pass-through [x] x) (pass-through nil)', null],
+      ['(defmacro pass-through [x] x) (pass-through :foo)', cljKeyword(':foo')],
+    ])('should pass scalars through', (code, expected) => {
+      const parsed = parseCode(code)
+      const env = makeCoreEnv()
+      const result = evaluateForms(parsed, env)
+      expect(result).toMatchObject(toCljValue(expected))
+    })
+
+    it.each([
+      ['`x', cljSymbol('x')],
+      ['`(a b c)', cljList([cljSymbol('a'), cljSymbol('b'), cljSymbol('c')])],
+      ['`[a b c]', cljVector([cljSymbol('a'), cljSymbol('b'), cljSymbol('c')])],
+      ['`{:a 1}', cljMap([[cljKeyword(':a'), cljNumber(1)]])],
+    ])('should pass symbols through as symbols: %s → %s', (code, expected) => {
+      const parsed = parseCode(code)
+      const env = makeCoreEnv()
+      const result = evaluateForms(parsed, env)
+      expect(result).toMatchObject(expected)
+    })
+
+    it('should evaluate unquote', () => {
+      const parsed = parseCode('(let [x 42] `~x)')
+      const env = makeCoreEnv()
+      const result = evaluateForms(parsed, env)
+      expect(result).toMatchObject(cljNumber(42))
+    })
+
+    it('should evaluate unquote splicing', () => {
+      const parsed = parseCode('(let [xs [1 2 3]] `(a ~@xs b))')
+      const env = makeCoreEnv()
+      const result = evaluateForms(parsed, env)
+      expect(result).toMatchObject(
+        cljList([
+          cljSymbol('a'),
+          cljNumber(1),
+          cljNumber(2),
+          cljNumber(3),
+          cljSymbol('b'),
+        ])
+      )
+    })
+
+    it.each([
+      ['(my-when true 1 2 3)', 3],
+      ['(my-when false 1 2 3)', null],
+      ['(my-when (= 0 (- 1 1)) :zero)', cljKeyword(':zero')],
+      ['(my-when (= 0 (- 1 2)) :zero)', cljNil()],
+    ])(
+      'should handle defmacro with quasiquote body: custom when macro: %s',
+      (code, expected) => {
+        const env = makeCoreEnv()
+        evaluateForms(
+          parseCode(
+            '(defmacro my-when [cond & body] `(if ~cond (do ~@body) nil))'
+          ),
+          env
+        )
+
+        const result = evaluateForms(parseCode(code), env)
+        expect(result).toMatchObject(toCljValue(expected))
+      }
+    )
+
+    it.each([
+      ['(defn square [x] (* x x)) (square 5)', 25],
+      ['(defn add [a b] (+ a b)) (add 3 4)', 7],
+      [
+        `(defn fib [n] 
+           (if (<= n 1) 
+                 n
+                 (+ (fib (- n 1)) 
+                    (fib (- n 2)))))
+          (fib 10)`,
+        55,
+      ],
+    ])('should evaluate defn as a macro: %s -> %s', (code, expected) => {
+      const session = createSession()
+      session.evaluate(`(defmacro defn [name params & body]
+        \`(def ~name (fn ~params ~@body)))`)
+
+      const result = session.evaluate(code)
+      expect(result).toMatchObject(toCljValue(expected))
+    })
   })
 })

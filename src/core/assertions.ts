@@ -4,6 +4,7 @@ import {
   type CljFunction,
   type CljKeyword,
   type CljList,
+  type CljMacro,
   type CljMap,
   type CljNativeFunction,
   type CljNumber,
@@ -37,6 +38,8 @@ export const isFunction = (value: CljValue): value is CljFunction =>
   value.kind === 'function'
 export const isNativeFunction = (value: CljValue): value is CljNativeFunction =>
   value.kind === 'native-function'
+export const isMacro = (value: CljValue): value is CljMacro =>
+  value.kind === 'macro'
 export const isMap = (value: CljValue): value is CljMap => value.kind === 'map'
 export const isKeyword = (value: CljValue): value is CljKeyword =>
   value.kind === 'keyword'

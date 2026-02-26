@@ -1,8 +1,16 @@
-import { define, extend, getRootEnv, lookup } from './env'
-import { cljFunction, cljMap, cljNil, cljVector } from './factories'
+import { define, extend, getNamespaceEnv, getRootEnv, lookup } from './env'
+import {
+  cljFunction,
+  cljList,
+  cljMacro,
+  cljMap,
+  cljNil,
+  cljVector,
+} from './factories'
 import {
   type CljFunction,
   type CljList,
+  type CljMacro,
   type CljMap,
   type CljNativeFunction,
   type CljSymbol,
@@ -18,6 +26,7 @@ import {
   isFalsy,
   isKeyword,
   isList,
+  isMacro,
   isMap,
   isSpecialForm,
   isSymbol,
@@ -31,6 +40,9 @@ export const specialFormKeywords = {
   do: 'do',
   let: 'let',
   fn: 'fn',
+  defmacro: 'defmacro',
+  quasiquote: 'quasiquote',
+  ns: 'ns',
 } as const
 
 export class EvaluationError extends Error {
@@ -42,6 +54,78 @@ export class EvaluationError extends Error {
   }
 }
 
+export function parseParamVector(
+  args: CljVector,
+  env: Env
+): { params: CljSymbol[]; restParam: CljSymbol | null } {
+  const ampIdx = args.value.findIndex((a) => isSymbol(a) && a.name === '&')
+  let params: CljSymbol[] = []
+  let restParam: CljSymbol | null = null
+  if (ampIdx === -1) {
+    params = args.value.map((a) => a as CljSymbol)
+  } else {
+    // validate: & must be second-to-last
+    const ampsCount = args.value.filter(
+      (a) => isSymbol(a) && a.name === '&'
+    ).length
+    if (ampsCount > 1) {
+      throw new EvaluationError('& can only appear once', { args, env })
+    }
+    if (ampIdx !== args.value.length - 2) {
+      throw new EvaluationError('& must be second-to-last argument', {
+        args,
+        env,
+      })
+    }
+    params = args.value.slice(0, ampIdx).map((a) => a as CljSymbol)
+    restParam = args.value[ampIdx + 1] as CljSymbol
+  }
+  return { params, restParam }
+}
+
+export function bindParams(
+  params: CljSymbol[],
+  restParam: CljSymbol | null,
+  args: CljValue[],
+  outerEnv: Env
+): Env {
+  const paramNames = params.map((p) => p.name)
+  const paramValues = args.slice(0, paramNames.length)
+  if (restParam === null) {
+    // non variadic binding
+    if (args.length !== params.length) {
+      throw new EvaluationError(
+        `Arguments length mismatch: fn accepts ${params.length} arguments, but ${args.length} were provided`,
+        {
+          params,
+          args,
+          outerEnv,
+        }
+      )
+    }
+  } else {
+    // variadic binding
+    if (args.length < params.length) {
+      throw new EvaluationError(
+        `Arguments length mismatch: fn expects at least ${params.length} arguments, but ${args.length} were provided`,
+        {
+          params,
+          args,
+          outerEnv,
+        }
+      )
+    }
+
+    const restArgs = args.slice(paramNames.length)
+    const restValue = restArgs.length > 0 ? cljList(restArgs) : cljNil()
+    paramNames.push(restParam.name)
+    paramValues.push(restValue)
+    return extend(paramNames, paramValues, outerEnv)
+  }
+
+  return extend(paramNames, paramValues, outerEnv)
+}
+
 export function applyFunction(
   fn: CljFunction | CljNativeFunction,
   args: CljValue[],
@@ -51,22 +135,7 @@ export function applyFunction(
     return fn.fn(...args)
   }
   if (fn.kind === 'function') {
-    if (args.length !== fn.params.length) {
-      throw new EvaluationError(
-        `Arguments length mismatch: fn accepts ${fn.params.length} arguments, but ${args.length} were provided`,
-        {
-          fn,
-          args,
-          env,
-        }
-      )
-    }
-
-    const localEnv = extend(
-      fn.params.map((p) => p.name),
-      args,
-      fn.env
-    )
+    const localEnv = bindParams(fn.params, fn.restParam, args, fn.env)
     return evaluateForms(fn.body, localEnv)
   }
 
@@ -78,6 +147,11 @@ export function applyFunction(
       env,
     }
   )
+}
+
+export function applyMacro(macro: CljMacro, rawArgs: CljValue[]): CljValue {
+  const localEnv = bindParams(macro.params, macro.restParam, rawArgs, macro.env)
+  return evaluateForms(macro.body, localEnv)
 }
 
 export function evaluateVector(vector: CljVector, env: Env): CljValue {
@@ -96,6 +170,68 @@ export function evaluateMap(map: CljMap, env: Env): CljValue {
   return cljMap(entries)
 }
 
+function evaluateQuasiquote(form: CljValue, env: Env): CljValue {
+  switch (form.kind) {
+    case valueKeywords.vector:
+    case valueKeywords.list: {
+      // Handle unquote
+      const isAList = isList(form)
+      if (
+        isAList &&
+        form.value.length === 2 &&
+        isSymbol(form.value[0]) &&
+        form.value[0].name === 'unquote'
+      ) {
+        return evaluate(form.value[1], env)
+      }
+
+      // Build new collection
+      const elements: CljValue[] = []
+      for (const elem of form.value) {
+        // Handle unquote splicing
+        if (
+          isList(elem) &&
+          elem.value.length === 2 &&
+          isSymbol(elem.value[0]) &&
+          elem.value[0].name === 'unquote-splicing'
+        ) {
+          const toSplice = evaluate(elem.value[1], env)
+          if (!isList(toSplice) && !isVector(toSplice)) {
+            throw new EvaluationError(
+              'Unquote-splicing must evaluate to a list or vector',
+              { elem, env }
+            )
+          }
+          elements.push(...toSplice.value)
+          continue
+        }
+        // Otherwise, recursively evaluate the quasiquote
+        elements.push(evaluateQuasiquote(elem, env))
+      }
+      return isAList ? cljList(elements) : cljVector(elements)
+    }
+    case valueKeywords.map: {
+      // just recursve over each key-value pair with evaluateQuasiquote
+      const entries: [CljValue, CljValue][] = []
+      for (const [key, value] of form.entries) {
+        const evaluatedKey = evaluateQuasiquote(key, env)
+        const evaluatedValue = evaluateQuasiquote(value, env)
+        entries.push([evaluatedKey, evaluatedValue])
+      }
+      return cljMap(entries)
+    }
+    case valueKeywords.number:
+    case valueKeywords.string:
+    case valueKeywords.boolean:
+    case valueKeywords.keyword:
+    case valueKeywords.nil:
+    case valueKeywords.symbol:
+      return form
+    default:
+      throw new EvaluationError(`Unexpected form: ${form.kind}`, { form, env })
+  }
+}
+
 export function evaluateSpecialForm(
   symbol: string,
   list: CljList,
@@ -105,6 +241,8 @@ export function evaluateSpecialForm(
     case 'quote':
       // (quote expr) -> expr (unevaluated)
       return list.value[1]
+    case 'quasiquote':
+      return evaluateQuasiquote(list.value[1], env)
     case 'def':
       // (def name expr) -> nil
       // defines a global binding for the given name
@@ -116,7 +254,9 @@ export function evaluateSpecialForm(
           env,
         })
       }
-      define(name.name, evaluate(list.value[2], env), getRootEnv(env))
+      define(name.name, evaluate(list.value[2], env), getNamespaceEnv(env))
+      return cljNil()
+    case 'ns':
       return cljNil()
     case 'if':
       // (if condition then else) -> result
@@ -173,11 +313,33 @@ export function evaluateSpecialForm(
       if (args.value.some((arg) => !isSymbol(arg))) {
         throw new EvaluationError('Arguments must be symbols', { args, env })
       }
-      return cljFunction(
-        args.value.map((arg) => arg as CljSymbol),
-        body,
-        env
-      )
+      const { params, restParam } = parseParamVector(args, env)
+      return cljFunction(params, restParam, body, env)
+    }
+    case 'defmacro': {
+      const name = list.value[1]
+      if (!isSymbol(name)) {
+        throw new EvaluationError(
+          'First element of defmacro must be a symbol',
+          {
+            name,
+            list,
+            env,
+          }
+        )
+      }
+      const paramsVector = list.value[2]
+      if (!isVector(paramsVector)) {
+        throw new EvaluationError('defmacro params must be a vector', {
+          paramsVector,
+          env,
+        })
+      }
+      const { params, restParam } = parseParamVector(paramsVector, env)
+      const body = list.value.slice(3)
+      const macro = cljMacro(params, restParam, body, env)
+      define(name.name, macro, getRootEnv(env))
+      return cljNil()
     }
     default:
       throw new EvaluationError(`Unknown special form: ${symbol}`, {
@@ -199,6 +361,11 @@ export function evaluateList(list: CljList, env: Env): CljValue {
   }
 
   const evaledFirst = evaluate(first, env)
+  if (isMacro(evaledFirst)) {
+    const rawArgs = list.value.slice(1)
+    const expanded = applyMacro(evaledFirst, rawArgs)
+    return evaluate(expanded, env)
+  }
   if (isAFunction(evaledFirst)) {
     const args = list.value.slice(1).map((v) => evaluate(v, env))
     return applyFunction(evaledFirst, args, env)
