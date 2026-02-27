@@ -99,7 +99,7 @@ function makeErrorEntry(source: string, e: unknown): ReplEntryError {
 
 export function resetEnv(state: ReplState): void {
   state.outputs = []
-  state.session = makeSession(state.outputs)
+  state.session = makeSession((text) => state.outputs.push(text))
 }
 
 export function getAllForms(state: ReplState): string {

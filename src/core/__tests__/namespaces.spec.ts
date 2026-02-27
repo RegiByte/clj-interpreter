@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import macrosSource from '../../clojure/macros.clj?raw'
-import { cljNil, cljNumber, cljString } from '../factories'
+import { cljNumber, cljString } from '../factories'
 import { createSession } from '../session'
 import { EvaluationError } from '../evaluator'
 

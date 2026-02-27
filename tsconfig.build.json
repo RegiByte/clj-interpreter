@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "src/**/__tests__/**",
+    "src/**/*.spec.ts",
+    "src/**/*.test.ts",
+    "src/demo-entry.ts",
+    "src/vite-plugin-clj"
+  ]
+}
