@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest'
 import { parseForms } from '../parser'
 import {
   cljBoolean,
-  cljComment,
   cljKeyword,
   cljList,
   cljMap,
@@ -288,14 +287,7 @@ describe('parser', () => {
     const input = '(+ 1 ; comment!\n 2)'
     const result = parseForms(tokenize(input))
     expect(result).toEqual([
-      cljList([
-        cljSymbol('+'),
-        cljNumber(1),
-        // note: comments are stripped during evaluation,
-        // but kept on parsed values for tooling support
-        cljComment(' comment!'),
-        cljNumber(2),
-      ]),
+      cljList([cljSymbol('+'), cljNumber(1), cljNumber(2)]),
     ])
   })
 

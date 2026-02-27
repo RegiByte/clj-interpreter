@@ -27,7 +27,6 @@ export const isSpecialForm = (
   value: CljValue
 ): value is CljSymbol & { name: keyof typeof specialFormKeywords } =>
   value.kind === 'symbol' && value.name in specialFormKeywords
-export const isComment = (value: CljValue): boolean => value.kind === 'comment'
 export const isSymbol = (value: CljValue): value is CljSymbol =>
   value.kind === 'symbol'
 export const isVector = (value: CljValue): value is CljVector =>

@@ -4,14 +4,15 @@ import {
   isEqual,
   isFalsy,
   isList,
+  isMacro,
   isMap,
   isTruthy,
   isVector,
   isKeyword,
   isSymbol,
 } from './assertions'
-import { define, makeEnv } from './env'
-import { applyFunction, evaluate, EvaluationError } from './evaluator'
+import { define, lookup, makeEnv } from './env'
+import { applyFunction, applyMacro, evaluate, EvaluationError } from './evaluator'
 import {
   cljBoolean,
   cljKeyword,
@@ -998,6 +999,39 @@ function getCoreFunctions(globalEnv: Env) {
     'coll?': cljNativeFunction('coll?', (x: CljValue) =>
       cljBoolean(x !== undefined && isCollection(x))
     ),
+
+    // ── Macro utilities ──────────────────────────────────────────────────────
+
+    'macroexpand-1': cljNativeFunction('macroexpand-1', (form: CljValue) => {
+      if (!isList(form) || form.value.length === 0) return form
+      const head = form.value[0]
+      if (!isSymbol(head)) return form
+      let macroValue: CljValue
+      try {
+        macroValue = lookup(head.name, globalEnv)
+      } catch {
+        return form
+      }
+      if (!isMacro(macroValue)) return form
+      return applyMacro(macroValue, form.value.slice(1))
+    }),
+
+    macroexpand: cljNativeFunction('macroexpand', (form: CljValue) => {
+      let current = form
+      while (true) {
+        if (!isList(current) || current.value.length === 0) return current
+        const head = current.value[0]
+        if (!isSymbol(head)) return current
+        let macroValue: CljValue
+        try {
+          macroValue = lookup(head.name, globalEnv)
+        } catch {
+          return current
+        }
+        if (!isMacro(macroValue)) return current
+        current = applyMacro(macroValue, current.value.slice(1))
+      }
+    }),
 
     type: cljNativeFunction('type', (x: CljValue) => {
       if (x === undefined) {

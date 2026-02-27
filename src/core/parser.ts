@@ -246,12 +246,6 @@ const parseMap = (scanner: TokenScanner) => {
         token
       )
     }
-    if (token.kind === tokenKeywords.Comment) {
-      // This is an edge case, since comments are tokens, but not values, we need to ignore their existence in maps
-      // to prevent them from being parsed as keys or values
-      scanner.advance() // consume the comment token
-      continue
-    }
     if (token.kind === tokenKeywords.RBrace) {
       scanner.advance() // consume the closing brace
       pairMatched = true
@@ -286,19 +280,6 @@ const parseMap = (scanner: TokenScanner) => {
   return { kind: valueKeywords.map, entries }
 }
 
-const parseComment = (scanner: TokenScanner) => {
-  const token = scanner.peek()
-  if (!token) {
-    throw new ParserError('Unexpected end of input', scanner.position())
-  }
-  if (token.kind !== tokenKeywords.Comment) {
-    throw new ParserError(`Unexpected token: ${getTokenValue(token)}`, token)
-  }
-
-  scanner.advance() // consume the comment token
-  return { kind: valueKeywords.comment, value: token.value }
-}
-
 function parseForm(scanner: TokenScanner): CljValue {
   const token = scanner.peek()
   if (!token) {
@@ -324,8 +305,6 @@ function parseForm(scanner: TokenScanner): CljValue {
       return parseUnquote(scanner)
     case tokenKeywords.UnquoteSplicing:
       return parseUnquoteSplicing(scanner)
-    case tokenKeywords.Comment:
-      return parseComment(scanner)
     default:
       throw new ParserError(
         `Unexpected token: ${getTokenValue(token)} at line ${token.start.line} column ${token.start.col}`,
@@ -336,7 +315,10 @@ function parseForm(scanner: TokenScanner): CljValue {
 
 // initializes the scanner and parses the forms, returning a tree of values
 export function parseForms(input: Token[]): CljValue[] {
-  const scanner = makeTokenScanner(input)
+  const withoutComments = input.filter(
+    (t) => t.kind !== tokenKeywords.Comment
+  )
+  const scanner = makeTokenScanner(withoutComments)
   const values: CljValue[] = []
   while (!scanner.isAtEnd()) {
     values.push(parseForm(scanner))

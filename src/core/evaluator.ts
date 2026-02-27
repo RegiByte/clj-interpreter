@@ -1,13 +1,14 @@
 import { define, extend, getNamespaceEnv, getRootEnv, lookup } from './env'
 import {
-  cljFunction,
   cljList,
-  cljMacro,
   cljMap,
+  cljMultiArityFunction,
+  cljMultiArityMacro,
   cljNil,
   cljVector,
 } from './factories'
 import {
+  type Arity,
   type CljFunction,
   type CljList,
   type CljMacro,
@@ -21,7 +22,6 @@ import {
 } from './types'
 import {
   isAFunction,
-  isComment,
   isEqual,
   isFalsy,
   isKeyword,
@@ -43,6 +43,8 @@ export const specialFormKeywords = {
   defmacro: 'defmacro',
   quasiquote: 'quasiquote',
   ns: 'ns',
+  loop: 'loop',
+  recur: 'recur',
 } as const
 
 export class EvaluationError extends Error {
@@ -51,6 +53,13 @@ export class EvaluationError extends Error {
     super(message)
     this.name = 'EvaluationError'
     this.context = context
+  }
+}
+
+export class RecurSignal {
+  args: CljValue[]
+  constructor(args: CljValue[]) {
+    this.args = args
   }
 }
 
@@ -81,6 +90,72 @@ export function parseParamVector(
     restParam = args.value[ampIdx + 1] as CljSymbol
   }
   return { params, restParam }
+}
+
+function parseArities(forms: CljValue[], env: Env): Arity[] {
+  if (forms.length === 0) {
+    throw new EvaluationError(
+      'fn/defmacro requires at least a parameter vector',
+      {
+        forms,
+        env,
+      }
+    )
+  }
+
+  if (isVector(forms[0])) {
+    const paramVec = forms[0]
+    if (paramVec.value.some((arg) => !isSymbol(arg))) {
+      throw new EvaluationError('Parameters must be symbols', {
+        paramVec,
+        env,
+      })
+    }
+    const { params, restParam } = parseParamVector(paramVec, env)
+    return [{ params, restParam, body: forms.slice(1) }]
+  }
+
+  if (isList(forms[0])) {
+    const arities: Arity[] = []
+    for (const form of forms) {
+      if (!isList(form) || form.value.length === 0) {
+        throw new EvaluationError(
+          'Multi-arity clause must be a list starting with a parameter vector',
+          { form, env }
+        )
+      }
+      const paramVec = form.value[0]
+      if (!isVector(paramVec)) {
+        throw new EvaluationError(
+          'First element of arity clause must be a parameter vector',
+          { paramVec, env }
+        )
+      }
+      if (paramVec.value.some((arg) => !isSymbol(arg))) {
+        throw new EvaluationError('Parameters must be symbols', {
+          paramVec,
+          env,
+        })
+      }
+      const { params, restParam } = parseParamVector(paramVec, env)
+      arities.push({ params, restParam, body: form.value.slice(1) })
+    }
+
+    const variadicCount = arities.filter((a) => a.restParam !== null).length
+    if (variadicCount > 1) {
+      throw new EvaluationError(
+        'At most one variadic arity is allowed per function',
+        { forms, env }
+      )
+    }
+
+    return arities
+  }
+
+  throw new EvaluationError(
+    'fn/defmacro expects a parameter vector or arity clauses',
+    { forms, env }
+  )
 }
 
 export function bindParams(
@@ -126,6 +201,26 @@ export function bindParams(
   return extend(paramNames, paramValues, outerEnv)
 }
 
+export function resolveArity(arities: Arity[], argCount: number): Arity {
+  const exactMatch = arities.find(
+    (a) => a.restParam === null && a.params.length === argCount
+  )
+  if (exactMatch) return exactMatch
+
+  const variadicMatch = arities.find(
+    (a) => a.restParam !== null && argCount >= a.params.length
+  )
+  if (variadicMatch) return variadicMatch
+
+  const counts = arities.map((a) =>
+    a.restParam ? `${a.params.length}+` : `${a.params.length}`
+  )
+  throw new EvaluationError(
+    `No matching arity for ${argCount} arguments. Available arities: ${counts.join(', ')}`,
+    { arities, argCount }
+  )
+}
+
 export function applyFunction(
   fn: CljFunction | CljNativeFunction,
   args: CljValue[],
@@ -135,8 +230,25 @@ export function applyFunction(
     return fn.fn(...args)
   }
   if (fn.kind === 'function') {
-    const localEnv = bindParams(fn.params, fn.restParam, args, fn.env)
-    return evaluateForms(fn.body, localEnv)
+    const arity = resolveArity(fn.arities, args.length)
+    let currentArgs = args
+    while (true) {
+      const localEnv = bindParams(
+        arity.params,
+        arity.restParam,
+        currentArgs,
+        fn.env
+      )
+      try {
+        return evaluateForms(arity.body, localEnv)
+      } catch (e) {
+        if (e instanceof RecurSignal) {
+          currentArgs = e.args
+          continue
+        }
+        throw e
+      }
+    }
   }
 
   throw new EvaluationError(
@@ -150,14 +262,13 @@ export function applyFunction(
 }
 
 export function applyMacro(macro: CljMacro, rawArgs: CljValue[]): CljValue {
-  const localEnv = bindParams(macro.params, macro.restParam, rawArgs, macro.env)
-  return evaluateForms(macro.body, localEnv)
+  const arity = resolveArity(macro.arities, rawArgs.length)
+  const localEnv = bindParams(arity.params, arity.restParam, rawArgs, macro.env)
+  return evaluateForms(arity.body, localEnv)
 }
 
 export function evaluateVector(vector: CljVector, env: Env): CljValue {
-  return cljVector(
-    vector.value.filter((v) => !isComment(v)).map((v) => evaluate(v, env))
-  )
+  return cljVector(vector.value.map((v) => evaluate(v, env)))
 }
 
 export function evaluateMap(map: CljMap, env: Env): CljValue {
@@ -304,17 +415,8 @@ export function evaluateSpecialForm(
 
       return evaluateForms(body, localEnv)
     case 'fn': {
-      // (fn [args] body) -> function
-      const args = list.value[1]
-      if (!isVector(args)) {
-        throw new EvaluationError('Arguments must be a vector', { args, env })
-      }
-      const body = list.value.slice(2)
-      if (args.value.some((arg) => !isSymbol(arg))) {
-        throw new EvaluationError('Arguments must be symbols', { args, env })
-      }
-      const { params, restParam } = parseParamVector(args, env)
-      return cljFunction(params, restParam, body, env)
+      const arities = parseArities(list.value.slice(1), env)
+      return cljMultiArityFunction(arities, env)
     }
     case 'defmacro': {
       const name = list.value[1]
@@ -328,18 +430,66 @@ export function evaluateSpecialForm(
           }
         )
       }
-      const paramsVector = list.value[2]
-      if (!isVector(paramsVector)) {
-        throw new EvaluationError('defmacro params must be a vector', {
-          paramsVector,
+      const arities = parseArities(list.value.slice(2), env)
+      const macro = cljMultiArityMacro(arities, env)
+      define(name.name, macro, getRootEnv(env))
+      return cljNil()
+    }
+    case 'recur': {
+      const args = list.value.slice(1).map((v) => evaluate(v, env))
+      throw new RecurSignal(args)
+    }
+    case 'loop': {
+      const loopBindings = list.value[1]
+      if (!isVector(loopBindings)) {
+        throw new EvaluationError('loop bindings must be a vector', {
+          loopBindings,
           env,
         })
       }
-      const { params, restParam } = parseParamVector(paramsVector, env)
-      const body = list.value.slice(3)
-      const macro = cljMacro(params, restParam, body, env)
-      define(name.name, macro, getRootEnv(env))
-      return cljNil()
+      if (loopBindings.value.length % 2 !== 0) {
+        throw new EvaluationError(
+          'loop bindings must be a balanced pair of keys and values',
+          { loopBindings, env }
+        )
+      }
+      const loopBody = list.value.slice(2)
+
+      const names: string[] = []
+      let initEnv = env
+      for (let i = 0; i < loopBindings.value.length; i += 2) {
+        const key = loopBindings.value[i]
+        if (!isSymbol(key)) {
+          throw new EvaluationError('loop binding keys must be symbols', {
+            key,
+            env,
+          })
+        }
+        names.push(key.name)
+        const value = evaluate(loopBindings.value[i + 1], initEnv)
+        initEnv = extend([key.name], [value], initEnv)
+      }
+
+      let currentArgs = names.map((n) => lookup(n, initEnv))
+
+      while (true) {
+        const loopEnv = extend(names, currentArgs, env)
+        try {
+          return evaluateForms(loopBody, loopEnv)
+        } catch (e) {
+          if (e instanceof RecurSignal) {
+            if (e.args.length !== names.length) {
+              throw new EvaluationError(
+                `recur expects ${names.length} arguments but got ${e.args.length}`,
+                { list, env }
+              )
+            }
+            currentArgs = e.args
+            continue
+          }
+          throw e
+        }
+      }
     }
     default:
       throw new EvaluationError(`Unknown special form: ${symbol}`, {
@@ -412,11 +562,23 @@ export function evaluate(expr: CljValue, env: Env): CljValue {
     case valueKeywords.function:
     case valueKeywords.boolean:
       return expr
-    case valueKeywords.symbol:
+    case valueKeywords.symbol: {
+      const slashIdx = expr.name.indexOf('/')
+      if (slashIdx > 0 && slashIdx < expr.name.length - 1) {
+        const alias = expr.name.slice(0, slashIdx)
+        const sym = expr.name.slice(slashIdx + 1)
+        const nsEnv = getNamespaceEnv(env)
+        const targetEnv = nsEnv.aliases?.get(alias)
+        if (!targetEnv) {
+          throw new EvaluationError(`No such namespace alias: ${alias}`, {
+            symbol: expr.name,
+            env,
+          })
+        }
+        return lookup(sym, targetEnv)
+      }
       return lookup(expr.name, env)
-    case valueKeywords.comment:
-      // comments should be filtered out during evaluation, they should fall through here
-      throw new EvaluationError('Comments are not evaluatable', { expr, env })
+    }
     case valueKeywords.vector:
       return evaluateVector(expr, env)
     case valueKeywords.map:
@@ -431,7 +593,6 @@ export function evaluate(expr: CljValue, env: Env): CljValue {
 export function evaluateForms(forms: CljValue[], env: Env): CljValue {
   let result: CljValue = cljNil()
   for (const form of forms) {
-    if (isComment(form)) continue
     result = evaluate(form, env)
   }
   return result

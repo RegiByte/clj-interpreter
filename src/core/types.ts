@@ -10,7 +10,6 @@ export const valueKeywords = {
   map: 'map',
   function: 'function',
   nativeFunction: 'native-function',
-  comment: 'comment',
   macro: 'macro',
 } as const
 export type ValueKeywords = (typeof valueKeywords)[keyof typeof valueKeywords]
@@ -24,27 +23,29 @@ export type CljSymbol = { kind: 'symbol'; name: string }
 export type CljList = { kind: 'list'; value: CljValue[] }
 export type CljVector = { kind: 'vector'; value: CljValue[] }
 export type CljMap = { kind: 'map'; entries: [CljValue, CljValue][] }
-export type CljComment = { kind: 'comment'; value: string }
 export type Env = {
   bindings: Map<string, CljValue>
   outer: Env | null
   namespace?: string // only present on namespace-root envs
+  aliases?: Map<string, Env> // only present on namespace-root envs
+}
+
+export type Arity = {
+  params: CljSymbol[]
+  restParam: CljSymbol | null
+  body: CljValue[]
 }
 
 export type CljFunction = {
   kind: 'function'
-  params: CljSymbol[]
-  restParam: CljSymbol | null // the symbol after &, or null if not variadic
-  body: CljValue[]
-  env: Env // captured environment at the time of fn creation
+  arities: Arity[]
+  env: Env
 }
 
 export type CljMacro = {
   kind: 'macro'
-  params: CljSymbol[]
-  restParam: CljSymbol | null // the symbol after &, or null if not variadic
-  body: CljValue[]
-  env: Env // captured environment at the time of macro creation
+  arities: Arity[]
+  env: Env
 }
 
 export type CljNativeFunction = {
@@ -64,7 +65,6 @@ export type CljValue =
   | CljVector
   | CljMap
   | CljFunction
-  | CljComment // stripped during evaluation, kept on parsed values for tooling support
   | CljNativeFunction
   | CljMacro
 

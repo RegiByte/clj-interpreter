@@ -19,8 +19,22 @@ export function valueToString(value: CljValue): string {
       return `[${value.value.map(valueToString).join(' ')}]`
     case valueKeywords.map:
       return `{${value.entries.map(([key, value]) => `${valueToString(key)} ${valueToString(value)}`).join(' ')}}`
-    case valueKeywords.function:
-      return `(fn [${value.params.map(valueToString).join(' ')}] ${value.body.map(valueToString).join(' ')})`
+    case valueKeywords.function: {
+      if (value.arities.length === 1) {
+        const a = value.arities[0]
+        const params = a.restParam
+          ? [...a.params, { kind: 'symbol' as const, name: '&' }, a.restParam]
+          : a.params
+        return `(fn [${params.map(valueToString).join(' ')}] ${a.body.map(valueToString).join(' ')})`
+      }
+      const clauses = value.arities.map((a) => {
+        const params = a.restParam
+          ? [...a.params, { kind: 'symbol' as const, name: '&' }, a.restParam]
+          : a.params
+        return `([${params.map(valueToString).join(' ')}] ${a.body.map(valueToString).join(' ')})`
+      })
+      return `(fn ${clauses.join(' ')})`
+    }
     case valueKeywords.nativeFunction:
       return `(native-fn ${value.name})`
     case valueKeywords.nil:

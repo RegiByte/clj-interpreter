@@ -1,13 +1,10 @@
-import { evaluateForms, EvaluationError } from '../evaluator'
-import { makeCoreEnv } from '../core-env'
+import { EvaluationError } from '../evaluator'
 import { expect, it, describe } from 'vitest'
 import {
   cljBoolean,
-  cljComment,
   cljFunction,
   cljKeyword,
   cljList,
-  cljMacro,
   cljMap,
   cljNil,
   cljNumber,
@@ -15,15 +12,24 @@ import {
   cljSymbol,
   cljVector,
 } from '../factories'
-import { parseForms } from '../parser'
-import { tokenize } from '../tokenizer'
-import { define, lookup } from '../env'
+import { lookup } from '../env'
 import type { CljValue } from '../types'
 import { isCljValue } from '../assertions'
 import { createSession } from '../session'
+import macrosSource from '../../clojure/macros.clj?raw'
 
-function parseCode(code: string) {
-  return parseForms(tokenize(code))
+function expectEvalError(code: string, expectedMessage: string) {
+  const session = createSession()
+  let error: EvaluationError | undefined
+  expect(() => {
+    try {
+      session.evaluate(code)
+    } catch (e) {
+      if (e instanceof EvaluationError) error = e
+      throw e
+    }
+  }).toThrow(EvaluationError)
+  expect(error?.message).toContain(expectedMessage)
 }
 
 const toCljValue = (value: any): CljValue => {
@@ -59,56 +65,49 @@ const toCljValue = (value: any): CljValue => {
 describe('evaluator spec', () => {
   describe('primitive forms spec', () => {
     it('should evaluate a single form', () => {
-      const env = makeCoreEnv()
-      const code = '1'
-      const form = parseCode(code)
-      const result = evaluateForms(form, env)
+      const session = createSession()
+      const result = session.evaluate('1')
       expect(result).toMatchObject(toCljValue(1))
     })
 
     it.each([
-      ['number', cljNumber(1)],
-      ['string', cljString('hello')],
-      ['boolean', cljBoolean(true)],
-      ['keyword', cljKeyword('keyword')],
+      ['1', cljNumber(1)],
+      ['"hello"', cljString('hello')],
+      ['true', cljBoolean(true)],
+      [':keyword', cljKeyword(':keyword')],
       ['nil', cljNil()],
-    ])('should evaluate self-evaluating forms: %s', (_, form) => {
-      const env = makeCoreEnv()
-      const result = evaluateForms([form], env)
-      expect(result).toMatchObject(form)
+    ])('should evaluate self-evaluating forms: %s', (code, expected) => {
+      const session = createSession()
+      expect(session.evaluate(code)).toMatchObject(expected)
     })
 
     it('should evaluate functions to self', () => {
-      const env = makeCoreEnv()
-      const form = cljFunction([cljSymbol('n1')], null, [cljNumber(1)], env)
-      const result = evaluateForms([form], env)
+      const session = createSession()
+      const userEnv = session.getNs('user')!
+      const form = cljFunction([cljSymbol('n1')], null, [cljNumber(1)], userEnv)
+      const result = session.evaluateForms([form])
       expect(result).toMatchObject(form)
     })
 
-    it('should evaluate a vector with items and ignore comments', () => {
-      const env = makeCoreEnv()
-      const form = cljVector([
-        cljNumber(1),
-        cljComment('comment'),
-        cljNumber(2),
-      ])
-      const result = evaluateForms([form], env)
+    it('should evaluate a vector with items and strip comments at parse time', () => {
+      const session = createSession()
+      const result = session.evaluate('[1 ; comment\n 2]')
       expect(result).toMatchObject(cljVector([cljNumber(1), cljNumber(2)]))
     })
   })
 
   describe('special forms spec', () => {
     it('should evaluate fn special form', () => {
-      const parsed = parseCode(`(fn [a b] (+ a b))`)
-      const env = makeCoreEnv()
-      define('some-symbol', cljNumber(1), env)
-      const result = evaluateForms(parsed, env)
+      const session = createSession()
+      session.evaluate('(def some-symbol 1)')
+      const result = session.evaluate('(fn [a b] (+ a b))')
+      const userEnv = session.getNs('user')!
       expect(result).toMatchObject(
         cljFunction(
           [cljSymbol('a'), cljSymbol('b')],
           null,
           [cljList([cljSymbol('+'), cljSymbol('a'), cljSymbol('b')])],
-          env
+          userEnv
         )
       )
       if (result.kind !== 'function') {
@@ -119,58 +118,47 @@ describe('evaluator spec', () => {
     })
 
     it('should evaluate def special form', () => {
-      const parsed = parseCode(`(def some-symbol 1)`)
-      const env = makeCoreEnv()
-      const result = evaluateForms(parsed, env)
+      const session = createSession()
+      const result = session.evaluate('(def some-symbol 1)')
       expect(result).toMatchObject(cljNil())
-      expect(lookup('some-symbol', env)).toMatchObject(cljNumber(1))
+      expect(lookup('some-symbol', session.getNs('user')!)).toMatchObject(
+        cljNumber(1)
+      )
     })
 
     it('def should define a global binding, not local', () => {
-      const code = `(let [x 1] 
+      const session = createSession()
+      const result = session.evaluate(`(let [x 1] 
     (def y 2)
     (+ 1 x))
-    y` // y was defined inside the let body, but it is stored in the global environment
-      const parsed = parseCode(code)
-      const env = makeCoreEnv()
-      const result = evaluateForms(parsed, env)
+    y`)
       expect(result).toMatchObject(cljNumber(2))
     })
 
     it('should evaluate a quote special form', () => {
-      const parsed = parseCode(`(quote (+ 1 2 3))`)
-      const env = makeCoreEnv()
-      const result = evaluateForms(parsed, env)
+      const session = createSession()
+      const result = session.evaluate('(quote (+ 1 2 3))')
       expect(result).toMatchObject(
         cljList([cljSymbol('+'), cljNumber(1), cljNumber(2), cljNumber(3)])
       )
     })
 
     it('should evaluate a do special form', () => {
-      const parsed = parseCode(`(do 1 2 3)`)
-      const env = makeCoreEnv()
-      const result = evaluateForms(parsed, env)
-      expect(result).toMatchObject(cljNumber(3))
+      const session = createSession()
+      expect(session.evaluate('(do 1 2 3)')).toMatchObject(cljNumber(3))
     })
 
     it('should evaluate a let special form', () => {
-      const parsed = parseCode(`(let [a 1 b 2] [a a b b])`)
-      const env = makeCoreEnv()
-      const result = evaluateForms(parsed, env)
-      expect(result).toMatchObject(
+      const session = createSession()
+      expect(session.evaluate('(let [a 1 b 2] [a a b b])')).toMatchObject(
         cljVector([cljNumber(1), cljNumber(1), cljNumber(2), cljNumber(2)])
       )
     })
 
     it('should evaluate a if special form', () => {
-      const parsed = parseCode(`(if true 1 2)`)
-      const env = makeCoreEnv()
-      const result = evaluateForms(parsed, env)
-      expect(result).toMatchObject(cljNumber(1))
-
-      const parsed2 = parseCode(`(if false 1 2)`)
-      const result2 = evaluateForms(parsed2, env)
-      expect(result2).toMatchObject(cljNumber(2))
+      const session = createSession()
+      expect(session.evaluate('(if true 1 2)')).toMatchObject(cljNumber(1))
+      expect(session.evaluate('(if false 1 2)')).toMatchObject(cljNumber(2))
     })
   })
 
@@ -181,41 +169,37 @@ describe('evaluator spec', () => {
       ['((fn [a b] (* a b)) 1 2)', 2],
       ['((fn [a b] (/ a b)) 1 2)', 1 / 2],
     ])('should evaluate a user-defined function %s → %s', (code, expected) => {
-      const parsed1 = parseCode(code)
-      const env = makeCoreEnv()
-      const result1 = evaluateForms(parsed1, env)
+      const session = createSession()
+      const result1 = session.evaluate(code)
       expect(result1).toMatchObject(toCljValue(expected))
     })
 
     it('should evaluate user-defined function accessing outer env', () => {
-      const parsed = parseCode(`(def x 10)
+      const session = createSession()
+      const result = session.evaluate(`(def x 10)
     (def mult-10 (fn [n] (* n x)))
     (mult-10 2)`)
-      const env = makeCoreEnv()
-      const result = evaluateForms(parsed, env)
       expect(result).toMatchObject(cljNumber(20))
     })
 
     it('should capture the outer environment in a function', () => {
-      const parsed = parseCode(`(def make-adder (fn [n] (fn [x] (+ n x))))
+      const session = createSession()
+      const result =
+        session.evaluate(`(def make-adder (fn [n] (fn [x] (+ n x))))
 ((make-adder 5) 3) `)
-      const env = makeCoreEnv()
-      const result = evaluateForms(parsed, env)
       expect(result).toMatchObject(cljNumber(8))
     })
 
     it('should evaluate a nested function call', () => {
-      const parsed = parseCode(`((fn [a b] ((fn [x] (* x a)) b)) 2 3)`)
-      const env = makeCoreEnv()
-      const result = evaluateForms(parsed, env)
-      expect(result).toMatchObject(cljNumber(6))
+      const session = createSession()
+      expect(
+        session.evaluate('((fn [a b] ((fn [x] (* x a)) b)) 2 3)')
+      ).toMatchObject(cljNumber(6))
     })
 
     it('should evaluate if with truthy value', () => {
-      const parsed = parseCode(`(if [1] 1 2)`)
-      const env = makeCoreEnv()
-      const result = evaluateForms(parsed, env)
-      expect(result).toMatchObject(cljNumber(1))
+      const session = createSession()
+      expect(session.evaluate('(if [1] 1 2)')).toMatchObject(cljNumber(1))
     })
   })
 
@@ -230,9 +214,8 @@ describe('evaluator spec', () => {
       ])(
         'should evaluate all basic math operations %s --- %s → %s',
         (_, code, expectedValue) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          const result = evaluateForms(parsed, env)
+          const session = createSession()
+          const result = session.evaluate(code)
           if (result.kind !== 'number') {
             expect.fail('Result is not a number')
           }
@@ -241,11 +224,9 @@ describe('evaluator spec', () => {
       )
 
       it('should throw on division by zero', () => {
-        const parsed = parseCode(`(/ 1 0)`)
-        const env = makeCoreEnv()
-        expect(() => {
-          evaluateForms(parsed, env)
-        }).toThrow(EvaluationError)
+        expect(() => createSession().evaluate('(/ 1 0)')).toThrow(
+          EvaluationError
+        )
       })
     })
 
@@ -261,9 +242,8 @@ describe('evaluator spec', () => {
       ])(
         'should evaluate > core function: %s should be %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          const result = evaluateForms(parsed, env)
+          const session = createSession()
+          const result = session.evaluate(code)
           expect(result).toMatchObject(cljBoolean(expected))
         }
       )
@@ -274,21 +254,7 @@ describe('evaluator spec', () => {
       ])(
         'should throw on invalid %s function arguments: %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          let error: EvaluationError | undefined
-          expect(() => {
-            try {
-              const result = evaluateForms(parsed, env)
-              return result
-            } catch (e) {
-              if (e instanceof EvaluationError) {
-                error = e
-              }
-              throw e
-            }
-          }).toThrow(EvaluationError)
-          expect(error?.message).toContain(expected)
+          expectEvalError(code, expected)
         }
       )
 
@@ -306,9 +272,8 @@ describe('evaluator spec', () => {
       ])(
         'should evaluate < core function: %s should be %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          const result = evaluateForms(parsed, env)
+          const session = createSession()
+          const result = session.evaluate(code)
           expect(result).toMatchObject(cljBoolean(expected))
         }
       )
@@ -319,21 +284,7 @@ describe('evaluator spec', () => {
       ])(
         'should throw on invalid %s function arguments: %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          let error: EvaluationError | undefined
-          expect(() => {
-            try {
-              const result = evaluateForms(parsed, env)
-              return result
-            } catch (e) {
-              if (e instanceof EvaluationError) {
-                error = e
-              }
-              throw e
-            }
-          }).toThrow(EvaluationError)
-          expect(error?.message).toContain(expected)
+          expectEvalError(code, expected)
         }
       )
     })
@@ -353,9 +304,8 @@ describe('evaluator spec', () => {
         ['(<= 1 2 2 4)', true],
         ['(<= 1 2 1 4)', false],
       ])('should evaluate >= and <= %s → %s', (code, expected) => {
-        const parsed = parseCode(code)
-        const env = makeCoreEnv()
-        const result = evaluateForms(parsed, env)
+        const session = createSession()
+        const result = session.evaluate(code)
         expect(result).toMatchObject(toCljValue(expected))
       })
 
@@ -369,18 +319,7 @@ describe('evaluator spec', () => {
       ])(
         'should throw on invalid >= / <= arguments: %s → "%s"',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          let error: EvaluationError | undefined
-          expect(() => {
-            try {
-              evaluateForms(parsed, env)
-            } catch (e) {
-              if (e instanceof EvaluationError) error = e
-              throw e
-            }
-          }).toThrow(EvaluationError)
-          expect(error?.message).toContain(expected)
+          expectEvalError(code, expected)
         }
       )
     })
@@ -395,9 +334,8 @@ describe('evaluator spec', () => {
       ])(
         'should evaluate count core function: %s should be %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          const result = evaluateForms(parsed, env)
+          const session = createSession()
+          const result = session.evaluate(code)
           expect(result).toMatchObject(cljNumber(expected))
         }
       )
@@ -411,21 +349,7 @@ describe('evaluator spec', () => {
       ])(
         'should throw on invalid count function arguments: %s should be %s',
         (code, expected_err) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          let error: EvaluationError | undefined
-          expect(() => {
-            try {
-              const result = evaluateForms(parsed, env)
-              return result
-            } catch (e) {
-              if (e instanceof EvaluationError) {
-                error = e
-              }
-              throw e
-            }
-          }).toThrow(EvaluationError)
-          expect(error?.message).toContain(expected_err)
+          expectEvalError(code, expected_err)
         }
       )
     })
@@ -444,9 +368,8 @@ describe('evaluator spec', () => {
       ])(
         'should evalute truthy? core function: %s should be %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          const result = evaluateForms(parsed, env)
+          const session = createSession()
+          const result = session.evaluate(code)
           expect(result).toMatchObject(cljBoolean(expected))
         }
       )
@@ -466,9 +389,8 @@ describe('evaluator spec', () => {
       ])(
         'should evalute falsy? core function: %s should be %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          const result = evaluateForms(parsed, env)
+          const session = createSession()
+          const result = session.evaluate(code)
           expect(result).toMatchObject(cljBoolean(expected))
         }
       )
@@ -487,9 +409,8 @@ describe('evaluator spec', () => {
       ])(
         'should evalute true? core function: %s should be %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          const result = evaluateForms(parsed, env)
+          const session = createSession()
+          const result = session.evaluate(code)
           expect(result).toMatchObject(cljBoolean(expected))
         }
       )
@@ -508,9 +429,8 @@ describe('evaluator spec', () => {
       ])(
         'should evalute false? core function: %s should be %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          const result = evaluateForms(parsed, env)
+          const session = createSession()
+          const result = session.evaluate(code)
           expect(result).toMatchObject(cljBoolean(expected))
         }
       )
@@ -530,9 +450,8 @@ describe('evaluator spec', () => {
       ])(
         'should evalute not core function: %s should be %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          const result = evaluateForms(parsed, env)
+          const session = createSession()
+          const result = session.evaluate(code)
           expect(result).toMatchObject(cljBoolean(expected))
         }
       )
@@ -578,9 +497,8 @@ describe('evaluator spec', () => {
       ])(
         'should evalute = core function: %s should be %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          const result = evaluateForms(parsed, env)
+          const session = createSession()
+          const result = session.evaluate(code)
           expect(result).toMatchObject(cljBoolean(expected))
         }
       )
@@ -600,9 +518,8 @@ describe('evaluator spec', () => {
       ])(
         'should evalute first core function: %s should be %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          const result = evaluateForms(parsed, env)
+          const session = createSession()
+          const result = session.evaluate(code)
           expect(result).toMatchObject(toCljValue(expected))
         }
       )
@@ -619,9 +536,8 @@ describe('evaluator spec', () => {
       ])(
         'should evalute rest core function: %s should be %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          const result = evaluateForms(parsed, env)
+          const session = createSession()
+          const result = session.evaluate(code)
           expect(result).toMatchObject(toCljValue(expected))
         }
       )
@@ -674,9 +590,8 @@ describe('evaluator spec', () => {
       ])(
         'should evalute conj core function: %s should be %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          const result = evaluateForms(parsed, env)
+          const session = createSession()
+          const result = session.evaluate(code)
           expect(result).toMatchObject(toCljValue(expected))
         }
       )
@@ -695,21 +610,7 @@ describe('evaluator spec', () => {
       ])(
         'should throw on invalid conj function arguments: %s should be %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          let error: EvaluationError | undefined
-          expect(() => {
-            try {
-              const result = evaluateForms(parsed, env)
-              return result
-            } catch (e) {
-              if (e instanceof EvaluationError) {
-                error = e
-              }
-              throw e
-            }
-          }).toThrow(EvaluationError)
-          expect(error?.message).toContain(expected)
+          expectEvalError(code, expected)
         }
       )
     })
@@ -727,9 +628,8 @@ describe('evaluator spec', () => {
       ])(
         'should evalute assoc core function: %s should be %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          const result = evaluateForms(parsed, env)
+          const session = createSession()
+          const result = session.evaluate(code)
           expect(result).toMatchObject(toCljValue(expected))
         }
       )
@@ -748,21 +648,7 @@ describe('evaluator spec', () => {
       ])(
         'should throw on invalid assoc function arguments: %s should be %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          let error: EvaluationError | undefined
-          expect(() => {
-            try {
-              const result = evaluateForms(parsed, env)
-              return result
-            } catch (e) {
-              if (e instanceof EvaluationError) {
-                error = e
-              }
-              throw e
-            }
-          }).toThrow(EvaluationError)
-          expect(error?.message).toContain(expected)
+          expectEvalError(code, expected)
         }
       )
     })
@@ -781,9 +667,8 @@ describe('evaluator spec', () => {
       ])(
         'should evalute dissoc core function: %s should be %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          const result = evaluateForms(parsed, env)
+          const session = createSession()
+          const result = session.evaluate(code)
           expect(result).toMatchObject(toCljValue(expected))
         }
       )
@@ -802,21 +687,7 @@ describe('evaluator spec', () => {
       ])(
         'should throw on invalid dissoc function arguments: %s should be %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          let error: EvaluationError | undefined
-          expect(() => {
-            try {
-              const result = evaluateForms(parsed, env)
-              return result
-            } catch (e) {
-              if (e instanceof EvaluationError) {
-                error = e
-              }
-              throw e
-            }
-          }).toThrow(EvaluationError)
-          expect(error?.message).toContain(expected)
+          expectEvalError(code, expected)
         }
       )
     })
@@ -844,9 +715,8 @@ describe('evaluator spec', () => {
       ])(
         'get should get a value from a collection: %s should be %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          const result = evaluateForms(parsed, env)
+          const session = createSession()
+          const result = session.evaluate(code)
           expect(result).toMatchObject(toCljValue(expected))
         }
       )
@@ -861,9 +731,8 @@ describe('evaluator spec', () => {
       ])(
         'evaluate function returned from expression as first member of a list: %s should be %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          const result = evaluateForms(parsed, env)
+          const session = createSession()
+          const result = session.evaluate(code)
           expect(result).toMatchObject(toCljValue(expected))
         }
       )
@@ -883,9 +752,8 @@ describe('evaluator spec', () => {
       ])(
         'str should concatenate arguments to string: %s should be %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          const result = evaluateForms(parsed, env)
+          const session = createSession()
+          const result = session.evaluate(code)
           expect(result).toMatchObject(cljString(expected))
         }
       )
@@ -894,24 +762,19 @@ describe('evaluator spec', () => {
     describe('println', () => {
       it('println should call output callback and return nil', () => {
         const outputs: string[] = []
-        const outputHandler = (text: string) => outputs.push(text)
-        const env = makeCoreEnv(outputHandler)
+        const session = createSession({ output: (text) => outputs.push(text) })
 
-        const parsed1 = parseCode('(println "Hello" "world")')
-        const result1 = evaluateForms(parsed1, env)
-        expect(result1).toMatchObject(cljNil())
+        expect(session.evaluate('(println "Hello" "world")')).toMatchObject(
+          cljNil()
+        )
         expect(outputs).toEqual(['Hello world'])
 
-        const parsed2 = parseCode('(println 1 2 3)')
-        const result2 = evaluateForms(parsed2, env)
-        expect(result2).toMatchObject(cljNil())
+        expect(session.evaluate('(println 1 2 3)')).toMatchObject(cljNil())
         expect(outputs).toEqual(['Hello world', '1 2 3'])
       })
 
       it('println should not be defined if no output callback provided', () => {
-        const env = makeCoreEnv()
-        const parsed = parseCode('(println "test")')
-        expect(() => evaluateForms(parsed, env)).toThrow(
+        expect(() => createSession().evaluate('(println "test")')).toThrow(
           'Symbol println not found'
         )
       })
@@ -956,9 +819,8 @@ describe('evaluator spec', () => {
       ])(
         'cons should prepend an element to a collection: %s should be %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          const result = evaluateForms(parsed, env)
+          const session = createSession()
+          const result = session.evaluate(code)
           expect(result).toMatchObject(toCljValue(expected))
         }
       )
@@ -976,24 +838,7 @@ describe('evaluator spec', () => {
       ])(
         'cons should throw on invalid arguments: %s should be %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          let error: EvaluationError | undefined
-          expect(() => {
-            try {
-              const result = evaluateForms(parsed, env)
-              return result
-            } catch (e) {
-              if (e instanceof EvaluationError) {
-                error = e
-                expect(() => evaluateForms(parsed, env)).toThrow(
-                  EvaluationError
-                )
-              }
-              throw e
-            }
-          }).toThrow(EvaluationError)
-          expect(error?.message).toContain(expected)
+          expectEvalError(code, expected)
         }
       )
     })
@@ -1020,9 +865,8 @@ describe('evaluator spec', () => {
       ])(
         `should evalute map core function: %s should be %s`,
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          const result = evaluateForms(parsed, env)
+          const session = createSession()
+          const result = session.evaluate(code)
           expect(result).toMatchObject(toCljValue(expected))
         }
       )
@@ -1045,21 +889,7 @@ describe('evaluator spec', () => {
       ])(
         'should throw on invalid map function arguments: %s should throw "%s"',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          let error: EvaluationError | undefined
-          expect(() => {
-            try {
-              const result = evaluateForms(parsed, env)
-              return result
-            } catch (e) {
-              if (e instanceof EvaluationError) {
-                error = e
-              }
-              throw e
-            }
-          }).toThrow(EvaluationError)
-          expect(error?.message).toContain(expected)
+          expectEvalError(code, expected)
         }
       )
     })
@@ -1085,9 +915,8 @@ describe('evaluator spec', () => {
       ])(
         'should evalute filter core function: %s should be %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          const result = evaluateForms(parsed, env)
+          const session = createSession()
+          const result = session.evaluate(code)
           expect(result).toMatchObject(toCljValue(expected))
         }
       )
@@ -1122,21 +951,7 @@ describe('evaluator spec', () => {
       ])(
         'should throw on invalid filter function arguments: %s should throw "%s"',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          let error: EvaluationError | undefined
-          expect(() => {
-            try {
-              const result = evaluateForms(parsed, env)
-              return result
-            } catch (e) {
-              if (e instanceof EvaluationError) {
-                error = e
-              }
-              throw e
-            }
-          }).toThrow(EvaluationError)
-          expect(error?.message).toContain(expected)
+          expectEvalError(code, expected)
         }
       )
     })
@@ -1158,9 +973,8 @@ describe('evaluator spec', () => {
       ])(
         'should evaluate seq core function: %s should be %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          const result = evaluateForms(parsed, env)
+          const session = createSession()
+          const result = session.evaluate(code)
           expect(result).toMatchObject(toCljValue(expected))
         }
       )
@@ -1172,18 +986,7 @@ describe('evaluator spec', () => {
       ])(
         'should throw on invalid seq arguments: %s should throw "%s"',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          let error: EvaluationError | undefined
-          expect(() => {
-            try {
-              evaluateForms(parsed, env)
-            } catch (e) {
-              if (e instanceof EvaluationError) error = e
-              throw e
-            }
-          }).toThrow(EvaluationError)
-          expect(error?.message).toContain(expected)
+          expectEvalError(code, expected)
         }
       )
     })
@@ -1215,9 +1018,8 @@ describe('evaluator spec', () => {
       ])(
         'should evaluate reduce core function: %s should be %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          const result = evaluateForms(parsed, env)
+          const session = createSession()
+          const result = session.evaluate(code)
           expect(result).toMatchObject(toCljValue(expected))
         }
       )
@@ -1239,18 +1041,7 @@ describe('evaluator spec', () => {
       ])(
         'should throw on invalid reduce arguments: %s should throw "%s"',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          let error: EvaluationError | undefined
-          expect(() => {
-            try {
-              evaluateForms(parsed, env)
-            } catch (e) {
-              if (e instanceof EvaluationError) error = e
-              throw e
-            }
-          }).toThrow(EvaluationError)
-          expect(error?.message).toContain(expected)
+          expectEvalError(code, expected)
         }
       )
     })
@@ -1267,9 +1058,8 @@ describe('evaluator spec', () => {
       ])(
         'should evaluate eval core function %s should be %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          const result = evaluateForms(parsed, env)
+          const session = createSession()
+          const result = session.evaluate(code)
           expect(result).toMatchObject(toCljValue(expected))
         }
       )
@@ -1277,18 +1067,7 @@ describe('evaluator spec', () => {
       it.each([['(eval)', 'eval expects a form as argument']])(
         'should throw on invalid eval arguments: %s should throw "%s"',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          let error: EvaluationError | undefined
-          expect(() => {
-            try {
-              evaluateForms(parsed, env)
-            } catch (e) {
-              if (e instanceof EvaluationError) error = e
-              throw e
-            }
-          }).toThrow(EvaluationError)
-          expect(error?.message).toContain(expected)
+          expectEvalError(code, expected)
         }
       )
     })
@@ -1306,9 +1085,8 @@ describe('evaluator spec', () => {
       ])(
         'should evaluate apply core function %s should be %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          const result = evaluateForms(parsed, env)
+          const session = createSession()
+          const result = session.evaluate(code)
           expect(result).toMatchObject(toCljValue(expected))
         }
       )
@@ -1323,9 +1101,8 @@ describe('evaluator spec', () => {
         ['(dec 0)', -1],
         ['(dec 1)', 0],
       ])('should evaluate inc / dec: %s → %s', (code, expected) => {
-        const parsed = parseCode(code)
-        const env = makeCoreEnv()
-        const result = evaluateForms(parsed, env)
+        const session = createSession()
+        const result = session.evaluate(code)
         expect(result).toMatchObject(toCljValue(expected))
       })
 
@@ -1337,18 +1114,7 @@ describe('evaluator spec', () => {
       ])(
         'should throw on invalid inc / dec arguments: %s → "%s"',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          let error: EvaluationError | undefined
-          expect(() => {
-            try {
-              evaluateForms(parsed, env)
-            } catch (e) {
-              if (e instanceof EvaluationError) error = e
-              throw e
-            }
-          }).toThrow(EvaluationError)
-          expect(error?.message).toContain(expected)
+          expectEvalError(code, expected)
         }
       )
     })
@@ -1364,9 +1130,8 @@ describe('evaluator spec', () => {
         ['(min 3 1 2)', 1],
         ['(min -1 -5 -2)', -5],
       ])('should evaluate max / min: %s → %s', (code, expected) => {
-        const parsed = parseCode(code)
-        const env = makeCoreEnv()
-        const result = evaluateForms(parsed, env)
+        const session = createSession()
+        const result = session.evaluate(code)
         expect(result).toMatchObject(toCljValue(expected))
       })
 
@@ -1378,18 +1143,7 @@ describe('evaluator spec', () => {
       ])(
         'should throw on invalid max / min arguments: %s → "%s"',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          let error: EvaluationError | undefined
-          expect(() => {
-            try {
-              evaluateForms(parsed, env)
-            } catch (e) {
-              if (e instanceof EvaluationError) error = e
-              throw e
-            }
-          }).toThrow(EvaluationError)
-          expect(error?.message).toContain(expected)
+          expectEvalError(code, expected)
         }
       )
     })
@@ -1405,9 +1159,8 @@ describe('evaluator spec', () => {
         ],
         ['(vals {})', []],
       ])('should evaluate keys / vals: %s → %s', (code, expected) => {
-        const parsed = parseCode(code)
-        const env = makeCoreEnv()
-        const result = evaluateForms(parsed, env)
+        const session = createSession()
+        const result = session.evaluate(code)
         expect(result).toMatchObject(
           cljVector((expected as any[]).map(toCljValue))
         )
@@ -1421,18 +1174,7 @@ describe('evaluator spec', () => {
       ])(
         'should throw on invalid keys / vals arguments: %s → "%s"',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          let error: EvaluationError | undefined
-          expect(() => {
-            try {
-              evaluateForms(parsed, env)
-            } catch (e) {
-              if (e instanceof EvaluationError) error = e
-              throw e
-            }
-          }).toThrow(EvaluationError)
-          expect(error?.message).toContain(expected)
+          expectEvalError(code, expected)
         }
       )
     })
@@ -1445,9 +1187,8 @@ describe('evaluator spec', () => {
         ['(nth [10 20 30] 5 :missing)', cljKeyword(':missing')],
         ["(nth '() 0 :missing)", cljKeyword(':missing')],
       ])('should evaluate nth: %s → %s', (code, expected) => {
-        const parsed = parseCode(code)
-        const env = makeCoreEnv()
-        const result = evaluateForms(parsed, env)
+        const session = createSession()
+        const result = session.evaluate(code)
         expect(result).toMatchObject(toCljValue(expected as any))
       })
 
@@ -1459,18 +1200,7 @@ describe('evaluator spec', () => {
       ])(
         'should throw on invalid nth arguments: %s → "%s"',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          let error: EvaluationError | undefined
-          expect(() => {
-            try {
-              evaluateForms(parsed, env)
-            } catch (e) {
-              if (e instanceof EvaluationError) error = e
-              throw e
-            }
-          }).toThrow(EvaluationError)
-          expect(error?.message).toContain(expected)
+          expectEvalError(code, expected)
         }
       )
     })
@@ -1495,9 +1225,8 @@ describe('evaluator spec', () => {
         ['(drop 10 [1 2 3])', []],
         ["(drop 1 '(1 2 3))", [2, 3]],
       ])('should evaluate take / drop: %s → %s', (code, expected) => {
-        const parsed = parseCode(code)
-        const env = makeCoreEnv()
-        const result = evaluateForms(parsed, env)
+        const session = createSession()
+        const result = session.evaluate(code)
         expect(result).toMatchObject(
           cljList((expected as any[]).map(toCljValue))
         )
@@ -1511,18 +1240,7 @@ describe('evaluator spec', () => {
       ])(
         'should throw on invalid take / drop arguments: %s → "%s"',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          let error: EvaluationError | undefined
-          expect(() => {
-            try {
-              evaluateForms(parsed, env)
-            } catch (e) {
-              if (e instanceof EvaluationError) error = e
-              throw e
-            }
-          }).toThrow(EvaluationError)
-          expect(error?.message).toContain(expected)
+          expectEvalError(code, expected)
         }
       )
     })
@@ -1543,9 +1261,8 @@ describe('evaluator spec', () => {
         ],
         ['(concat [] [])', []],
       ])('should evaluate concat: %s → %s', (code, expected) => {
-        const parsed = parseCode(code)
-        const env = makeCoreEnv()
-        const result = evaluateForms(parsed, env)
+        const session = createSession()
+        const result = session.evaluate(code)
         expect(result).toMatchObject(
           cljList((expected as any[]).map(toCljValue))
         )
@@ -1557,18 +1274,7 @@ describe('evaluator spec', () => {
       ])(
         'should throw on invalid concat arguments: %s → "%s"',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          let error: EvaluationError | undefined
-          expect(() => {
-            try {
-              evaluateForms(parsed, env)
-            } catch (e) {
-              if (e instanceof EvaluationError) error = e
-              throw e
-            }
-          }).toThrow(EvaluationError)
-          expect(error?.message).toContain(expected)
+          expectEvalError(code, expected)
         }
       )
     })
@@ -1581,9 +1287,8 @@ describe('evaluator spec', () => {
       ])(
         'should evaluate into with vector target: %s → %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          const result = evaluateForms(parsed, env)
+          const session = createSession()
+          const result = session.evaluate(code)
           expect(result).toMatchObject(
             cljVector((expected as number[]).map(toCljValue))
           )
@@ -1596,9 +1301,8 @@ describe('evaluator spec', () => {
       ])(
         'should evaluate into with list target (reverses): %s → %s',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          const result = evaluateForms(parsed, env)
+          const session = createSession()
+          const result = session.evaluate(code)
           expect(result).toMatchObject(
             cljList((expected as number[]).map(toCljValue))
           )
@@ -1615,9 +1319,8 @@ describe('evaluator spec', () => {
         ],
         ['(into {} [])', {}],
       ])('should evaluate into with map target', (code, expected) => {
-        const parsed = parseCode(code)
-        const env = makeCoreEnv()
-        const result = evaluateForms(parsed, env)
+        const session = createSession()
+        const result = session.evaluate(code)
         expect(result).toMatchObject(toCljValue(expected))
       })
 
@@ -1631,28 +1334,15 @@ describe('evaluator spec', () => {
       ])(
         'should throw on invalid into arguments: %s → "%s"',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          let error: EvaluationError | undefined
-          expect(() => {
-            try {
-              evaluateForms(parsed, env)
-            } catch (e) {
-              if (e instanceof EvaluationError) error = e
-              throw e
-            }
-          }).toThrow(EvaluationError)
-          expect(error?.message).toContain(expected)
+          expectEvalError(code, expected)
         }
       )
     })
 
     describe('zipmap', () => {
       it('should evaluate zipmap with equal length collections', () => {
-        const parsed = parseCode('(zipmap [:a :b :c] [1 2 3])')
-        const env = makeCoreEnv()
-        const result = evaluateForms(parsed, env)
-        expect(result).toMatchObject(
+        const session = createSession()
+        expect(session.evaluate('(zipmap [:a :b :c] [1 2 3])')).toMatchObject(
           cljMap([
             [cljKeyword(':a'), cljNumber(1)],
             [cljKeyword(':b'), cljNumber(2)],
@@ -1662,24 +1352,22 @@ describe('evaluator spec', () => {
       })
 
       it('should evaluate zipmap stopping at shorter keys', () => {
-        const parsed = parseCode('(zipmap [:a] [1 2 3])')
-        const env = makeCoreEnv()
-        const result = evaluateForms(parsed, env)
-        expect(result).toMatchObject(cljMap([[cljKeyword(':a'), cljNumber(1)]]))
+        const session = createSession()
+        expect(session.evaluate('(zipmap [:a] [1 2 3])')).toMatchObject(
+          cljMap([[cljKeyword(':a'), cljNumber(1)]])
+        )
       })
 
       it('should evaluate zipmap stopping at shorter vals', () => {
-        const parsed = parseCode('(zipmap [:a :b :c] [1])')
-        const env = makeCoreEnv()
-        const result = evaluateForms(parsed, env)
-        expect(result).toMatchObject(cljMap([[cljKeyword(':a'), cljNumber(1)]]))
+        const session = createSession()
+        expect(session.evaluate('(zipmap [:a :b :c] [1])')).toMatchObject(
+          cljMap([[cljKeyword(':a'), cljNumber(1)]])
+        )
       })
 
       it('should evaluate zipmap with empty collections', () => {
-        const parsed = parseCode('(zipmap [] [])')
-        const env = makeCoreEnv()
-        const result = evaluateForms(parsed, env)
-        expect(result).toMatchObject(cljMap([]))
+        const session = createSession()
+        expect(session.evaluate('(zipmap [] [])')).toMatchObject(cljMap([]))
       })
 
       it.each([
@@ -1694,18 +1382,7 @@ describe('evaluator spec', () => {
       ])(
         'should throw on invalid zipmap arguments: %s → "%s"',
         (code, expected) => {
-          const parsed = parseCode(code)
-          const env = makeCoreEnv()
-          let error: EvaluationError | undefined
-          expect(() => {
-            try {
-              evaluateForms(parsed, env)
-            } catch (e) {
-              if (e instanceof EvaluationError) error = e
-              throw e
-            }
-          }).toThrow(EvaluationError)
-          expect(error?.message).toContain(expected)
+          expectEvalError(code, expected)
         }
       )
     })
@@ -1747,9 +1424,8 @@ describe('evaluator spec', () => {
         ['(coll? 42)', false],
         ['(coll? nil)', false],
       ])('should evaluate type predicate: %s → %s', (code, expected) => {
-        const parsed = parseCode(code)
-        const env = makeCoreEnv()
-        const result = evaluateForms(parsed, env)
+        const session = createSession()
+        const result = session.evaluate(code)
         expect(result).toMatchObject(toCljValue(expected))
       })
     })
@@ -1768,9 +1444,8 @@ describe('evaluator spec', () => {
         ['(type +)', cljKeyword(':function')],
         ['(type (fn [x] x))', cljKeyword(':function')],
       ])('should evaluate type: %s → %s', (code, expected) => {
-        const parsed = parseCode(code)
-        const env = makeCoreEnv()
-        const result = evaluateForms(parsed, env)
+        const session = createSession()
+        const result = session.evaluate(code)
         expect(result).toMatchObject(expected)
       })
     })
@@ -1794,9 +1469,8 @@ describe('evaluator spec', () => {
     ])(
       'keywords should call themselves in a map: %s should be %s',
       (code, expected) => {
-        const parsed = parseCode(code)
-        const env = makeCoreEnv()
-        const result = evaluateForms(parsed, env)
+        const session = createSession()
+        const result = session.evaluate(code)
         expect(result).toMatchObject(toCljValue(expected))
       }
     )
@@ -1804,9 +1478,8 @@ describe('evaluator spec', () => {
 
   describe('rest parameters', () => {
     it('should capture rest parameter in user defined function', () => {
-      const parsed = parseCode(`(fn [a b c & rest] [a b c rest])`)
-      const env = makeCoreEnv()
-      const result = evaluateForms(parsed, env)
+      const session = createSession()
+      const result = session.evaluate('(fn [a b c & rest] [a b c rest])')
       expect(result).toMatchObject(
         cljFunction(
           [cljSymbol('a'), cljSymbol('b'), cljSymbol('c')],
@@ -1819,7 +1492,7 @@ describe('evaluator spec', () => {
               cljSymbol('rest'),
             ]),
           ],
-          env
+          session.getNs('user')!
         )
       )
     })
@@ -1828,18 +1501,7 @@ describe('evaluator spec', () => {
       ['(fn [a b & c & rest] [a b c rest])', '& can only appear once'],
       [`(fn [a b & c rest] [a b c rest])`, '& must be second-to-last argument'],
     ])('should throw on invalid rest usage: %s → "%s"', (code, expected) => {
-      const parsed = parseCode(code)
-      const env = makeCoreEnv()
-      let error: EvaluationError | undefined
-      expect(() => {
-        try {
-          evaluateForms(parsed, env)
-        } catch (e) {
-          if (e instanceof EvaluationError) error = e
-          throw e
-        }
-      }).toThrow(EvaluationError)
-      expect(error?.message).toContain(expected)
+      expectEvalError(code, expected)
     })
 
     it.each([
@@ -1851,35 +1513,17 @@ describe('evaluator spec', () => {
     ])(
       'should hydrate rest parameter with extra bindings: %s → %o',
       (code, expected) => {
-        const parsed = parseCode(code)
-        const env = makeCoreEnv()
-        const result = evaluateForms(parsed, env)
+        const session = createSession()
+        const result = session.evaluate(code)
         expect(result).toMatchObject(toCljValue(expected))
       }
     )
 
     it.each([
-      [
-        '((fn [a b & rest] [a b rest]) 1)',
-        'Arguments length mismatch: fn expects at least 2 arguments, but 1 were provided',
-      ],
-      [
-        '((fn [a b] [a b]) 1 2 3)',
-        'Arguments length mismatch: fn accepts 2 arguments, but 3 were provided',
-      ],
+      ['((fn [a b & rest] [a b rest]) 1)', 'No matching arity for 1 arguments'],
+      ['((fn [a b] [a b]) 1 2 3)', 'No matching arity for 3 arguments'],
     ])('should throw on invalid rest usage: %s → "%s"', (code, expected) => {
-      const parsed = parseCode(code)
-      const env = makeCoreEnv()
-      let error: EvaluationError | undefined
-      expect(() => {
-        try {
-          evaluateForms(parsed, env)
-        } catch (e) {
-          if (e instanceof EvaluationError) error = e
-          throw e
-        }
-      }).toThrow(EvaluationError)
-      expect(error?.message).toContain(expected)
+      expectEvalError(code, expected)
     })
   })
 
@@ -1891,10 +1535,8 @@ describe('evaluator spec', () => {
       ['(defmacro pass-through [x] x) (pass-through nil)', null],
       ['(defmacro pass-through [x] x) (pass-through :foo)', cljKeyword(':foo')],
     ])('should pass scalars through', (code, expected) => {
-      const parsed = parseCode(code)
-      const env = makeCoreEnv()
-      const result = evaluateForms(parsed, env)
-      expect(result).toMatchObject(toCljValue(expected))
+      const session = createSession()
+      expect(session.evaluate(code)).toMatchObject(toCljValue(expected))
     })
 
     it.each([
@@ -1903,24 +1545,18 @@ describe('evaluator spec', () => {
       ['`[a b c]', cljVector([cljSymbol('a'), cljSymbol('b'), cljSymbol('c')])],
       ['`{:a 1}', cljMap([[cljKeyword(':a'), cljNumber(1)]])],
     ])('should pass symbols through as symbols: %s → %s', (code, expected) => {
-      const parsed = parseCode(code)
-      const env = makeCoreEnv()
-      const result = evaluateForms(parsed, env)
-      expect(result).toMatchObject(expected)
+      const session = createSession()
+      expect(session.evaluate(code)).toMatchObject(expected)
     })
 
     it('should evaluate unquote', () => {
-      const parsed = parseCode('(let [x 42] `~x)')
-      const env = makeCoreEnv()
-      const result = evaluateForms(parsed, env)
-      expect(result).toMatchObject(cljNumber(42))
+      const session = createSession()
+      expect(session.evaluate('(let [x 42] `~x)')).toMatchObject(cljNumber(42))
     })
 
     it('should evaluate unquote splicing', () => {
-      const parsed = parseCode('(let [xs [1 2 3]] `(a ~@xs b))')
-      const env = makeCoreEnv()
-      const result = evaluateForms(parsed, env)
-      expect(result).toMatchObject(
+      const session = createSession()
+      expect(session.evaluate('(let [xs [1 2 3]] `(a ~@xs b))')).toMatchObject(
         cljList([
           cljSymbol('a'),
           cljNumber(1),
@@ -1939,16 +1575,11 @@ describe('evaluator spec', () => {
     ])(
       'should handle defmacro with quasiquote body: custom when macro: %s',
       (code, expected) => {
-        const env = makeCoreEnv()
-        evaluateForms(
-          parseCode(
-            '(defmacro my-when [cond & body] `(if ~cond (do ~@body) nil))'
-          ),
-          env
+        const session = createSession()
+        session.evaluate(
+          '(defmacro my-when [cond & body] `(if ~cond (do ~@body) nil))'
         )
-
-        const result = evaluateForms(parseCode(code), env)
-        expect(result).toMatchObject(toCljValue(expected))
+        expect(session.evaluate(code)).toMatchObject(toCljValue(expected))
       }
     )
 
@@ -1971,6 +1602,226 @@ describe('evaluator spec', () => {
 
       const result = session.evaluate(code)
       expect(result).toMatchObject(toCljValue(expected))
+    })
+  })
+
+  describe('loop/recur', () => {
+    it('should compute factorial via loop/recur', () => {
+      const session = createSession()
+      const result = session.evaluate(`
+        (loop [i 5 acc 1]
+          (if (<= i 1)
+            acc
+            (recur (dec i) (* acc i))))
+      `)
+      expect(result).toMatchObject(toCljValue(120))
+    })
+
+    it('should return body value when no recur is hit (acts like let)', () => {
+      const session = createSession()
+      expect(session.evaluate('(loop [x 1] x)')).toMatchObject(toCljValue(1))
+    })
+
+    it('should evaluate initial bindings sequentially', () => {
+      const session = createSession()
+      expect(session.evaluate('(loop [a 1 b (+ a 1)] b)')).toMatchObject(
+        toCljValue(2)
+      )
+    })
+
+    it('should throw on recur arity mismatch', () => {
+      expectEvalError(
+        '(loop [a 1 b 2] (recur 10))',
+        'recur expects 2 arguments but got 1'
+      )
+    })
+
+    it('should support fn-level recur', () => {
+      const session = createSession()
+      const result = session.evaluate(`
+        ((fn [n acc]
+           (if (<= n 1) acc (recur (dec n) (* n acc))))
+         5 1)
+      `)
+      expect(result).toMatchObject(toCljValue(120))
+    })
+
+    it('should support nested loops where inner recur targets inner loop', () => {
+      const session = createSession()
+      const result = session.evaluate(`
+        (loop [i 0 outer-sum 0]
+          (if (>= i 3)
+            outer-sum
+            (recur (inc i)
+                   (+ outer-sum
+                      (loop [j 0 inner-sum 0]
+                        (if (>= j 3)
+                          inner-sum
+                          (recur (inc j) (inc inner-sum))))))))
+      `)
+      expect(result).toMatchObject(toCljValue(9))
+    })
+
+    it('should build a collection via loop/recur', () => {
+      const session = createSession()
+      const result = session.evaluate(`
+        (loop [xs (list 1 2 3) acc []]
+          (if (nil? (seq xs))
+            acc
+            (recur (rest xs) (conj acc (* (first xs) 2)))))
+      `)
+      expect(result).toMatchObject(toCljValue([2, 4, 6]))
+    })
+
+    it('should throw on stray recur outside loop or fn', () => {
+      expectEvalError('(recur 1)', 'recur called outside of loop or fn')
+    })
+
+    it('should support recur with rest params in fn', () => {
+      const session = createSession()
+      const result = session.evaluate(`
+        ((fn [& args]
+           (if (nil? (seq args))
+             0
+             (+ (first args) (apply (fn [& args]
+               (if (nil? (seq args))
+                 0
+                 (+ (first args) (apply (fn [& a] 0) (rest args))))) (rest args)))))
+         1 2 3)
+      `)
+      expect(result).toMatchObject(toCljValue(3))
+    })
+
+    it('should compute sum of 0..10 via loop/recur', () => {
+      const session = createSession()
+      const result = session.evaluate(`
+        (loop [i 0 sum 0]
+          (if (> i 10)
+            sum
+            (recur (inc i) (+ sum i))))
+      `)
+      expect(result).toMatchObject(toCljValue(55))
+    })
+
+    it('should support recur in a defn function body', () => {
+      const session = createSession({
+        entries: [macrosSource],
+      })
+      const result = session.evaluate(`
+        (defn factorial [n]
+            (loop [i n acc 1]
+              (if (<= i 1)
+                acc
+                (recur (dec i) (* acc i)))))
+        (factorial 10)
+      `)
+      expect(result).toMatchObject(toCljValue(3628800))
+    })
+  })
+
+  describe('multi-arity fn', () => {
+    it('should dispatch on argument count', () => {
+      const session = createSession()
+      session.evaluate(`
+        (def f (fn
+          ([] 0)
+          ([x] x)
+          ([x y] (+ x y))))
+      `)
+      expect(session.evaluate('(f)')).toMatchObject(toCljValue(0))
+      expect(session.evaluate('(f 5)')).toMatchObject(toCljValue(5))
+      expect(session.evaluate('(f 3 4)')).toMatchObject(toCljValue(7))
+    })
+
+    it('should prefer exact fixed arity over variadic', () => {
+      const session = createSession()
+      session.evaluate(`
+        (def f (fn
+          ([x] :exact)
+          ([x & rest] :variadic)))
+      `)
+      expect(session.evaluate('(f 1)')).toMatchObject(cljKeyword(':exact'))
+      expect(session.evaluate('(f 1 2 3)')).toMatchObject(
+        cljKeyword(':variadic')
+      )
+    })
+
+    it('should throw on arity mismatch with multi-arity fn', () => {
+      expectEvalError(
+        '((fn ([] 0) ([x y] (+ x y))) 1)',
+        'No matching arity for 1 arguments'
+      )
+    })
+
+    it('should support multi-arity defmacro', () => {
+      const session = createSession()
+      session.evaluate(`
+        (defmacro my-and
+          ([] true)
+          ([x] x)
+          ([x & more] \`(if ~x (my-and ~@more) ~x)))
+      `)
+      expect(session.evaluate('(my-and)')).toMatchObject(toCljValue(true))
+      expect(session.evaluate('(my-and 42)')).toMatchObject(toCljValue(42))
+      expect(session.evaluate('(my-and true true 99)')).toMatchObject(
+        toCljValue(99)
+      )
+      expect(session.evaluate('(my-and true false 99)')).toMatchObject(
+        toCljValue(false)
+      )
+    })
+
+    it('should support recur inside a specific arity', () => {
+      const session = createSession()
+      const result = session.evaluate(`
+        (def factorial (fn
+          ([n] (factorial n 1))
+          ([n acc]
+            (if (<= n 1) acc (recur (dec n) (* n acc))))))
+        (factorial 5)
+      `)
+      expect(result).toMatchObject(toCljValue(120))
+    })
+
+    it('should throw when defining more than one variadic arity', () => {
+      expectEvalError(
+        '(fn ([x & a] x) ([y & b] y))',
+        'At most one variadic arity is allowed per function'
+      )
+    })
+
+    it('should work with named multi-arity via def', () => {
+      const session = createSession()
+      session.evaluate(`
+        (def greet (fn
+          ([] "hi")
+          ([name] (str "hi " name))))
+      `)
+      expect(session.evaluate('(greet)')).toMatchObject(toCljValue('hi'))
+      expect(session.evaluate('(greet "world")')).toMatchObject(
+        toCljValue('hi world')
+      )
+    })
+
+    it('should handle single-arity fn the same as before', () => {
+      const session = createSession()
+      expect(session.evaluate('((fn [x y] (+ x y)) 3 4)')).toMatchObject(
+        toCljValue(7)
+      )
+    })
+
+    it('should handle multi arity with defn macro', () => {
+      const session = createSession({
+        entries: [macrosSource],
+      })
+      session.evaluate(`
+      (defn greet 
+        ([] "hi")
+        ([x] (str "hi " x))
+        ([x y] (str "hi " x " and " y)))`)
+      expect(session.evaluate('(greet)')).toMatchObject(toCljValue('hi'))
+      expect(session.evaluate('(greet "world")')).toMatchObject(toCljValue('hi world'))
+      expect(session.evaluate('(greet "world" "universe")')).toMatchObject(toCljValue('hi world and universe'))
     })
   })
 })

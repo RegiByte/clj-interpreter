@@ -1,6 +1,6 @@
 import type {
+  Arity,
   CljBoolean,
-  CljComment,
   CljFunction,
   CljKeyword,
   CljList,
@@ -18,8 +18,6 @@ import type {
 
 export const cljNumber = <T extends number>(value: T) =>
   ({ kind: 'number', value }) as const satisfies CljNumber
-export const cljComment = <T extends string>(value: T) =>
-  ({ kind: 'comment', value }) as const satisfies CljComment
 export const cljString = <T extends string>(value: T) =>
   ({ kind: 'string', value }) as const satisfies CljString
 export const cljBoolean = <T extends boolean>(value: T) =>
@@ -36,24 +34,24 @@ export const cljVector = <T extends CljValue[]>(value: T) =>
   ({ kind: 'vector', value }) as const satisfies CljVector
 export const cljMap = <T extends [CljValue, CljValue][]>(entries: T) =>
   ({ kind: 'map', entries }) as const satisfies CljMap
-export const cljFunction = <
-  TParams extends CljSymbol[],
-  TRest extends CljSymbol | null,
-  TBody extends CljValue[],
-  TEnv extends Env,
->(
-  params: TParams,
-  restParam: TRest,
-  body: TBody,
-  env: TEnv
-) =>
-  ({
-    kind: 'function',
-    params,
-    body,
-    env,
-    restParam,
-  }) as const satisfies CljFunction
+export const cljFunction = (
+  params: CljSymbol[],
+  restParam: CljSymbol | null,
+  body: CljValue[],
+  env: Env
+): CljFunction => ({
+  kind: 'function',
+  arities: [{ params, restParam, body }],
+  env,
+})
+export const cljMultiArityFunction = (
+  arities: Arity[],
+  env: Env
+): CljFunction => ({
+  kind: 'function',
+  arities,
+  env,
+})
 export const cljNativeFunction = <
   T extends string,
   U extends (...args: CljValue[]) => CljValue,
@@ -62,21 +60,21 @@ export const cljNativeFunction = <
   fn: U
 ) =>
   ({ kind: 'native-function', name, fn }) as const satisfies CljNativeFunction
-export const cljMacro = <
-  TParams extends CljSymbol[],
-  TRest extends CljSymbol | null,
-  TBody extends CljValue[],
-  TEnv extends Env,
->(
-  params: TParams,
-  restParam: TRest,
-  body: TBody,
-  env: TEnv
-) =>
-  ({
-    kind: 'macro',
-    params,
-    body,
-    env,
-    restParam,
-  }) as const satisfies CljMacro
+export const cljMacro = (
+  params: CljSymbol[],
+  restParam: CljSymbol | null,
+  body: CljValue[],
+  env: Env
+): CljMacro => ({
+  kind: 'macro',
+  arities: [{ params, restParam, body }],
+  env,
+})
+export const cljMultiArityMacro = (
+  arities: Arity[],
+  env: Env
+): CljMacro => ({
+  kind: 'macro',
+  arities,
+  env,
+})
