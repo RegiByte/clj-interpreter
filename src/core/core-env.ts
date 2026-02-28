@@ -12,7 +12,12 @@ import {
   isSymbol,
 } from './assertions'
 import { define, lookup, makeEnv } from './env'
-import { applyFunction, applyMacro, evaluate, EvaluationError } from './evaluator'
+import {
+  applyFunction,
+  applyMacro,
+  evaluate,
+  EvaluationError,
+} from './evaluator'
 import {
   cljBoolean,
   cljKeyword,
@@ -65,6 +70,24 @@ function getCoreFunctions(globalEnv: Env) {
         return cljVector([])
       }
       return cljVector(args)
+    }),
+    'hash-map': cljNativeFunction('hash-map', (...args: CljValue[]) => {
+      if (args.length === 0) {
+        return cljMap([])
+      }
+      if (args.length % 2 !== 0) {
+        throw new EvaluationError(
+          `hash-map expects an even number of arguments, got ${args.length}`,
+          { args }
+        )
+      }
+      const entries: [CljValue, CljValue][] = []
+      for (let i = 0; i < args.length; i += 2) {
+        const key = args[i]
+        const value = args[i + 1]
+        entries.push([key, value])
+      }
+      return cljMap(entries)
     }),
     '+': cljNativeFunction('+', (...args: CljValue[]) => {
       if (args.length === 0) {
@@ -1055,6 +1078,18 @@ function getCoreFunctions(globalEnv: Env) {
         throw new EvaluationError(`type: unhandled kind ${x.kind}`, { x })
       }
       return cljKeyword(name)
+    }),
+
+    repeat: cljNativeFunction('repeat', (n: CljValue, x: CljValue) => {
+      if (n === undefined || n.kind !== 'number') {
+        // In real clojure, repeat with a single argument creates an infinite seq
+        // since we don't support infinite seqs, we throw an error for now
+        throw new EvaluationError(
+          `repeat expects a number as first argument${n !== undefined ? `, got ${printString(n)}` : ''}`,
+          { n }
+        )
+      }
+      return cljList(Array(n.value).fill(x))
     }),
   }
 

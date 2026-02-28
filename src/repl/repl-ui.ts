@@ -1,10 +1,8 @@
 import { EditorView, keymap, lineNumbers } from '@codemirror/view'
 import { defaultKeymap, historyKeymap, history } from '@codemirror/commands'
-import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language'
 import { closeBrackets } from '@codemirror/autocomplete'
-import { oneDark } from '@codemirror/theme-one-dark'
 import { Prec } from '@codemirror/state'
-import { syntax } from '@nextjournal/clojure-mode'
+import { cljTheme, cljSyntax, highlightSource } from './theme'
 import { evalSource, getAllForms, makeRepl, resetEnv } from './repl'
 import type { ReplEntry, ReplState } from './repl'
 
@@ -43,7 +41,7 @@ function el<K extends keyof HTMLElementTagNameMap>(
 function renderEntry(entry: ReplEntry): HTMLElement | HTMLElement[] {
   if (entry.kind === 'source') {
     const sourceEl = el('div', 'repl-entry__source')
-    sourceEl.textContent = entry.text
+    sourceEl.appendChild(highlightSource(entry.text))
     return sourceEl
   }
 
@@ -269,40 +267,8 @@ export function createReplUI(container: HTMLElement) {
       keymap.of([...defaultKeymap, ...historyKeymap]),
       lineNumbers(),
       closeBrackets(),
-      syntaxHighlighting(defaultHighlightStyle),
-      syntax(),
-      oneDark,
-      EditorView.theme({
-        '&': {
-          backgroundColor: 'transparent',
-          fontSize: '0.95rem',
-          fontFamily: 'var(--font-mono)',
-        },
-        '.cm-scroller': {
-          fontFamily: 'var(--font-mono)',
-          lineHeight: '1.6',
-        },
-        '.cm-gutters': {
-          backgroundColor: 'transparent',
-          borderRight: '1px solid var(--border)',
-        },
-        '.cm-content': {
-          padding: '0.5rem 0',
-          minHeight: '2.4rem',
-        },
-        '.cm-focused': {
-          outline: 'none',
-        },
-        '&.cm-focused .cm-cursor': {
-          borderLeftColor: 'var(--accent)',
-        },
-        '.cm-activeLine': {
-          backgroundColor: 'rgba(255,255,255,0.03)',
-        },
-        '.cm-activeLineGutter': {
-          backgroundColor: 'transparent',
-        },
-      }),
+      cljSyntax(),
+      ...cljTheme,
     ],
     parent: editorMountEl,
   })
