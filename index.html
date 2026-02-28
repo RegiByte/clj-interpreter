@@ -2,11 +2,177 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/clj-interpreter/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>regibyte-clj-interpreter</title>
-    <script type="module" crossorigin src="/clj-interpreter/assets/index-DpETF2rg.js"></script>
-    <link rel="stylesheet" crossorigin href="/clj-interpreter/assets/index-GONzrttr.css">
+    <title>Regibyte — Clojure Playground</title>
+    <style>
+      /* ── GitHub Dark palette tokens ──────────────────── */
+      :root {
+        --bg:           #0d1117;   /* canvas.default */
+        --bg-header:    #161b22;   /* canvas.subtle */
+        --border:       #30363d;   /* border.default */
+        --border-muted: #21262d;   /* border.muted */
+        --text:         #e6edf3;   /* fg.default */
+        --text-dim:     #8b949e;   /* fg.muted */
+        --text-subtle:  #6e7781;   /* fg.subtle */
+        --accent:       #58a6ff;   /* accent.fg */
+        --green:        #7ee787;   /* scale.green[1] — success */
+        --red:          #f85149;   /* danger.fg */
+        --yellow:       #e3b341;   /* attention.fg */
+      }
+
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+
+      html, body { height: 100%; overflow: hidden; }
+
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
+      }
+
+      /* ── Layout ─────────────────────────────────────── */
+
+      .pg { display: flex; flex-direction: column; height: 100vh; }
+
+      .pg-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 1.5rem;
+        height: 52px;
+        background: var(--bg-header);
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+      }
+
+      .pg-header__left { display: flex; align-items: center; gap: 1rem; }
+      .pg-header__title { color: var(--accent); font-size: 0.9rem; font-weight: 600; letter-spacing: 0.02em; }
+      .pg-header__hint { color: var(--text-subtle); font-size: 0.78rem; }
+
+      .pg-header__actions { display: flex; gap: 0.6rem; align-items: center; }
+
+      .pg-body { display: flex; flex: 1; overflow: hidden; }
+
+      .pg-editor-wrap { flex: 3; min-width: 0; }
+
+      .pg-output {
+        flex: 2;
+        min-width: 0;
+        overflow-y: auto;
+        border-left: 1px solid var(--border);
+        background: var(--bg);
+      }
+
+      .pg-output-inner { padding: 1.25rem; }
+
+      /* ── Empty state ────────────────────────────────── */
+
+      .pg-empty {
+        color: var(--text-subtle);
+        font-size: 0.82rem;
+        text-align: center;
+        padding-top: 3rem;
+        line-height: 1.7;
+      }
+
+      /* ── Output entries ─────────────────────────────── */
+
+      .pg-entry { margin-bottom: 1.5rem; }
+
+      .pg-entry__source {
+        font-size: 0.78rem;
+        color: var(--text-subtle);
+        margin-bottom: 0.35rem;
+        padding: 0 0.25rem;
+        white-space: pre-wrap;
+        word-break: break-all;
+        line-height: 1.4;
+      }
+
+      .pg-entry__output {
+        font-size: 0.85rem;
+        color: var(--yellow);
+        padding: 0.4rem 0.75rem;
+        border-left: 2px solid color-mix(in srgb, var(--yellow) 30%, transparent);
+        margin-bottom: 0.25rem;
+        white-space: pre-wrap;
+      }
+
+      .pg-entry__result {
+        font-size: 0.88rem;
+        color: var(--green);
+        padding: 0.5rem 0.75rem;
+        border-left: 2px solid var(--green);
+        background: color-mix(in srgb, var(--green) 4%, transparent);
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+
+      .pg-entry__result--error {
+        color: var(--red);
+        border-left-color: var(--red);
+        background: color-mix(in srgb, var(--red) 4%, transparent);
+      }
+
+      /* ── Buttons ────────────────────────────────────── */
+
+      .pg-btn {
+        background: var(--bg-header);
+        color: var(--text-dim);
+        border: 1px solid var(--border);
+        padding: 0.3rem 0.85rem;
+        border-radius: 6px;
+        font-size: 0.78rem;
+        cursor: pointer;
+        font-family: inherit;
+        transition: background 0.15s, border-color 0.15s, color 0.15s;
+      }
+      .pg-btn:hover { background: #1c2128; border-color: #8b949e; color: var(--text); }
+
+      .pg-btn--primary {
+        color: var(--accent);
+        border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+        background: color-mix(in srgb, var(--accent) 8%, transparent);
+      }
+      .pg-btn--primary:hover {
+        background: color-mix(in srgb, var(--accent) 15%, transparent);
+        border-color: var(--accent);
+      }
+
+      .pg-btn--danger:hover { color: var(--red); border-color: color-mix(in srgb, var(--red) 40%, transparent); }
+
+      kbd {
+        background: var(--bg-header);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 0.1rem 0.45rem;
+        font-size: 0.72rem;
+        color: var(--text-dim);
+        font-family: inherit;
+      }
+
+      /* ── Inline eval result widget ──────────────────────── */
+
+      /* Content widgets are placed in Monaco's .contentWidgets layer (absolute
+         positioning, always in the DOM). We match Monaco's editor font here so
+         the text visually sits on the same baseline as the code. */
+      .pg-inline-result,
+      .pg-inline-error {
+        pointer-events: none;
+        white-space: pre;
+        font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
+        font-size: 14px;
+        font-style: italic;
+        opacity: 0.80;
+        padding-left: 0.5ch;
+      }
+
+      .pg-inline-result { color: #7ee787; }
+      .pg-inline-error  { color: #f85149; }
+    </style>
+    <script type="module" crossorigin src="/clj-interpreter/assets/main-B4VK-1vk.js"></script>
+    <link rel="modulepreload" crossorigin href="/clj-interpreter/assets/session-DlbYrfaI.js">
+    <link rel="stylesheet" crossorigin href="/clj-interpreter/assets/main-ByLP9YDL.css">
   </head>
   <body>
     <div id="app"></div>
