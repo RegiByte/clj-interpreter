@@ -42,7 +42,8 @@ const isDelimiter = (char: string) =>
   isLBrace(char) ||
   isRBrace(char) ||
   isBacktick(char) ||
-  isSingleQuote(char)
+  isSingleQuote(char) ||
+  isAt(char)
 
 const parseWhitespace = (ctx: TokenizationContext): Token => {
   const scanner = ctx.scanner
@@ -195,6 +196,13 @@ const parseSymbol = (ctx: TokenizationContext): Token => {
   }
 }
 
+const parseDerefToken = (ctx: TokenizationContext): Token => {
+  const scanner = ctx.scanner
+  const start = scanner.position()
+  scanner.advance() // consume '@'
+  return { kind: 'Deref', start, end: scanner.position() }
+}
+
 // Single routing point for all # dispatch characters.
 // Add new dispatch forms here as they are supported.
 function parseDispatch(ctx: TokenizationContext): Token {
@@ -289,6 +297,7 @@ const tokenParseEntries: TokenParseEntry[] = [
     parseCharToken(tokenKeywords.Quasiquote, tokenSymbols.Quasiquote),
   ],
   [isTilde, parseTilde],
+  [isAt, parseDerefToken],
   [isHash, parseDispatch],
 ]
 

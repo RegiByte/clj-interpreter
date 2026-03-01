@@ -1,6 +1,7 @@
 import { EvaluationError } from './errors'
 import type {
   Arity,
+  CljAtom,
   CljBoolean,
   CljFunction,
   CljKeyword,
@@ -97,6 +98,8 @@ export const cljMultiArityMacro = (arities: Arity[], env: Env): CljMacro => ({
   arities,
   env,
 })
+
+export const cljAtom = (value: CljValue): CljAtom => ({ kind: 'atom', value })
 
 export const cljMultiMethod = (
   name: string,

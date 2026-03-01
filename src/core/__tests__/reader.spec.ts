@@ -471,8 +471,85 @@ describe('reader', () => {
       expect(result).toEqual([cljMap([[cljKeyword(':user/foo'), cljNumber(1)]])])
     })
 
-    it('throws ParserError for ::alias/foo (not yet supported)', () => {
+    it('throws ReaderError for ::alias/foo when no alias map is provided', () => {
       expect(() => readForms(tokenize('::ns/foo'), 'user')).toThrow(ReaderError)
+    })
+
+    it('throws ReaderError for ::alias/foo when alias is not in the map', () => {
+      const aliases = new Map([['other', 'some.ns']])
+      expect(() => readForms(tokenize('::unknown/foo'), 'user', aliases)).toThrow(
+        ReaderError
+      )
+    })
+
+    it('expands ::alias/foo to :full.ns/foo when alias map is provided', () => {
+      const aliases = new Map([['m', 'my.math']])
+      const result = readForms(tokenize('::m/pi'), 'user', aliases)
+      expect(result).toEqual([cljKeyword(':my.math/pi')])
+    })
+
+    it('expands ::alias/foo with a dotted namespace', () => {
+      const aliases = new Map([['utils', 'app.core.utils']])
+      const result = readForms(tokenize('::utils/helper'), 'app.main', aliases)
+      expect(result).toEqual([cljKeyword(':app.core.utils/helper')])
+    })
+
+    it('resolves multiple different aliases in the same source', () => {
+      const aliases = new Map([
+        ['a', 'ns.alpha'],
+        ['b', 'ns.beta'],
+      ])
+      const result = readForms(tokenize('[::a/x ::b/y]'), 'user', aliases)
+      expect(result).toEqual([
+        cljVector([cljKeyword(':ns.alpha/x'), cljKeyword(':ns.beta/y')]),
+      ])
+    })
+
+    it('expands ::alias/foo inside a map literal', () => {
+      const aliases = new Map([['s', 'my.schema']])
+      const result = readForms(tokenize('{::s/name "Alice"}'), 'user', aliases)
+      expect(result).toEqual([
+        cljMap([[cljKeyword(':my.schema/name'), cljString('Alice')]]),
+      ])
+    })
+  })
+
+  describe('deref reader macro (@)', () => {
+    it('@a expands to (deref a)', () => {
+      const result = readForms(tokenize('@a'))
+      expect(result).toEqual([
+        cljList([cljSymbol('deref'), cljSymbol('a')]),
+      ])
+    })
+
+    it('@@a expands to (deref (deref a)) — chained deref', () => {
+      const result = readForms(tokenize('@@a'))
+      expect(result).toEqual([
+        cljList([
+          cljSymbol('deref'),
+          cljList([cljSymbol('deref'), cljSymbol('a')]),
+        ]),
+      ])
+    })
+
+    it('@(+ 1 2) expands to (deref (+ 1 2))', () => {
+      const result = readForms(tokenize('@(+ 1 2)'))
+      expect(result).toEqual([
+        cljList([
+          cljSymbol('deref'),
+          cljList([cljSymbol('+'), cljNumber(1), cljNumber(2)]),
+        ]),
+      ])
+    })
+
+    it('@[1 2 3] expands to (deref [1 2 3])', () => {
+      const result = readForms(tokenize('@[1 2 3]'))
+      expect(result).toEqual([
+        cljList([
+          cljSymbol('deref'),
+          cljVector([cljNumber(1), cljNumber(2), cljNumber(3)]),
+        ]),
+      ])
     })
   })
 })

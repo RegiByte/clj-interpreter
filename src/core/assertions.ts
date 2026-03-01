@@ -1,5 +1,6 @@
 import {
   valueKeywords,
+  type CljAtom,
   type CljBoolean,
   type CljFunction,
   type CljKeyword,
@@ -14,7 +15,7 @@ import {
   type CljValue,
   type CljVector,
 } from './types.ts'
-import { specialFormKeywords } from './evaluator/index.ts'
+import { specialFormKeywords } from './evaluator/special-forms.ts'
 
 export const isFalsy = (value: CljValue): boolean => {
   if (value.kind === 'nil') return true
@@ -49,6 +50,8 @@ export const isAFunction = (
   isFunction(value) || isNativeFunction(value)
 export const isMultiMethod = (value: CljValue): value is CljMultiMethod =>
   value.kind === 'multi-method'
+export const isAtom = (value: CljValue): value is CljAtom =>
+  value.kind === 'atom'
 export const isCollection = (
   value: CljValue
 ): value is CljList | CljVector | CljMap =>
@@ -94,6 +97,7 @@ const equalityHandlers = {
     if (a.value.length !== b.value.length) return false
     return a.value.every((value, index) => isEqual(value, b.value[index]))
   },
+  [valueKeywords.atom]: (a: CljAtom, b: CljAtom) => a === b,
 }
 
 export const isEqual = (a: CljValue, b: CljValue): boolean => {

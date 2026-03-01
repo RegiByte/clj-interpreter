@@ -11,6 +11,7 @@ import {
   cljVector,
   cljMap,
   cljFunction,
+  cljAtom,
 } from '../factories'
 import { tokenize } from '../tokenizer'
 import { readForms } from '../reader'
@@ -116,6 +117,16 @@ describe('printer', () => {
         )
       )
     ).toBe('(fn [x y] (+ x y))')
+  })
+
+  it('should print atoms', () => {
+    expect(printString(cljAtom(cljNumber(42)))).toBe('#<Atom 42>')
+    expect(printString(cljAtom(cljNil()))).toBe('#<Atom nil>')
+    expect(printString(cljAtom(cljString('hello')))).toBe('#<Atom "hello">')
+    expect(printString(cljAtom(cljBoolean(true)))).toBe('#<Atom true>')
+    expect(printString(cljAtom(cljVector([cljNumber(1), cljNumber(2)])))).toBe(
+      '#<Atom [1 2]>'
+    )
   })
 
   it.each([

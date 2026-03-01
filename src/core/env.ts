@@ -1,3 +1,4 @@
+import { EvaluationError } from './errors'
 import type { CljValue, Env } from './types'
 
 class EnvError extends Error {
@@ -24,7 +25,7 @@ export function lookup(name: string, env: Env): CljValue {
     }
     current = current.outer
   }
-  throw new Error(`Symbol ${name} not found`)
+  throw new EvaluationError(`Symbol ${name} not found`, { name })
 }
 
 export function define(name: string, value: CljValue, env: Env) {

@@ -2,11 +2,12 @@ import { isKeyword, isList, isSymbol, isVector } from './assertions'
 import { loadCoreFunctions } from './core-env'
 import { define, lookup, makeEnv } from './env'
 import { evaluateForms, RecurSignal } from './evaluator'
-import { EvaluationError } from './errors'
+import { EvaluationError, ReaderError } from './errors'
 import { cljNativeFunction, cljNil } from './factories'
+import { formatErrorContext } from './positions'
 import { readForms } from './reader'
 import { tokenize } from './tokenizer'
-import type { CljValue, Env, Token } from './types'
+import type { CljValue, Env, Token, TokenSymbol } from './types'
 import { coreSource } from '../clojure/core-source'
 
 type NamespaceRegistry = Map<string, Env>
@@ -34,9 +35,70 @@ function extractNsNameFromTokens(tokens: Token[]): string | null {
   const meaningful = tokens.filter((t) => t.kind !== 'Comment')
   if (meaningful.length < 3) return null
   if (meaningful[0].kind !== 'LParen') return null
-  if (meaningful[1].kind !== 'Symbol' || meaningful[1].value !== 'ns') return null
+  if (meaningful[1].kind !== 'Symbol' || meaningful[1].value !== 'ns')
+    return null
   if (meaningful[2].kind !== 'Symbol') return null
   return meaningful[2].value
+}
+
+// Lightweight token scan to extract :as alias pairs from the ns form's :require clauses.
+// Returns Map { 'alias' -> 'full.ns.name' } for all [some.ns :as alias] specs found.
+// This runs before readForms so the reader can expand ::alias/foo at read time.
+function extractAliasMapFromTokens(tokens: Token[]): Map<string, string> {
+  const aliases = new Map<string, string>()
+  const meaningful = tokens.filter(
+    (t) => t.kind !== 'Comment' && t.kind !== 'Whitespace'
+  )
+  // Must start with (ns ...)
+  if (meaningful.length < 3) return aliases
+  if (meaningful[0].kind !== 'LParen') return aliases
+  if (meaningful[1].kind !== 'Symbol' || meaningful[1].value !== 'ns')
+    return aliases
+
+  // Walk the top-level ns form tracking paren depth.
+  // For each [ vector ] we encounter, check for ns-sym :as alias-sym.
+  let i = 3 // skip ( ns <name>
+  let depth = 1
+  while (i < meaningful.length && depth > 0) {
+    const tok = meaningful[i]
+    if (tok.kind === 'LParen') {
+      depth++
+      i++
+      continue
+    }
+    if (tok.kind === 'RParen') {
+      depth--
+      i++
+      continue
+    }
+    if (tok.kind === 'LBracket') {
+      // Scan through this vector for: first Symbol (ns name) + :as + Symbol (alias)
+      let j = i + 1
+      let nsSym: string | null = null
+      while (j < meaningful.length && meaningful[j].kind !== 'RBracket') {
+        const t = meaningful[j]
+        if (t.kind === 'Symbol' && nsSym === null) {
+          nsSym = t.value
+        }
+        if (
+          t.kind === 'Keyword' &&
+          (t.value === ':as' || t.value === ':as-alias')
+        ) {
+          j++
+          if (
+            j < meaningful.length &&
+            meaningful[j].kind === 'Symbol' &&
+            nsSym
+          ) {
+            aliases.set((meaningful[j] as TokenSymbol).value, nsSym)
+          }
+        }
+        j++
+      }
+    }
+    i++
+  }
+  return aliases
 }
 
 function findNsForm(forms: CljValue[]) {
@@ -86,6 +148,46 @@ function processRequireSpec(
   }
 
   const nsName = elements[0].name
+
+  // :as-alias creates a reader alias without loading the namespace.
+  // The namespace need not exist — the alias is only used for ::alias/foo expansion.
+  const hasAsAlias = elements.some(
+    (el) => isKeyword(el) && el.name === ':as-alias'
+  )
+  if (hasAsAlias) {
+    let i = 1
+    while (i < elements.length) {
+      const kw = elements[i]
+      if (!isKeyword(kw)) {
+        throw new EvaluationError(
+          `Expected keyword in require spec, got ${kw.kind}`,
+          { spec, position: i }
+        )
+      }
+      if (kw.name === ':as-alias') {
+        i++
+        const alias = elements[i]
+        if (!alias || !isSymbol(alias)) {
+          throw new EvaluationError(':as-alias expects a symbol alias', {
+            spec,
+            position: i,
+          })
+        }
+        if (!currentEnv.readerAliases) {
+          currentEnv.readerAliases = new Map()
+        }
+        currentEnv.readerAliases.set(alias.name, nsName)
+        i++
+      } else {
+        throw new EvaluationError(
+          `:as-alias specs only support :as-alias, got ${kw.name}`,
+          { spec }
+        )
+      }
+    }
+    return
+  }
+
   let targetEnv = registry.get(nsName)
   if (!targetEnv && resolveNamespace) {
     resolveNamespace(nsName)
@@ -235,7 +337,8 @@ export function createSession(options?: SessionOptions): Session {
   function loadFile(source: string, nsName?: string) {
     const tokens = tokenize(source)
     const targetNs = extractNsNameFromTokens(tokens) ?? nsName ?? 'user'
-    const forms = readForms(tokens, targetNs)
+    const aliasMap = extractAliasMapFromTokens(tokens)
+    const forms = readForms(tokens, targetNs, aliasMap)
     const env = ensureNs(targetNs)
     processNsRequires(forms, env)
     evaluateForms(forms, env)
@@ -257,8 +360,18 @@ export function createSession(options?: SessionOptions): Session {
     loadFile,
     evaluate(source: string) {
       try {
-        const forms = readForms(tokenize(source), currentNs)
+        const tokens = tokenize(source)
         const env = getNs(currentNs)!
+        // Seed alias map from tokens (new aliases declared in this source) and
+        // from env.aliases/:as (prior require calls) and env.readerAliases/:as-alias.
+        const aliasMap = extractAliasMapFromTokens(tokens)
+        env.aliases?.forEach((nsEnv, alias) => {
+          if (nsEnv.namespace) aliasMap.set(alias, nsEnv.namespace)
+        })
+        env.readerAliases?.forEach((nsName, alias) => {
+          aliasMap.set(alias, nsName)
+        })
+        const forms = readForms(tokens, currentNs, aliasMap)
         processNsRequires(forms, env)
         return evaluateForms(forms, env)
       } catch (e) {
@@ -266,6 +379,12 @@ export function createSession(options?: SessionOptions): Session {
           throw new EvaluationError('recur called outside of loop or fn', {
             args: e.args,
           })
+        }
+        if (
+          (e instanceof EvaluationError || e instanceof ReaderError) &&
+          e.pos
+        ) {
+          e.message += formatErrorContext(source, e.pos)
         }
         throw e
       }

@@ -22,6 +22,10 @@ window.MonacoEnvironment = {
 
 const INITIAL_CODE = `\
 ;; Clojure Playground — press ⌘+Enter (or Ctrl+Enter) to evaluate
+(ns user
+  (:require [some.namespace :as-alias sns]))
+
+(::sns/tag {::sns/tag "foo"})
 
 (defn fib [n]
   (loop [a 0 b 1 i n]
@@ -72,9 +76,10 @@ x
   (range 5 16)
   (range 5 16 2)
 
-
-  ((comp (fn [x] (* x 5)) (fn [x] (+ x 3))) 3)
-
+ ((comp (fn [x] (* x 5)) 
+         (fn [x] (+ x 3))) 3)
+  ((comp (fn [x] (+ x 3)) 
+         (fn [x] (* x 5))) 3)
   ((partial + 10) 5)
 
   (map-indexed 

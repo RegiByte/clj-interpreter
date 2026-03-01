@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { cljNumber, cljString } from '../factories'
+import { cljKeyword, cljNumber, cljString } from '../factories'
 import { createSession } from '../session'
 import { EvaluationError } from '../errors'
+import { ReaderError } from '../errors'
 
 function session() {
   return createSession()
@@ -329,6 +330,178 @@ describe('namespaces', () => {
       s.evaluate("(require '[my.utils :as u])")
       expect(s.evaluate('u/helper')).toEqual(cljNumber(99))
       expect(readFileCalls).toBe(0)
+    })
+  })
+
+  describe('::alias/foo qualified keyword expansion', () => {
+    it('expands ::alias/foo in file body via loadFile', () => {
+      const s = session()
+      s.loadFile('(ns my.schema)\n(def tag :my.schema/entity)')
+      s.loadFile(
+        '(ns my.app (:require [my.schema :as s]))\n(def kw ::s/entity)'
+      )
+      s.setNs('my.app')
+      expect(s.evaluate('kw')).toEqual(cljKeyword(':my.schema/entity'))
+    })
+
+    it('expands multiple ::alias/foo keywords in the same file', () => {
+      const s = session()
+      s.loadFile('(ns ns.a)\n(def x 1)')
+      s.loadFile('(ns ns.b)\n(def y 2)')
+      s.loadFile(
+        '(ns my.app (:require [ns.a :as a] [ns.b :as b]))\n' +
+          '(def ka ::a/tag)\n' +
+          '(def kb ::b/tag)'
+      )
+      s.setNs('my.app')
+      expect(s.evaluate('ka')).toEqual(cljKeyword(':ns.a/tag'))
+      expect(s.evaluate('kb')).toEqual(cljKeyword(':ns.b/tag'))
+    })
+
+    it('::alias/foo used as a multimethod dispatch value', () => {
+      const s = session()
+      s.loadFile('(ns my.types)')
+      s.loadFile(
+        '(ns my.app (:require [my.types :as t]))\n' +
+          '(defmulti describe :type)\n' +
+          '(defmethod describe ::t/user [x] "a user")\n' +
+          '(defmethod describe :default [x] "unknown")'
+      )
+      s.setNs('my.app')
+      expect(s.evaluate('(describe {:type :my.types/user})')).toEqual(
+        cljString('a user')
+      )
+      expect(s.evaluate('(describe {:type :other})')).toEqual(
+        cljString('unknown')
+      )
+    })
+
+    it('REPL: ::alias/foo resolves when alias was set up by a prior require', () => {
+      const s = session()
+      s.loadFile('(ns my.utils)\n(def x 1)')
+      s.evaluate("(require '[my.utils :as u])")
+      expect(s.evaluate('::u/something')).toEqual(
+        cljKeyword(':my.utils/something')
+      )
+    })
+
+    it('throws ReaderError when ::alias/foo alias is not defined', () => {
+      const s = session()
+      expect(() => s.evaluate('::unknown/foo')).toThrow(ReaderError)
+    })
+
+    it('::alias/foo inside a ns form with :as and :refer combined', () => {
+      const s = session()
+      s.loadFile('(ns my.domain)\n(def status :active)')
+      s.loadFile(
+        '(ns my.app (:require [my.domain :as d :refer [status]]))\n' +
+          '(def active-kw ::d/active)'
+      )
+      s.setNs('my.app')
+      expect(s.evaluate('active-kw')).toEqual(cljKeyword(':my.domain/active'))
+    })
+  })
+
+  describe(':as-alias qualified keyword expansion', () => {
+    it('creates a reader alias without requiring the namespace to be loaded', () => {
+      const s = session()
+      s.evaluate("(require '[company.domain.user :as-alias user])")
+      expect(s.evaluate('::user/id')).toEqual(cljKeyword(':company.domain.user/id'))
+    })
+
+    it('ns form with :as-alias in :require clause expands ::alias/foo in file body', () => {
+      const s = session()
+      s.loadFile(
+        '(ns my.app (:require [my.domain.order :as-alias order]))\n' +
+          '(def kw ::order/status)'
+      )
+      s.setNs('my.app')
+      expect(s.evaluate('kw')).toEqual(cljKeyword(':my.domain.order/status'))
+    })
+
+    it('the aliased namespace does not need to exist as a loadable file', () => {
+      const s = session()
+      // my.imaginary.ns is never loaded — that is the whole point of :as-alias
+      expect(() =>
+        s.evaluate("(require '[my.imaginary.ns :as-alias img])")
+      ).not.toThrow()
+      expect(s.evaluate('::img/tag')).toEqual(cljKeyword(':my.imaginary.ns/tag'))
+    })
+
+    it('multiple :as-alias specs in the same require call all resolve', () => {
+      const s = session()
+      s.evaluate("(require '[domain.user :as-alias user])")
+      s.evaluate("(require '[domain.order :as-alias order])")
+      expect(s.evaluate('::user/id')).toEqual(cljKeyword(':domain.user/id'))
+      expect(s.evaluate('::order/id')).toEqual(cljKeyword(':domain.order/id'))
+    })
+
+    it('multiple :as-alias in a single ns form', () => {
+      const s = session()
+      s.loadFile(
+        '(ns my.app\n' +
+          '  (:require [acme.billing :as-alias billing]\n' +
+          '            [acme.shipping :as-alias shipping]))\n' +
+          '(def b ::billing/invoice)\n' +
+          '(def sh ::shipping/label)'
+      )
+      s.setNs('my.app')
+      expect(s.evaluate('b')).toEqual(cljKeyword(':acme.billing/invoice'))
+      expect(s.evaluate('sh')).toEqual(cljKeyword(':acme.shipping/label'))
+    })
+
+    it('REPL: ::alias/foo works in subsequent evaluations after :as-alias require', () => {
+      const s = session()
+      s.evaluate("(require '[event.sourcing :as-alias ev])")
+      // Second evaluation — alias must be remembered across calls
+      expect(s.evaluate('::ev/created')).toEqual(
+        cljKeyword(':event.sourcing/created')
+      )
+    })
+
+    it(':as-alias can coexist with a regular :as for the same namespace', () => {
+      const s = session()
+      s.loadFile('(ns my.utils)\n(def x 42)')
+      s.evaluate("(require '[my.utils :as u])")
+      s.evaluate("(require '[my.domain.util :as-alias du])")
+      // :as alias → qualified symbol lookup
+      expect(s.evaluate('u/x')).toEqual(cljNumber(42))
+      // :as-alias → keyword expansion only
+      expect(s.evaluate('::du/tag')).toEqual(cljKeyword(':my.domain.util/tag'))
+    })
+
+    it(':as-alias does not allow qualified symbol lookup (namespace not loaded)', () => {
+      const s = session()
+      s.evaluate("(require '[phantom.ns :as-alias p])")
+      expect(() => s.evaluate('p/something')).toThrow()
+    })
+
+    it('throws EvaluationError when :as-alias spec is missing the alias symbol', () => {
+      const s = session()
+      expect(() =>
+        s.evaluate("(require '[my.ns :as-alias])")
+      ).toThrow(':as-alias expects a symbol alias')
+    })
+
+    it('throws EvaluationError when :as-alias spec is combined with :refer', () => {
+      const s = session()
+      expect(() =>
+        s.evaluate("(require '[my.ns :as-alias a :refer [x]])")
+      ).toThrow(':as-alias specs only support :as-alias')
+    })
+
+    it(':as-alias used as a multimethod dispatch value in a ns form file', () => {
+      const s = session()
+      s.loadFile(
+        '(ns my.app (:require [domain.shapes :as-alias shape]))\n' +
+          '(defmulti area :type)\n' +
+          '(defmethod area ::shape/circle [s] (* 3 (:r s)))\n' +
+          '(defmethod area :default [_] 0)'
+      )
+      s.setNs('my.app')
+      expect(s.evaluate('(area {:type :domain.shapes/circle :r 2})')).toEqual(
+        cljNumber(6)
+      )
     })
   })
 })

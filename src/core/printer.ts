@@ -63,6 +63,8 @@ export function printString(value: CljValue): string {
       return `(native-fn ${value.name})`
     case valueKeywords.multiMethod:
       return `(multi-method ${(value as CljMultiMethod).name})`
+    case valueKeywords.atom:
+      return `#<Atom ${printString(value.value)}>`
     default:
       throw new EvaluationError(`unhandled value type: ${value.kind}`, {
         value,

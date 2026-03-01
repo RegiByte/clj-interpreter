@@ -4,6 +4,7 @@ import { makeTokenScanner, type TokenScanner } from './scanners'
 import { getTokenValue } from './tokenizer'
 import { valueKeywords, tokenKeywords, type Token } from './types'
 import type { CljValue, TokenKinds } from './types'
+import { setPos } from './positions'
 
 function readAtom(ctx: ReaderCtx): CljValue {
   const scanner = ctx.scanner
@@ -14,29 +15,51 @@ function readAtom(ctx: ReaderCtx): CljValue {
   switch (token.kind) {
     case tokenKeywords.Symbol:
       return readSymbol(scanner)
-    case tokenKeywords.String:
-      scanner.advance() // consume the string token
-      return { kind: 'string', value: token.value }
-    case tokenKeywords.Number:
-      scanner.advance() // consume the number token
-      return { kind: 'number', value: token.value }
+    case tokenKeywords.String: {
+      scanner.advance()
+      const val: CljValue = { kind: 'string', value: token.value }
+      setPos(val, { start: token.start.offset, end: token.end.offset })
+      return val
+    }
+    case tokenKeywords.Number: {
+      scanner.advance()
+      const val: CljValue = { kind: 'number', value: token.value }
+      setPos(val, { start: token.start.offset, end: token.end.offset })
+      return val
+    }
     case tokenKeywords.Keyword: {
-      scanner.advance() // consume the keyword token
+      scanner.advance()
       const kwName = token.value
+      let val: CljValue
       if (kwName.startsWith('::')) {
         const rest = kwName.slice(2)
         if (rest.includes('/')) {
-          throw new ReaderError(
-            '::alias/keyword syntax is not yet supported',
-            token
-          )
+          const slashIdx = rest.indexOf('/')
+          const alias = rest.slice(0, slashIdx)
+          const localName = rest.slice(slashIdx + 1)
+          const fullNs = ctx.aliases.get(alias)
+          if (!fullNs) {
+            throw new ReaderError(
+              `No namespace alias '${alias}' found for ::${alias}/${localName}`,
+              token,
+              { start: token.start.offset, end: token.end.offset }
+            )
+          }
+          val = { kind: 'keyword', name: `:${fullNs}/${localName}` }
+        } else {
+          val = { kind: 'keyword', name: `:${ctx.namespace}/${rest}` }
         }
-        return { kind: 'keyword', name: `:${ctx.namespace}/${rest}` }
+      } else {
+        val = { kind: 'keyword', name: kwName }
       }
-      return { kind: 'keyword', name: kwName }
+      setPos(val, { start: token.start.offset, end: token.end.offset })
+      return val
     }
   }
-  throw new ReaderError(`Unexpected token: ${token.kind}`, token)
+  throw new ReaderError(`Unexpected token: ${token.kind}`, token, {
+    start: token.start.offset,
+    end: token.end.offset,
+  })
 }
 
 const readQuote = (ctx: ReaderCtx) => {
@@ -91,6 +114,23 @@ const readUnquote = (ctx: ReaderCtx) => {
   return { kind: valueKeywords.list, value: [cljSymbol('unquote'), value] }
 }
 
+const readDeref = (ctx: ReaderCtx) => {
+  const scanner = ctx.scanner
+  const token = scanner.peek()
+  if (!token) {
+    throw new ReaderError(
+      'Unexpected end of input while parsing deref',
+      scanner.position()
+    )
+  }
+  scanner.advance() // consume the Deref token
+  const value = readForm(ctx)
+  if (!value) {
+    throw new ReaderError(`Unexpected token: ${getTokenValue(token)}`, token)
+  }
+  return { kind: valueKeywords.list, value: [cljSymbol('deref'), value] }
+}
+
 const readUnquoteSplicing = (ctx: ReaderCtx) => {
   const scanner = ctx.scanner
   const token = scanner.peek()
@@ -134,6 +174,7 @@ const collectionReader = (valueType: 'list' | 'vector', closeToken: string) => {
     scanner.advance() // consume the opening token
     const values: CljValue[] = []
     let pairMatched = false
+    let closingEnd: number | undefined
     while (!scanner.isAtEnd()) {
       const token = scanner.peek()
       if (!token) {
@@ -142,10 +183,12 @@ const collectionReader = (valueType: 'list' | 'vector', closeToken: string) => {
       if (isClosingToken(token) && token.kind !== closeToken) {
         throw new ReaderError(
           `Expected '${closeToken}' to close ${valueType} started at line ${startToken.start.line} column ${startToken.start.col}, but got '${getTokenValue(token)}' at line ${token.start.line} column ${token.start.col}`,
-          token
+          token,
+          { start: token.start.offset, end: token.end.offset }
         )
       }
       if (token.kind === closeToken) {
+        closingEnd = token.end.offset
         scanner.advance() // consume the closing token
         pairMatched = true
         break
@@ -159,7 +202,11 @@ const collectionReader = (valueType: 'list' | 'vector', closeToken: string) => {
         scanner.peek()
       )
     }
-    return { kind: valueType, value: values }
+    const result: CljValue = { kind: valueType, value: values }
+    if (closingEnd !== undefined) {
+      setPos(result, { start: startToken.start.offset, end: closingEnd })
+    }
+    return result
   }
 }
 
@@ -173,18 +220,26 @@ const readSymbol = (scanner: TokenScanner) => {
     throw new ReaderError('Unexpected end of input', scanner.position())
   }
   if (token.kind !== tokenKeywords.Symbol) {
-    throw new ReaderError(`Unexpected token: ${getTokenValue(token)}`, token)
+    throw new ReaderError(`Unexpected token: ${getTokenValue(token)}`, token, {
+      start: token.start.offset,
+      end: token.end.offset,
+    })
   }
   scanner.advance()
+  let val: CljValue
   switch (token.value) {
     case 'true':
     case 'false':
-      return cljBoolean(token.value === 'true')
+      val = cljBoolean(token.value === 'true')
+      break
     case 'nil':
-      return cljNil()
+      val = cljNil()
+      break
     default:
-      return cljSymbol(token.value)
+      val = cljSymbol(token.value)
   }
+  setPos(val, { start: token.start.offset, end: token.end.offset })
+  return val
 }
 
 const readMap = (ctx: ReaderCtx) => {
@@ -197,6 +252,7 @@ const readMap = (ctx: ReaderCtx) => {
     )
   }
   let pairMatched = false
+  let closingEnd: number | undefined
   scanner.advance() // consume the opening brace
   const entries: [CljValue, CljValue][] = []
   while (!scanner.isAtEnd()) {
@@ -207,10 +263,12 @@ const readMap = (ctx: ReaderCtx) => {
     if (isClosingToken(token) && token.kind !== tokenKeywords.RBrace) {
       throw new ReaderError(
         `Expected '}' to close map started at line ${startToken.start.line} column ${startToken.start.col}, but got '${token.kind}' at line ${token.start.line} column ${token.start.col}`,
-        token
+        token,
+        { start: token.start.offset, end: token.end.offset }
       )
     }
     if (token.kind === tokenKeywords.RBrace) {
+      closingEnd = token.end.offset
       scanner.advance() // consume the closing brace
       pairMatched = true
       break
@@ -241,7 +299,11 @@ const readMap = (ctx: ReaderCtx) => {
       scanner.peek()
     )
   }
-  return { kind: valueKeywords.map, entries }
+  const result: CljValue = { kind: valueKeywords.map, entries }
+  if (closingEnd !== undefined) {
+    setPos(result, { start: startToken.start.offset, end: closingEnd })
+  }
+  return result
 }
 
 type AnonFnParams = { maxIndex: number; hasRest: boolean }
@@ -326,16 +388,19 @@ const readAnonFn = (ctx: ReaderCtx) => {
 
   const bodyForms: CljValue[] = []
   let pairMatched = false
+  let closingEnd: number | undefined
   while (!scanner.isAtEnd()) {
     const token = scanner.peek()
     if (!token) break
     if (isClosingToken(token) && token.kind !== tokenKeywords.RParen) {
       throw new ReaderError(
         `Expected ')' to close anonymous function started at line ${startToken.start.line} column ${startToken.start.col}, but got '${getTokenValue(token)}' at line ${token.start.line} column ${token.start.col}`,
-        token
+        token,
+        { start: token.start.offset, end: token.end.offset }
       )
     }
     if (token.kind === tokenKeywords.RParen) {
+      closingEnd = token.end.offset
       scanner.advance() // consume closing ')'
       pairMatched = true
       break
@@ -343,7 +408,8 @@ const readAnonFn = (ctx: ReaderCtx) => {
     if (token.kind === tokenKeywords.AnonFnStart) {
       throw new ReaderError(
         'Nested anonymous functions (#(...)) are not allowed',
-        token
+        token,
+        { start: token.start.offset, end: token.end.offset }
       )
     }
     bodyForms.push(readForm(ctx))
@@ -371,7 +437,15 @@ const readAnonFn = (ctx: ReaderCtx) => {
 
   const substitutedBody = substituteAnonFnParams(bodyList)
 
-  return cljList([cljSymbol('fn'), cljVector(paramSymbols), substitutedBody])
+  const result = cljList([
+    cljSymbol('fn'),
+    cljVector(paramSymbols),
+    substitutedBody,
+  ])
+  if (closingEnd !== undefined) {
+    setPos(result, { start: startToken.start.offset, end: closingEnd })
+  }
+  return result
 }
 
 function readForm(ctx: ReaderCtx): CljValue {
@@ -402,10 +476,13 @@ function readForm(ctx: ReaderCtx): CljValue {
       return readUnquoteSplicing(ctx)
     case tokenKeywords.AnonFnStart:
       return readAnonFn(ctx)
+    case tokenKeywords.Deref:
+      return readDeref(ctx)
     default:
       throw new ReaderError(
         `Unexpected token: ${getTokenValue(token)} at line ${token.start.line} column ${token.start.col}`,
-        token
+        token,
+        { start: token.start.offset, end: token.end.offset }
       )
   }
 }
@@ -413,18 +490,21 @@ function readForm(ctx: ReaderCtx): CljValue {
 type ReaderCtx = {
   scanner: TokenScanner
   namespace: string
+  aliases: Map<string, string>
 }
 
 // initializes the scanner and parses the forms, returning a tree of values
 export function readForms(
   input: Token[],
-  currentNs: string = 'user'
+  currentNs: string = 'user',
+  aliases: Map<string, string> = new Map()
 ): CljValue[] {
   const withoutComments = input.filter((t) => t.kind !== tokenKeywords.Comment)
   const scanner = makeTokenScanner(withoutComments)
   const ctx = {
     scanner,
     namespace: currentNs,
+    aliases,
   }
   const values: CljValue[] = []
   while (!scanner.isAtEnd()) {

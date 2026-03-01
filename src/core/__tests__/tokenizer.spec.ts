@@ -283,6 +283,52 @@ bar"`,
     })
   })
 
+  describe('@ deref dispatch', () => {
+    it('tokenizes @a as a Deref token followed by a Symbol token', () => {
+      const tokens = tokenize('@a')
+      expect(tokens).toMatchObject([
+        { kind: 'Deref' },
+        { kind: 'Symbol', value: 'a' },
+      ])
+    })
+
+    it('tokenizes @(foo) as Deref followed by the list tokens', () => {
+      const tokens = tokenize('@(foo)')
+      expect(tokens).toMatchObject([
+        { kind: 'Deref' },
+        { kind: 'LParen' },
+        { kind: 'Symbol', value: 'foo' },
+        { kind: 'RParen' },
+      ])
+    })
+
+    it('tokenizes @@a as two Deref tokens followed by a Symbol', () => {
+      const tokens = tokenize('@@a')
+      expect(tokens).toMatchObject([
+        { kind: 'Deref' },
+        { kind: 'Deref' },
+        { kind: 'Symbol', value: 'a' },
+      ])
+    })
+
+    it('@ stops symbol scanning — foo and bar are separate tokens', () => {
+      const tokens = tokenize('foo @bar')
+      expect(tokens).toMatchObject([
+        { kind: 'Symbol', value: 'foo' },
+        { kind: 'Deref' },
+        { kind: 'Symbol', value: 'bar' },
+      ])
+    })
+
+    it('~@foo still produces UnquoteSplicing followed by Symbol (regression guard)', () => {
+      const tokens = tokenize('~@foo')
+      expect(tokens).toMatchObject([
+        { kind: 'UnquoteSplicing' },
+        { kind: 'Symbol', value: 'foo' },
+      ])
+    })
+  })
+
   describe('auto-qualified keywords (::)', () => {
     it('tokenizes ::foo as a single Keyword token with value "::foo"', () => {
       const tokens = tokenize('::foo')

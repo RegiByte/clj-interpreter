@@ -12,6 +12,7 @@ export const valueKeywords = {
   nativeFunction: 'native-function',
   macro: 'macro',
   multiMethod: 'multi-method',
+  atom: 'atom',
 } as const
 export type ValueKeywords = (typeof valueKeywords)[keyof typeof valueKeywords]
 
@@ -28,7 +29,8 @@ export type Env = {
   bindings: Map<string, CljValue>
   outer: Env | null
   namespace?: string // only present on namespace-root envs
-  aliases?: Map<string, Env> // only present on namespace-root envs
+  aliases?: Map<string, Env> // only present on namespace-root envs; set by :as
+  readerAliases?: Map<string, string> // only present on namespace-root envs; set by :as-alias
   resolveNs?: (name: string) => Env | null // only present on the root coreEnv
 }
 
@@ -49,6 +51,8 @@ export type CljMacro = {
   arities: Arity[]
   env: Env
 }
+
+export type CljAtom = { kind: 'atom'; value: CljValue }
 
 export type CljMultiMethod = {
   kind: 'multi-method'
@@ -90,6 +94,7 @@ export type CljValue =
   | CljNativeFunction
   | CljMacro
   | CljMultiMethod
+  | CljAtom
 
 /** Tokens */
 export const tokenKeywords = {
@@ -110,6 +115,7 @@ export const tokenKeywords = {
   Whitespace: 'Whitespace',
   Symbol: 'Symbol',
   AnonFnStart: 'AnonFnStart',
+  Deref: 'Deref',
 } as const
 export const tokenSymbols = {
   Quote: 'quote',
@@ -131,6 +137,8 @@ export type Cursor = {
   col: number
   offset: number
 }
+
+export type Pos = { start: number; end: number } // absolute char offsets into the source string
 
 export type TokenLParen = {
   kind: 'LParen'
@@ -198,6 +206,9 @@ export type TokenUnquoteSplicing = {
 export type TokenAnonFnStart = {
   kind: 'AnonFnStart'
 }
+export type TokenDeref = {
+  kind: 'Deref'
+}
 export type Token = (
   | TokenLParen
   | TokenRParen
@@ -216,4 +227,5 @@ export type Token = (
   | TokenUnquote
   | TokenUnquoteSplicing
   | TokenAnonFnStart
+  | TokenDeref
 ) & { start: Cursor; end: Cursor }
