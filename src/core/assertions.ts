@@ -14,7 +14,7 @@ import {
   type CljValue,
   type CljVector,
 } from './types.ts'
-import { specialFormKeywords } from './evaluator.ts'
+import { specialFormKeywords } from './evaluator/index.ts'
 
 export const isFalsy = (value: CljValue): boolean => {
   if (value.kind === 'nil') return true

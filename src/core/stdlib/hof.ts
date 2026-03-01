@@ -169,9 +169,9 @@ export const hofFunctions: Record<string, CljValue> = {
       return ctx.applyFunction(fn, args)
     }
   ),
-  partial: cljNativeFunctionWithContext(
+  partial: cljNativeFunction(
     'partial',
-    (ctx: EvaluationContext, fn: CljValue, ...preArgs: CljValue[]) => {
+    (fn: CljValue, ...preArgs: CljValue[]) => {
       if (fn === undefined || !isAFunction(fn)) {
         throw new EvaluationError(
           `partial expects a function as first argument${fn !== undefined ? `, got ${printString(fn)}` : ''}`,
@@ -179,23 +179,26 @@ export const hofFunctions: Record<string, CljValue> = {
         )
       }
       const capturedFn = fn as CljFunction | CljNativeFunction
-      return cljNativeFunction('partial', (...moreArgs: CljValue[]) => {
-        return ctx.applyFunction(capturedFn, [...preArgs, ...moreArgs])
-      })
+      return cljNativeFunctionWithContext(
+        'partial',
+        (ctx: EvaluationContext, ...moreArgs: CljValue[]) => {
+          return ctx.applyFunction(capturedFn, [...preArgs, ...moreArgs])
+        }
+      )
     }
   ),
 
-  comp: cljNativeFunctionWithContext(
-    'comp',
-    (ctx: EvaluationContext, ...fns: CljValue[]) => {
-      if (fns.length === 0) {
-        return cljNativeFunction('identity', (x: CljValue) => x)
-      }
-      if (fns.some((f) => !isAFunction(f))) {
-        throw new EvaluationError('comp expects functions', { fns })
-      }
-      const capturedFns = fns as Array<CljFunction | CljNativeFunction>
-      return cljNativeFunction('composed', (...args: CljValue[]) => {
+  comp: cljNativeFunction('comp', (...fns: CljValue[]) => {
+    if (fns.length === 0) {
+      return cljNativeFunction('identity', (x: CljValue) => x)
+    }
+    if (fns.some((f) => !isAFunction(f))) {
+      throw new EvaluationError('comp expects functions', { fns })
+    }
+    const capturedFns = fns as Array<CljFunction | CljNativeFunction>
+    return cljNativeFunctionWithContext(
+      'composed',
+      (ctx: EvaluationContext, ...args: CljValue[]) => {
         let result = ctx.applyFunction(
           capturedFns[capturedFns.length - 1] as
             | CljFunction
@@ -209,9 +212,9 @@ export const hofFunctions: Record<string, CljValue> = {
           )
         }
         return result
-      })
-    }
-  ),
+      }
+    )
+  }),
   'map-indexed': cljNativeFunctionWithContext(
     'map-indexed',
     (ctx: EvaluationContext, fn: CljValue, coll: CljValue): CljValue => {
