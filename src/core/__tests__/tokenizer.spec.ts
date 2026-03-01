@@ -1,4 +1,5 @@
-import { tokenize, TokenizerError } from '../tokenizer'
+import { tokenize } from '../tokenizer'
+import { TokenizerError } from '../errors'
 import { expect, describe, it } from 'vitest'
 
 describe('tokenizer', () => {

@@ -1,4 +1,4 @@
-import { EvaluationError } from '../core/evaluator'
+import { EvaluationError } from '../core/errors'
 import { printString } from '../core/printer'
 import { createSession } from '../core/session'
 import type { Session } from '../core/session'

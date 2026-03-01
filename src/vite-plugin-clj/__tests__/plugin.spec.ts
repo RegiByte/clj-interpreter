@@ -62,7 +62,7 @@ describe('safeJsIdentifier', () => {
 })
 
 describe('cljPlugin', () => {
-  let plugin: Plugin & Record<string, any>
+  let plugin: Plugin & Record<string, unknown>
 
   beforeEach(() => {
     plugin = makePlugin(['src/clojure'])

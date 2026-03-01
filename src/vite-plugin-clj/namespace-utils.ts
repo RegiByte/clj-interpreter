@@ -1,5 +1,5 @@
 import { isKeyword, isList, isSymbol, isVector } from '../core/assertions'
-import { parseForms } from '../core/parser'
+import { readForms } from '../core/reader'
 import { tokenize } from '../core/tokenizer'
 import type { CljValue } from '../core/types'
 
@@ -38,7 +38,7 @@ export function nsToPath(nsName: string, sourceRoot: string): string {
  * Returns an array of namespace name strings.
  */
 export function extractNsRequires(source: string): string[] {
-  const forms = parseForms(tokenize(source))
+  const forms = readForms(tokenize(source))
   const nsForm = forms.find(
     (f) => isList(f) && isSymbol(f.value[0]) && f.value[0].name === 'ns'
   )
@@ -68,7 +68,7 @@ export function extractNsRequires(source: string): string[] {
  * Returns null if no ns form is found.
  */
 export function extractNsName(source: string): string | null {
-  const forms = parseForms(tokenize(source))
+  const forms = readForms(tokenize(source))
   const nsForm = forms.find(
     (f): f is Extract<CljValue, { kind: 'list' }> =>
       isList(f) && isSymbol(f.value[0]) && f.value[0].name === 'ns'

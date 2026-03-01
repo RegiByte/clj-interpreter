@@ -1,4 +1,4 @@
-import { EvaluationError } from '../evaluator'
+import { EvaluationError } from '../errors'
 import { cljBoolean, cljNativeFunction, cljNumber } from '../factories'
 import { isEqual } from '../assertions'
 import { printString } from '../printer'

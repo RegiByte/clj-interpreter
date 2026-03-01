@@ -1,9 +1,10 @@
 import { isKeyword, isList, isSymbol, isVector } from './assertions'
 import { loadCoreFunctions } from './core-env'
 import { define, lookup, makeEnv } from './env'
-import { EvaluationError, evaluateForms, RecurSignal } from './evaluator'
+import { evaluateForms, RecurSignal } from './evaluator'
+import { EvaluationError } from './errors'
 import { cljNativeFunction, cljNil } from './factories'
-import { parseForms } from './parser'
+import { readForms } from './reader'
 import { tokenize } from './tokenizer'
 import type { CljValue, Env, Token } from './types'
 import { coreSource } from '../clojure/core-source'
@@ -234,7 +235,7 @@ export function createSession(options?: SessionOptions): Session {
   function loadFile(source: string, nsName?: string) {
     const tokens = tokenize(source)
     const targetNs = extractNsNameFromTokens(tokens) ?? nsName ?? 'user'
-    const forms = parseForms(tokens, targetNs)
+    const forms = readForms(tokens, targetNs)
     const env = ensureNs(targetNs)
     processNsRequires(forms, env)
     evaluateForms(forms, env)
@@ -256,7 +257,7 @@ export function createSession(options?: SessionOptions): Session {
     loadFile,
     evaluate(source: string) {
       try {
-        const forms = parseForms(tokenize(source), currentNs)
+        const forms = readForms(tokenize(source), currentNs)
         const env = getNs(currentNs)!
         processNsRequires(forms, env)
         return evaluateForms(forms, env)

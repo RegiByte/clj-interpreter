@@ -58,10 +58,22 @@ export type CljMultiMethod = {
   defaultMethod?: CljFunction | CljNativeFunction
 }
 
+export type EvaluationContext = {
+  evaluate: (expr: CljValue, env: Env) => CljValue
+  evaluateForms: (forms: CljValue[], env: Env) => CljValue
+  applyFunction: (
+    fn: CljFunction | CljNativeFunction,
+    args: CljValue[]
+  ) => CljValue
+  applyMacro: (macro: CljMacro, rawArgs: CljValue[]) => CljValue
+}
+
 export type CljNativeFunction = {
   kind: 'native-function'
   name: string
   fn: (...args: CljValue[]) => CljValue
+  // Only used in case the function needs to access the evaluation context
+  fnWithContext?: (ctx: EvaluationContext, ...args: CljValue[]) => CljValue
 }
 
 export type CljValue =

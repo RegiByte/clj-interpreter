@@ -2,10 +2,11 @@
 // namespace, name, keyword
 import { isKeyword, isList, isMacro, isSymbol } from '../assertions'
 import { lookup } from '../env'
-import { applyMacro, evaluate, EvaluationError } from '../evaluator'
+import { EvaluationError } from '../errors'
 import {
   cljKeyword,
   cljNativeFunction,
+  cljNativeFunctionWithContext,
   cljNil,
   cljString,
   cljSymbol,
@@ -13,7 +14,7 @@ import {
 import { makeGensym } from '../gensym'
 import { printString } from '../printer'
 import { valueToString } from '../transformations'
-import type { CljValue, Env } from '../types'
+import type { CljValue, Env, EvaluationContext } from '../types'
 
 export function getUtilFunctions(globalEnv: Env): Record<string, CljValue> {
   const utilFunctions: Record<string, CljValue> = {
@@ -57,45 +58,54 @@ export function getUtilFunctions(globalEnv: Env): Record<string, CljValue> {
       const p = prefix?.kind === 'string' ? prefix.value : 'G'
       return cljSymbol(makeGensym(p))
     }),
-    eval: cljNativeFunction('eval', (form: CljValue | undefined) => {
-      if (form === undefined) {
-        throw new EvaluationError('eval expects a form as argument', {
-          form,
-        })
+    eval: cljNativeFunctionWithContext(
+      'eval',
+      (ctx: EvaluationContext, form: CljValue | undefined) => {
+        if (form === undefined) {
+          throw new EvaluationError('eval expects a form as argument', {
+            form,
+          })
+        }
+        return ctx.evaluate(form, globalEnv)
       }
-      return evaluate(form, globalEnv)
-    }),
+    ),
 
-    'macroexpand-1': cljNativeFunction('macroexpand-1', (form: CljValue) => {
-      if (!isList(form) || form.value.length === 0) return form
-      const head = form.value[0]
-      if (!isSymbol(head)) return form
-      let macroValue: CljValue
-      try {
-        macroValue = lookup(head.name, globalEnv)
-      } catch {
-        return form
-      }
-      if (!isMacro(macroValue)) return form
-      return applyMacro(macroValue, form.value.slice(1))
-    }),
-
-    macroexpand: cljNativeFunction('macroexpand', (form: CljValue) => {
-      let current = form
-      while (true) {
-        if (!isList(current) || current.value.length === 0) return current
-        const head = current.value[0]
-        if (!isSymbol(head)) return current
+    'macroexpand-1': cljNativeFunctionWithContext(
+      'macroexpand-1',
+      (ctx: EvaluationContext, form: CljValue) => {
+        if (!isList(form) || form.value.length === 0) return form
+        const head = form.value[0]
+        if (!isSymbol(head)) return form
         let macroValue: CljValue
         try {
           macroValue = lookup(head.name, globalEnv)
         } catch {
-          return current
+          return form
         }
-        if (!isMacro(macroValue)) return current
-        current = applyMacro(macroValue, current.value.slice(1))
+        if (!isMacro(macroValue)) return form
+        return ctx.applyMacro(macroValue, form.value.slice(1))
       }
-    }),
+    ),
+
+    macroexpand: cljNativeFunctionWithContext(
+      'macroexpand',
+      (ctx: EvaluationContext, form: CljValue) => {
+        let current = form
+        while (true) {
+          if (!isList(current) || current.value.length === 0) return current
+          const head = current.value[0]
+          if (!isSymbol(head)) return current
+          let macroValue: CljValue
+          try {
+            macroValue = lookup(head.name, globalEnv)
+          } catch {
+            return current
+          }
+          if (!isMacro(macroValue)) return current
+          current = ctx.applyMacro(macroValue, current.value.slice(1))
+        }
+      }
+    ),
 
     // Returns the namespace string of a qualified keyword or symbol, or nil.
     // (namespace :user/foo) => "user"

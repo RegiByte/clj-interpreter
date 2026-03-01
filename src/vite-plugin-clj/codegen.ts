@@ -99,6 +99,8 @@ function cljValueToTsType(value: CljValue): string {
       return '(...args: unknown[]) => unknown'
     case 'macro':
       return 'never'
+    default:
+      throw new Error(`Unknown CljValue kind: ${value.kind}`)
   }
 }
 
@@ -142,10 +144,14 @@ export function generateDts(
 
     if (value.kind === 'function') {
       for (const arity of value.arities) {
-        declarations.push(`export function ${safeName}${arityToSignature(arity)};`)
+        declarations.push(
+          `export function ${safeName}${arityToSignature(arity)};`
+        )
       }
     } else if (value.kind === 'native-function') {
-      declarations.push(`export function ${safeName}(...args: unknown[]): unknown;`)
+      declarations.push(
+        `export function ${safeName}(...args: unknown[]): unknown;`
+      )
     } else {
       declarations.push(`export const ${safeName}: ${cljValueToTsType(value)};`)
     }

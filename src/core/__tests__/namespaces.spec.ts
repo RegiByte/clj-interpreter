@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { cljNumber, cljString } from '../factories'
 import { createSession } from '../session'
-import { EvaluationError } from '../evaluator'
+import { EvaluationError } from '../errors'
 
 function session() {
   return createSession()

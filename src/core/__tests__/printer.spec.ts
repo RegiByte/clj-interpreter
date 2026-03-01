@@ -13,7 +13,7 @@ import {
   cljFunction,
 } from '../factories'
 import { tokenize } from '../tokenizer'
-import { parseForms } from '../parser'
+import { readForms } from '../reader'
 import { makeEnv } from '../env'
 
 describe('printer', () => {
@@ -160,7 +160,7 @@ describe('printer', () => {
     'should make a full roundtrip and print the same value as the input: %s',
     (_description, input, expected) => {
       const tokenized = tokenize(input)
-      const parsed = parseForms(tokenized)
+      const parsed = readForms(tokenized)
       expect(parsed).toEqual([expected])
 
       expect(printString(parsed[0])).toBe(input)

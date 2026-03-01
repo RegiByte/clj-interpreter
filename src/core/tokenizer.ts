@@ -1,65 +1,6 @@
+import { TokenizerError } from './errors'
+import { makeCharScanner, type CharScanner } from './scanners'
 import { tokenKeywords, tokenSymbols, type Token } from './types'
-
-const createCursor = (line: number, col: number, offset: number) => ({
-  line,
-  col,
-  offset,
-})
-type Cursor = ReturnType<typeof createCursor>
-
-export function makeCharScanner(input: string) {
-  const cursor = createCursor(0, 0, 0)
-
-  const api = {
-    peek: (ahead: number = 0) => {
-      const idx = cursor.offset + ahead
-      if (idx >= input.length) return null
-      return input[idx]
-    },
-    advance: () => {
-      if (cursor.offset >= input.length) return null
-      const ch = input[cursor.offset]
-      cursor.offset++
-      if (ch === '\n') {
-        cursor.line++
-        cursor.col = 0
-      } else {
-        cursor.col++
-      }
-      return ch
-    },
-    isAtEnd: () => {
-      return cursor.offset >= input.length
-    },
-    position: (): Cursor => {
-      return {
-        line: cursor.line,
-        col: cursor.col,
-        offset: cursor.offset,
-      }
-    },
-    consumeWhile(predicate: (char: string) => boolean) {
-      const buffer: string[] = []
-      while (!api.isAtEnd() && predicate(api.peek()!)) {
-        buffer.push(api.advance()!)
-      }
-      return buffer.join('')
-    },
-  }
-
-  return api
-}
-
-export type CharScanner = ReturnType<typeof makeCharScanner>
-
-export class TokenizerError extends Error {
-  context: any
-  constructor(message: string, context: any) {
-    super(message)
-    this.name = 'TokenizerError'
-    this.context = context
-  }
-}
 
 export type TokensResult = {
   tokens: Token[]

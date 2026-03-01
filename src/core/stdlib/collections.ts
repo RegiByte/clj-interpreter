@@ -3,7 +3,7 @@
 // last, reverse, empty?, repeat, range
 
 import { isCollection, isEqual, isList, isMap, isVector } from '../assertions'
-import { EvaluationError } from '../evaluator'
+import { EvaluationError } from '../errors'
 import {
   cljBoolean,
   cljList,

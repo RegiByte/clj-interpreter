@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cljBoolean, cljNumber, cljNil } from '../factories'
+import { cljNumber, cljNil } from '../factories'
 import { isSymbol } from '../assertions'
 import { createSession } from '../session'
 import { makeGensym, resetGensymCounter } from '../gensym'

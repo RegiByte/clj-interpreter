@@ -1,4 +1,4 @@
-import { EvaluationError } from './evaluator'
+import { EvaluationError } from './errors'
 import { valueKeywords, type CljMultiMethod, type CljValue } from './types'
 
 export function printString(value: CljValue): string {

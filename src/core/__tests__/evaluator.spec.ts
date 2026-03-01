@@ -1,4 +1,4 @@
-import { EvaluationError } from '../evaluator'
+import { EvaluationError } from '../errors'
 import { expect, it, describe } from 'vitest'
 import {
   cljBoolean,
@@ -1815,8 +1815,12 @@ describe('evaluator spec', () => {
         ([x] (str "hi " x))
         ([x y] (str "hi " x " and " y)))`)
       expect(session.evaluate('(greet)')).toMatchObject(toCljValue('hi'))
-      expect(session.evaluate('(greet "world")')).toMatchObject(toCljValue('hi world'))
-      expect(session.evaluate('(greet "world" "universe")')).toMatchObject(toCljValue('hi world and universe'))
+      expect(session.evaluate('(greet "world")')).toMatchObject(
+        toCljValue('hi world')
+      )
+      expect(session.evaluate('(greet "world" "universe")')).toMatchObject(
+        toCljValue('hi world and universe')
+      )
     })
   })
 
@@ -1912,12 +1916,12 @@ describe('evaluator spec', () => {
       session.evaluate('(defmulti area :shape)')
       session.evaluate('(defmethod area :rect [r] (* (:w r) (:h r)))')
       session.evaluate('(defmethod area :circle [c] (* 2 (:r c)))')
-      expect(
-        session.evaluate('(area {:shape :rect :w 4 :h 3})')
-      ).toMatchObject(cljNumber(12))
-      expect(
-        session.evaluate('(area {:shape :circle :r 5})')
-      ).toMatchObject(cljNumber(10))
+      expect(session.evaluate('(area {:shape :rect :w 4 :h 3})')).toMatchObject(
+        cljNumber(12)
+      )
+      expect(session.evaluate('(area {:shape :circle :r 5})')).toMatchObject(
+        cljNumber(10)
+      )
     })
 
     it('dispatches on an explicit fn dispatch fn', () => {
@@ -1925,12 +1929,12 @@ describe('evaluator spec', () => {
       session.evaluate('(defmulti greet (fn [x] (:lang x)))')
       session.evaluate('(defmethod greet :en [x] "hello")')
       session.evaluate('(defmethod greet :pt [x] "oi")')
-      expect(
-        session.evaluate('(greet {:lang :en})')
-      ).toMatchObject(cljString('hello'))
-      expect(
-        session.evaluate('(greet {:lang :pt})')
-      ).toMatchObject(cljString('oi'))
+      expect(session.evaluate('(greet {:lang :en})')).toMatchObject(
+        cljString('hello')
+      )
+      expect(session.evaluate('(greet {:lang :pt})')).toMatchObject(
+        cljString('oi')
+      )
     })
 
     it('falls back to :default when no method matches', () => {
@@ -1947,23 +1951,23 @@ describe('evaluator spec', () => {
       const session = createSession()
       session.evaluate('(defmulti area :shape)')
       session.evaluate('(defmethod area :rect [r] (* (:w r) (:h r)))')
-      expect(() =>
-        session.evaluate('(area {:shape :triangle})')
-      ).toThrow('No method in multimethod')
+      expect(() => session.evaluate('(area {:shape :triangle})')).toThrow(
+        'No method in multimethod'
+      )
     })
 
     it('supports open extension — defmethod after the initial defmulti block', () => {
       const session = createSession()
       session.evaluate('(defmulti area :shape)')
       session.evaluate('(defmethod area :rect [r] (* (:w r) (:h r)))')
-      expect(
-        session.evaluate('(area {:shape :rect :w 5 :h 2})')
-      ).toMatchObject(cljNumber(10))
+      expect(session.evaluate('(area {:shape :rect :w 5 :h 2})')).toMatchObject(
+        cljNumber(10)
+      )
       // extend later
       session.evaluate('(defmethod area :square [s] (* (:side s) (:side s)))')
-      expect(
-        session.evaluate('(area {:shape :square :side 4})')
-      ).toMatchObject(cljNumber(16))
+      expect(session.evaluate('(area {:shape :square :side 4})')).toMatchObject(
+        cljNumber(16)
+      )
     })
 
     it('dispatches on a computed vector dispatch value', () => {
@@ -1971,12 +1975,12 @@ describe('evaluator spec', () => {
       session.evaluate('(defmulti serialize (fn [x fmt] [(:type x) fmt]))')
       session.evaluate('(defmethod serialize [:user :json] [x _] "user-json")')
       session.evaluate('(defmethod serialize [:user :edn] [x _] "user-edn")')
-      expect(
-        session.evaluate('(serialize {:type :user} :json)')
-      ).toMatchObject(cljString('user-json'))
-      expect(
-        session.evaluate('(serialize {:type :user} :edn)')
-      ).toMatchObject(cljString('user-edn'))
+      expect(session.evaluate('(serialize {:type :user} :json)')).toMatchObject(
+        cljString('user-json')
+      )
+      expect(session.evaluate('(serialize {:type :user} :edn)')).toMatchObject(
+        cljString('user-edn')
+      )
     })
 
     it('re-defining a dispatch value replaces the old method', () => {
@@ -1987,29 +1991,35 @@ describe('evaluator spec', () => {
       const mm = session.evaluate('area')
       if (mm.kind !== 'multi-method') throw new Error('not a multimethod')
       expect(mm.methods.length).toBe(1)
-      expect(
-        session.evaluate('(area {:shape :rect :w 3 :h 4})')
-      ).toMatchObject(cljNumber(12))
+      expect(session.evaluate('(area {:shape :rect :w 3 :h 4})')).toMatchObject(
+        cljNumber(12)
+      )
     })
 
     it('throws a clear error when defmethod targets a non-multimethod', () => {
       const session = createSession()
       session.evaluate('(def area 42)')
-      expect(() =>
-        session.evaluate('(defmethod area :rect [r] 0)')
-      ).toThrow('is not a multimethod')
+      expect(() => session.evaluate('(defmethod area :rect [r] 0)')).toThrow(
+        'is not a multimethod'
+      )
     })
 
     it('supports multiple args via fn dispatch', () => {
       const session = createSession()
       session.evaluate('(defmulti combine (fn [a b] [(:kind a) (:kind b)]))')
-      session.evaluate('(defmethod combine [:num :num] [a b] (+ (:val a) (:val b)))')
-      session.evaluate('(defmethod combine [:str :str] [a b] (str (:val a) (:val b)))')
+      session.evaluate(
+        '(defmethod combine [:num :num] [a b] (+ (:val a) (:val b)))'
+      )
+      session.evaluate(
+        '(defmethod combine [:str :str] [a b] (str (:val a) (:val b)))'
+      )
       expect(
         session.evaluate('(combine {:kind :num :val 3} {:kind :num :val 4})')
       ).toMatchObject(cljNumber(7))
       expect(
-        session.evaluate('(combine {:kind :str :val "foo"} {:kind :str :val "bar"})')
+        session.evaluate(
+          '(combine {:kind :str :val "foo"} {:kind :str :val "bar"})'
+        )
       ).toMatchObject(cljString('foobar'))
     })
 
@@ -2024,9 +2034,9 @@ describe('evaluator spec', () => {
           ([r]       (* (:w r) (:h r)))
           ([r scale] (* (:w r) (:h r) scale)))
       `)
-      expect(
-        session.evaluate('(area {:shape :rect :w 3 :h 4})')
-      ).toMatchObject(cljNumber(12))
+      expect(session.evaluate('(area {:shape :rect :w 3 :h 4})')).toMatchObject(
+        cljNumber(12)
+      )
       expect(
         session.evaluate('(area {:shape :rect :w 3 :h 4} 2)')
       ).toMatchObject(cljNumber(24))

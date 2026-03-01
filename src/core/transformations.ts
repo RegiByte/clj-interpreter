@@ -1,5 +1,5 @@
 import { isList, isMap, isVector } from './assertions'
-import { EvaluationError } from './evaluator'
+import { EvaluationError } from './errors'
 import { cljVector } from './factories'
 import { printString } from './printer'
 import { type CljValue, valueKeywords } from './types'

@@ -13,7 +13,8 @@ import {
   isVector,
   isMap,
 } from '../assertions'
-import { applyFunction, EvaluationError } from '../evaluator'
+import { applyFunction } from '../evaluator'
+import { EvaluationError } from '../errors'
 import { cljBoolean, cljNativeFunction, cljNil } from '../factories'
 import { printString } from '../printer'
 import { toSeq } from '../transformations'

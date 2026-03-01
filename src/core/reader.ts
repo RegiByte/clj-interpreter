@@ -1,68 +1,19 @@
+import { ReaderError } from './errors'
 import { cljBoolean, cljList, cljNil, cljSymbol, cljVector } from './factories'
+import { makeTokenScanner, type TokenScanner } from './scanners'
 import { getTokenValue } from './tokenizer'
 import { valueKeywords, tokenKeywords, type Token } from './types'
 import type { CljValue, TokenKinds } from './types'
 
-export function makeTokenScanner(input: Token[], currentNs: string = 'user') {
-  let offset = 0
-
-  const api = {
-    peek: (ahead: number = 0) => {
-      const idx = offset + ahead
-      if (idx >= input.length) return null
-      return input[idx]
-    },
-    advance: () => {
-      if (offset >= input.length) return null
-      const token = input[offset]
-      offset++
-      return token
-    },
-    isAtEnd: () => {
-      return offset >= input.length
-    },
-    position: () => {
-      return {
-        offset,
-      }
-    },
-    consumeWhile(predicate: (token: Token) => boolean) {
-      const buffer: Token[] = []
-      while (!api.isAtEnd() && predicate(api.peek()!)) {
-        buffer.push(api.advance()!)
-      }
-      return buffer
-    },
-    consumeN(n: number) {
-      for (let i = 0; i < n; i++) {
-        api.advance()
-      }
-    },
-    namespace: () => currentNs,
-  }
-
-  return api
-}
-
-export type TokenScanner = ReturnType<typeof makeTokenScanner>
-
-export class ParserError extends Error {
-  context: any
-  constructor(message: string, context: any) {
-    super(message)
-    this.name = 'ParserError'
-    this.context = context
-  }
-}
-
-function parseAtom(scanner: TokenScanner): CljValue {
+function readAtom(ctx: ReaderCtx): CljValue {
+  const scanner = ctx.scanner
   const token = scanner.peek()
   if (!token) {
-    throw new ParserError('Unexpected end of input', scanner.position())
+    throw new ReaderError('Unexpected end of input', scanner.position())
   }
   switch (token.kind) {
     case tokenKeywords.Symbol:
-      return parseSymbol(scanner)
+      return readSymbol(scanner)
     case tokenKeywords.String:
       scanner.advance() // consume the string token
       return { kind: 'string', value: token.value }
@@ -75,80 +26,84 @@ function parseAtom(scanner: TokenScanner): CljValue {
       if (kwName.startsWith('::')) {
         const rest = kwName.slice(2)
         if (rest.includes('/')) {
-          throw new ParserError(
+          throw new ReaderError(
             '::alias/keyword syntax is not yet supported',
             token
           )
         }
-        return { kind: 'keyword', name: `:${scanner.namespace()}/${rest}` }
+        return { kind: 'keyword', name: `:${ctx.namespace}/${rest}` }
       }
       return { kind: 'keyword', name: kwName }
     }
   }
-  throw new ParserError(`Unexpected token: ${token.kind}`, token)
+  throw new ReaderError(`Unexpected token: ${token.kind}`, token)
 }
 
-const parseQuote = (scanner: TokenScanner) => {
+const readQuote = (ctx: ReaderCtx) => {
+  const scanner = ctx.scanner
   const token = scanner.peek()
   if (!token) {
-    throw new ParserError(
+    throw new ReaderError(
       'Unexpected end of input while parsing quote',
       scanner.position()
     )
   }
   scanner.advance() // consume the quote token
   // quote returns a list with the quote symbol and the quoted value, which is the next form
-  const value = parseForm(scanner)
+  const value = readForm(ctx)
   if (!value) {
-    throw new ParserError(`Unexpected token: ${getTokenValue(token)}`, token)
+    throw new ReaderError(`Unexpected token: ${getTokenValue(token)}`, token)
   }
   return { kind: valueKeywords.list, value: [cljSymbol('quote'), value] }
 }
 
-const parseQuasiquote = (scanner: TokenScanner) => {
+const readQuasiquote = (ctx: ReaderCtx) => {
+  const scanner = ctx.scanner
   const token = scanner.peek()
   if (!token) {
-    throw new ParserError(
+    throw new ReaderError(
       'Unexpected end of input while parsing quasiquote',
       scanner.position()
     )
   }
   scanner.advance() // consume the quasiquote token
-  const value = parseForm(scanner)
+  const value = readForm(ctx)
   if (!value) {
-    throw new ParserError(`Unexpected token: ${getTokenValue(token)}`, token)
+    throw new ReaderError(`Unexpected token: ${getTokenValue(token)}`, token)
   }
   return { kind: valueKeywords.list, value: [cljSymbol('quasiquote'), value] }
 }
 
-const parseUnquote = (scanner: TokenScanner) => {
+const readUnquote = (ctx: ReaderCtx) => {
+  const scanner = ctx.scanner
   const token = scanner.peek()
   if (!token) {
-    throw new ParserError(
+    throw new ReaderError(
       'Unexpected end of input while parsing unquote',
       scanner.position()
     )
   }
   scanner.advance() // consume the unquote token
-  const value = parseForm(scanner)
+  const value = readForm(ctx)
   if (!value) {
-    throw new ParserError(`Unexpected token: ${getTokenValue(token)}`, token)
+    throw new ReaderError(`Unexpected token: ${getTokenValue(token)}`, token)
   }
   return { kind: valueKeywords.list, value: [cljSymbol('unquote'), value] }
 }
 
-const parseUnquoteSplicing = (scanner: TokenScanner) => {
+const readUnquoteSplicing = (ctx: ReaderCtx) => {
+  const scanner = ctx.scanner
   const token = scanner.peek()
   if (!token) {
-    throw new ParserError(
+    throw new ReaderError(
       'Unexpected end of input while parsing unquote splicing',
       scanner.position()
     )
   }
   scanner.advance() // consume the unquote splicing token
-  const value = parseForm(scanner)
+  const value = readForm(ctx)
   if (!value) {
-    throw new ParserError(`Unexpected token: ${getTokenValue(token)}`, token)
+    throw new ReaderError(`Unexpected token: ${getTokenValue(token)}`, token)
   }
   return {
     kind: valueKeywords.list,
@@ -166,64 +121,59 @@ const isClosingToken = (token: Token) => {
   ).includes(token.kind)
 }
 
-const parseCollection = (
-  scanner: TokenScanner,
-  valueType: 'list' | 'vector',
-  closeToken: string
-) => {
-  const startToken = scanner.peek()
-  if (!startToken) {
-    throw new ParserError(
-      'Unexpected end of input while parsing collection',
-      scanner.position()
-    )
-  }
-  scanner.advance() // consume the opening token
-  const values: CljValue[] = []
-  let pairMatched = false
-  while (!scanner.isAtEnd()) {
-    const token = scanner.peek()
-    if (!token) {
-      break
-    }
-    if (isClosingToken(token) && token.kind !== closeToken) {
-      throw new ParserError(
-        `Expected '${closeToken}' to close ${valueType} started at line ${startToken.start.line} column ${startToken.start.col}, but got '${getTokenValue(token)}' at line ${token.start.line} column ${token.start.col}`,
-        token
+const collectionReader = (valueType: 'list' | 'vector', closeToken: string) => {
+  return function (ctx: ReaderCtx) {
+    const scanner = ctx.scanner
+    const startToken = scanner.peek()
+    if (!startToken) {
+      throw new ReaderError(
+        'Unexpected end of input while parsing collection',
+        scanner.position()
       )
     }
-    if (token.kind === closeToken) {
-      scanner.advance() // consume the closing token
-      pairMatched = true
-      break
+    scanner.advance() // consume the opening token
+    const values: CljValue[] = []
+    let pairMatched = false
+    while (!scanner.isAtEnd()) {
+      const token = scanner.peek()
+      if (!token) {
+        break
+      }
+      if (isClosingToken(token) && token.kind !== closeToken) {
+        throw new ReaderError(
+          `Expected '${closeToken}' to close ${valueType} started at line ${startToken.start.line} column ${startToken.start.col}, but got '${getTokenValue(token)}' at line ${token.start.line} column ${token.start.col}`,
+          token
+        )
+      }
+      if (token.kind === closeToken) {
+        scanner.advance() // consume the closing token
+        pairMatched = true
+        break
+      }
+      const value = readForm(ctx)
+      values.push(value)
     }
-    const value = parseForm(scanner)
-    values.push(value)
+    if (!pairMatched) {
+      throw new ReaderError(
+        `Unmatched ${valueType} started at line ${startToken.start.line} column ${startToken.start.col}`,
+        scanner.peek()
+      )
+    }
+    return { kind: valueType, value: values }
   }
-  if (!pairMatched) {
-    throw new ParserError(
-      `Unmatched ${valueType} started at line ${startToken.start.line} column ${startToken.start.col}`,
-      scanner.peek()
-    )
-  }
-  return { kind: valueType, value: values }
 }
 
-const parseList = (scanner: TokenScanner) => {
-  return parseCollection(scanner, valueKeywords.list, tokenKeywords.RParen)
-}
+const readList = collectionReader('list', tokenKeywords.RParen)
 
-const parseVector = (scanner: TokenScanner) => {
-  return parseCollection(scanner, valueKeywords.vector, tokenKeywords.RBracket)
-}
+const readVector = collectionReader('vector', tokenKeywords.RBracket)
 
-const parseSymbol = (scanner: TokenScanner) => {
+const readSymbol = (scanner: TokenScanner) => {
   const token = scanner.peek()
   if (!token) {
-    throw new ParserError('Unexpected end of input', scanner.position())
+    throw new ReaderError('Unexpected end of input', scanner.position())
   }
   if (token.kind !== tokenKeywords.Symbol) {
-    throw new ParserError(`Unexpected token: ${getTokenValue(token)}`, token)
+    throw new ReaderError(`Unexpected token: ${getTokenValue(token)}`, token)
   }
   scanner.advance()
   switch (token.value) {
@@ -237,10 +187,11 @@ const parseSymbol = (scanner: TokenScanner) => {
   }
 }
 
-const parseMap = (scanner: TokenScanner) => {
+const readMap = (ctx: ReaderCtx) => {
+  const scanner = ctx.scanner
   const startToken = scanner.peek()
   if (!startToken) {
-    throw new ParserError(
+    throw new ReaderError(
       'Unexpected end of input while parsing map',
       scanner.position()
     )
@@ -254,7 +205,7 @@ const parseMap = (scanner: TokenScanner) => {
       break
     }
     if (isClosingToken(token) && token.kind !== tokenKeywords.RBrace) {
-      throw new ParserError(
+      throw new ReaderError(
         `Expected '}' to close map started at line ${startToken.start.line} column ${startToken.start.col}, but got '${token.kind}' at line ${token.start.line} column ${token.start.col}`,
         token
       )
@@ -264,28 +215,28 @@ const parseMap = (scanner: TokenScanner) => {
       pairMatched = true
       break
     }
-    const key = parseForm(scanner)
+    const key = readForm(ctx)
     const nextToken = scanner.peek()
     if (!nextToken) {
-      throw new ParserError(
+      throw new ReaderError(
         `Expected value in map started at line ${startToken.start.line} column ${startToken.start.col}, but got end of input`,
         scanner.position()
       )
     }
     if (nextToken.kind === tokenKeywords.RBrace) {
-      throw new ParserError(
+      throw new ReaderError(
         `Map started at line ${startToken.start.line} column ${startToken.start.col} has key ${key.kind} but no value`,
         scanner.position()
       )
     }
-    const value = parseForm(scanner)
+    const value = readForm(ctx)
     if (!value) {
       break
     }
     entries.push([key, value])
   }
   if (!pairMatched) {
-    throw new ParserError(
+    throw new ReaderError(
       `Unmatched map started at line ${startToken.start.line} column ${startToken.start.col}`,
       scanner.peek()
     )
@@ -362,10 +313,11 @@ function substituteAnonFnParams(form: CljValue): CljValue {
   }
 }
 
-const parseAnonFn = (scanner: TokenScanner) => {
+const readAnonFn = (ctx: ReaderCtx) => {
+  const scanner = ctx.scanner
   const startToken = scanner.peek()
   if (!startToken) {
-    throw new ParserError(
+    throw new ReaderError(
       'Unexpected end of input while parsing anonymous function',
       scanner.position()
     )
@@ -378,7 +330,7 @@ const parseAnonFn = (scanner: TokenScanner) => {
     const token = scanner.peek()
     if (!token) break
     if (isClosingToken(token) && token.kind !== tokenKeywords.RParen) {
-      throw new ParserError(
+      throw new ReaderError(
         `Expected ')' to close anonymous function started at line ${startToken.start.line} column ${startToken.start.col}, but got '${getTokenValue(token)}' at line ${token.start.line} column ${token.start.col}`,
         token
       )
@@ -389,15 +341,15 @@ const parseAnonFn = (scanner: TokenScanner) => {
       break
     }
     if (token.kind === tokenKeywords.AnonFnStart) {
-      throw new ParserError(
+      throw new ReaderError(
         'Nested anonymous functions (#(...)) are not allowed',
         token
       )
     }
-    bodyForms.push(parseForm(scanner))
+    bodyForms.push(readForm(ctx))
   }
   if (!pairMatched) {
-    throw new ParserError(
+    throw new ReaderError(
       `Unmatched anonymous function started at line ${startToken.start.line} column ${startToken.start.col}`,
       scanner.peek()
     )
@@ -422,48 +374,61 @@ const parseAnonFn = (scanner: TokenScanner) => {
   return cljList([cljSymbol('fn'), cljVector(paramSymbols), substitutedBody])
 }
 
-function parseForm(scanner: TokenScanner): CljValue {
+function readForm(ctx: ReaderCtx): CljValue {
+  const scanner = ctx.scanner
   const token = scanner.peek()
   if (!token) {
-    throw new ParserError('Unexpected end of input', scanner.position())
+    throw new ReaderError('Unexpected end of input', scanner.position())
   }
   switch (token.kind) {
     case tokenKeywords.String:
     case tokenKeywords.Number:
     case tokenKeywords.Keyword:
     case tokenKeywords.Symbol:
-      return parseAtom(scanner)
+      return readAtom(ctx)
     case tokenKeywords.LParen:
-      return parseList(scanner)
+      return readList(ctx)
     case tokenKeywords.LBrace:
-      return parseMap(scanner)
+      return readMap(ctx)
     case tokenKeywords.LBracket:
-      return parseVector(scanner)
+      return readVector(ctx)
     case tokenKeywords.Quote:
-      return parseQuote(scanner)
+      return readQuote(ctx)
     case tokenKeywords.Quasiquote:
-      return parseQuasiquote(scanner)
+      return readQuasiquote(ctx)
     case tokenKeywords.Unquote:
-      return parseUnquote(scanner)
+      return readUnquote(ctx)
     case tokenKeywords.UnquoteSplicing:
-      return parseUnquoteSplicing(scanner)
+      return readUnquoteSplicing(ctx)
     case tokenKeywords.AnonFnStart:
-      return parseAnonFn(scanner)
+      return readAnonFn(ctx)
     default:
-      throw new ParserError(
+      throw new ReaderError(
         `Unexpected token: ${getTokenValue(token)} at line ${token.start.line} column ${token.start.col}`,
         token
       )
   }
 }
 
+type ReaderCtx = {
+  scanner: TokenScanner
+  namespace: string
+}
+
 // initializes the scanner and parses the forms, returning a tree of values
-export function parseForms(input: Token[], currentNs: string = 'user'): CljValue[] {
+export function readForms(
+  input: Token[],
+  currentNs: string = 'user'
+): CljValue[] {
   const withoutComments = input.filter((t) => t.kind !== tokenKeywords.Comment)
-  const scanner = makeTokenScanner(withoutComments, currentNs)
+  const scanner = makeTokenScanner(withoutComments)
+  const ctx = {
+    scanner,
+    namespace: currentNs,
+  }
   const values: CljValue[] = []
   while (!scanner.isAtEnd()) {
-    values.push(parseForm(scanner))
+    values.push(readForm(ctx))
   }
   return values
 }

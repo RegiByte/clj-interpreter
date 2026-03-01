@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseForms } from '../parser'
+import { readForms } from '../reader'
 import {
   cljBoolean,
   cljKeyword,
@@ -12,49 +12,49 @@ import {
   cljVector,
 } from '../factories'
 import { tokenize } from '../tokenizer'
-import { ParserError } from '../parser'
+import { ReaderError } from '../errors'
 
-describe('parser', () => {
+describe('reader', () => {
   it.each([
     ['list', '()', cljList([])],
     ['vector', '[]', cljVector([])],
     ['map', '{}', cljMap([])],
-  ])('should parse empty collections', (_description, input, expected) => {
-    const result = parseForms(tokenize(input))
+  ])('should read empty collections', (_description, input, expected) => {
+    const result = readForms(tokenize(input))
     expect(result).toEqual([expected])
   })
 
-  it('should parse a list with one element', () => {
+  it('should read a list with one element', () => {
     const input = '(1)'
-    const result = parseForms(tokenize(input))
+    const result = readForms(tokenize(input))
     expect(result).toEqual([cljList([cljNumber(1)])])
   })
 
-  it('should parse a list with multiple elements', () => {
+  it('should read a list with multiple elements', () => {
     const input = '(1 2 3)'
-    const result = parseForms(tokenize(input))
+    const result = readForms(tokenize(input))
     expect(result).toEqual([
       cljList([cljNumber(1), cljNumber(2), cljNumber(3)]),
     ])
   })
 
-  it('should parse a vector with one element', () => {
+  it('should read a vector with one element', () => {
     const input = '[1]'
-    const result = parseForms(tokenize(input))
+    const result = readForms(tokenize(input))
     expect(result).toEqual([cljVector([cljNumber(1)])])
   })
 
-  it('should parse a vector with multiple elements', () => {
+  it('should read a vector with multiple elements', () => {
     const input = '[1 2 3]'
-    const result = parseForms(tokenize(input))
+    const result = readForms(tokenize(input))
     expect(result).toEqual([
       cljVector([cljNumber(1), cljNumber(2), cljNumber(3)]),
     ])
   })
 
-  it('should parse a map with two entry', () => {
+  it('should read a map with two entry', () => {
     const input = '{:key 1 :another-key 2}'
-    const result = parseForms(tokenize(input))
+    const result = readForms(tokenize(input))
     expect(result).toEqual([
       cljMap([
         [cljKeyword(':key'), cljNumber(1)],
@@ -64,24 +64,24 @@ describe('parser', () => {
   })
 
   it.each([
-    ['parse a number', '1', cljNumber(1)],
-    ['parse a string', '"hello"', cljString('hello')],
-    ['parse a boolean', 'true', cljBoolean(true)],
-    ['parse a boolean', 'false', cljBoolean(false)],
-    ['parse a nil', 'nil', cljNil()],
-    ['parse a keyword', ':key', cljKeyword(':key')],
+    ['read a number', '1', cljNumber(1)],
+    ['read a string', '"hello"', cljString('hello')],
+    ['read a boolean', 'true', cljBoolean(true)],
+    ['read a boolean', 'false', cljBoolean(false)],
+    ['read a nil', 'nil', cljNil()],
+    ['read a keyword', ':key', cljKeyword(':key')],
     [
-      'parse a vector',
+      'read a vector',
       '[1 2 3]',
       cljVector([cljNumber(1), cljNumber(2), cljNumber(3)]),
     ],
     [
-      'parse a list',
+      'read a list',
       '(1 2 3)',
       cljList([cljNumber(1), cljNumber(2), cljNumber(3)]),
     ],
     [
-      'parse a map',
+      'read a map',
       '{:key 1 :another-key 2}',
       cljMap([
         [cljKeyword(':key'), cljNumber(1)],
@@ -89,7 +89,7 @@ describe('parser', () => {
       ]),
     ],
     [
-      'parse a list with multiple data types',
+      'read a list with multiple data types',
       '(1 "hello" true false nil :key [1 2 3])',
       cljList([
         cljNumber(1),
@@ -102,13 +102,13 @@ describe('parser', () => {
       ]),
     ],
   ])('primitive data: should %s', (_description, input, expected) => {
-    const result = parseForms(tokenize(input))
+    const result = readForms(tokenize(input))
     expect(result).toEqual([expected])
   })
 
-  it('should parse nested lists', () => {
+  it('should read nested lists', () => {
     const input = '((1 2 3) (4 5 6))'
-    const result = parseForms(tokenize(input))
+    const result = readForms(tokenize(input))
     expect(result).toEqual([
       cljList([
         cljList([cljNumber(1), cljNumber(2), cljNumber(3)]),
@@ -117,9 +117,9 @@ describe('parser', () => {
     ])
   })
 
-  it('should parse nested vectors', () => {
+  it('should read nested vectors', () => {
     const input = '[[1 2 3] [4 5 6]]'
-    const result = parseForms(tokenize(input))
+    const result = readForms(tokenize(input))
     expect(result).toEqual([
       cljVector([
         cljVector([cljNumber(1), cljNumber(2), cljNumber(3)]),
@@ -128,9 +128,9 @@ describe('parser', () => {
     ])
   })
 
-  it('should parse nested maps', () => {
+  it('should read nested maps', () => {
     const input = '{:foo {:bar {:baz 1}}}'
-    const result = parseForms(tokenize(input))
+    const result = readForms(tokenize(input))
     expect(result).toMatchObject([
       cljMap([
         [
@@ -143,9 +143,9 @@ describe('parser', () => {
     ])
   })
 
-  it('should parse special values as map keys', () => {
+  it('should read special values as map keys', () => {
     const input = '{:foo/bar 1 :foo/baz 2}'
-    const result = parseForms(tokenize(input))
+    const result = readForms(tokenize(input))
     expect(result).toEqual([
       cljMap([
         [cljKeyword(':foo/bar'), cljNumber(1)],
@@ -154,7 +154,7 @@ describe('parser', () => {
     ])
 
     const input2 = '{[1 2 3] "nice!"}'
-    const result2 = parseForms(tokenize(input2))
+    const result2 = readForms(tokenize(input2))
     expect(result2).toEqual([
       cljMap([
         [
@@ -173,9 +173,9 @@ describe('parser', () => {
     ['nested brackets', '[[123]'],
   ])('should throw on unmatched pairs: %s', (_description, input) => {
     expect(() => {
-      const result = parseForms(tokenize(input))
+      const result = readForms(tokenize(input))
       console.log('%o', result)
-    }).toThrow(ParserError)
+    }).toThrow(ReaderError)
   })
 
   it.each([
@@ -184,9 +184,9 @@ describe('parser', () => {
     ['braces', '}', '{'],
   ])('should throw on unexpected closing token: %s', (_description, input) => {
     expect(() => {
-      const result = parseForms(tokenize(input))
+      const result = readForms(tokenize(input))
       console.log('%o', result)
-    }).toThrow(ParserError)
+    }).toThrow(ReaderError)
   })
 
   it.each([
@@ -194,14 +194,14 @@ describe('parser', () => {
     ['boolean-false', 'false', cljBoolean(false)],
     ['nil', 'nil', cljNil()],
     ['generic symbol', 'another-symbol!', cljSymbol('another-symbol!')],
-  ])('should parse special symbols', (_description, input, expected) => {
-    const result = parseForms(tokenize(input))
+  ])('should read special symbols', (_description, input, expected) => {
+    const result = readForms(tokenize(input))
     expect(result).toEqual([expected])
   })
 
-  it('should parse quote', () => {
+  it('should read quote', () => {
     const input = "'(1 2 3)"
-    const result = parseForms(tokenize(input))
+    const result = readForms(tokenize(input))
     expect(result).toEqual([
       cljList([
         cljSymbol('quote'),
@@ -210,9 +210,9 @@ describe('parser', () => {
     ])
   })
 
-  it('should parse a quote within a list', () => {
+  it('should read a quote within a list', () => {
     const input = "(read-doc 'some-doc)"
-    const result = parseForms(tokenize(input))
+    const result = readForms(tokenize(input))
     expect(result).toEqual([
       cljList([
         cljSymbol('read-doc'),
@@ -221,9 +221,9 @@ describe('parser', () => {
     ])
   })
 
-  it('should parse multiple top level forms', () => {
+  it('should read multiple top level forms', () => {
     const input = '(def foo "bar") (println "hello")'
-    const result = parseForms(tokenize(input))
+    const result = readForms(tokenize(input))
     expect(result).toEqual([
       cljList([cljSymbol('def'), cljSymbol('foo'), cljString('bar')]),
       cljList([cljSymbol('println'), cljString('hello')]),
@@ -278,14 +278,14 @@ describe('parser', () => {
         ]),
       ]),
     ],
-  ])('should handle deep nesting of forms', (_description, input, expected) => {
-    const result = parseForms(tokenize(input))
+  ])('should read deep nesting of forms', (_description, input, expected) => {
+    const result = readForms(tokenize(input))
     expect(result).toEqual([expected])
   })
 
-  it('should handle input with comments', () => {
+  it('should read input with comments', () => {
     const input = '(+ 1 ; comment!\n 2)'
-    const result = parseForms(tokenize(input))
+    const result = readForms(tokenize(input))
     expect(result).toEqual([
       cljList([cljSymbol('+'), cljNumber(1), cljNumber(2)]),
     ])
@@ -294,13 +294,13 @@ describe('parser', () => {
   it('should throw on unbalanced map entries', () => {
     const input = '; hi there\n {:foo 1 :bar}'
     expect(() => {
-      parseForms(tokenize(input))
-    }).toThrow(ParserError)
+      readForms(tokenize(input))
+    }).toThrow(ReaderError)
   })
 
-  it('should handle a map with comments inside it', () => {
+  it('should read a map with comments inside it', () => {
     const input = '{:foo 1 ; comment!\n :bar 2}'
-    const result = parseForms(tokenize(input))
+    const result = readForms(tokenize(input))
     expect(result).toEqual([
       cljMap([
         [cljKeyword(':foo'), cljNumber(1)],
@@ -309,9 +309,9 @@ describe('parser', () => {
     ])
   })
 
-  it('should parse quasiquote', () => {
+  it('should read quasiquote', () => {
     const input = '`(1 2 3)'
-    const result = parseForms(tokenize(input))
+    const result = readForms(tokenize(input))
     expect(result).toEqual([
       cljList([
         cljSymbol('quasiquote'),
@@ -320,9 +320,9 @@ describe('parser', () => {
     ])
   })
 
-  it('should parse unquote', () => {
+  it('should read unquote', () => {
     const input = '~(1 2 3)'
-    const result = parseForms(tokenize(input))
+    const result = readForms(tokenize(input))
     expect(result).toEqual([
       cljList([
         cljSymbol('unquote'),
@@ -331,9 +331,9 @@ describe('parser', () => {
     ])
   })
 
-  it('should parse unquote splicing', () => {
+  it('should read unquote splicing', () => {
     const input = '~@(1 2 3)'
-    const result = parseForms(tokenize(input))
+    const result = readForms(tokenize(input))
     expect(result).toEqual([
       cljList([
         cljSymbol('unquote-splicing'),
@@ -344,7 +344,7 @@ describe('parser', () => {
 
   describe('anonymous function reader macro #(...)', () => {
     it('should expand #(* 2 %) to (fn [p1] (* 2 p1))', () => {
-      const result = parseForms(tokenize('#(* 2 %)'))
+      const result = readForms(tokenize('#(* 2 %)'))
       expect(result).toEqual([
         cljList([
           cljSymbol('fn'),
@@ -355,7 +355,7 @@ describe('parser', () => {
     })
 
     it('should expand #(+ %1 %2) to (fn [p1 p2] (+ p1 p2))', () => {
-      const result = parseForms(tokenize('#(+ %1 %2)'))
+      const result = readForms(tokenize('#(+ %1 %2)'))
       expect(result).toEqual([
         cljList([
           cljSymbol('fn'),
@@ -366,7 +366,7 @@ describe('parser', () => {
     })
 
     it('should treat % and %1 as the same param', () => {
-      const result = parseForms(tokenize('#(str % %1)'))
+      const result = readForms(tokenize('#(str % %1)'))
       expect(result).toEqual([
         cljList([
           cljSymbol('fn'),
@@ -377,7 +377,7 @@ describe('parser', () => {
     })
 
     it('should expand #(apply + %&) to (fn [& rest] (apply + rest))', () => {
-      const result = parseForms(tokenize('#(apply + %&)'))
+      const result = readForms(tokenize('#(apply + %&)'))
       expect(result).toEqual([
         cljList([
           cljSymbol('fn'),
@@ -388,7 +388,7 @@ describe('parser', () => {
     })
 
     it('should expand #(str %1 "-" %2 %&) with fixed and rest params', () => {
-      const result = parseForms(tokenize('#(str %1 "-" %2 %&)'))
+      const result = readForms(tokenize('#(str %1 "-" %2 %&)'))
       expect(result).toEqual([
         cljList([
           cljSymbol('fn'),
@@ -410,7 +410,7 @@ describe('parser', () => {
     })
 
     it('should expand zero-param #(println "hi") to (fn [] (println "hi"))', () => {
-      const result = parseForms(tokenize('#(println "hi")'))
+      const result = readForms(tokenize('#(println "hi")'))
       expect(result).toEqual([
         cljList([
           cljSymbol('fn'),
@@ -421,7 +421,7 @@ describe('parser', () => {
     })
 
     it('should infer arity from highest %N index', () => {
-      const result = parseForms(tokenize('#(+ %3 %1)'))
+      const result = readForms(tokenize('#(+ %3 %1)'))
       expect(result).toEqual([
         cljList([
           cljSymbol('fn'),
@@ -432,47 +432,47 @@ describe('parser', () => {
     })
 
     it('should throw on nested anonymous functions', () => {
-      expect(() => parseForms(tokenize('#(#(+ % %))'))).toThrow(ParserError)
+      expect(() => readForms(tokenize('#(#(+ % %))'))).toThrow(ReaderError)
     })
 
     it('should throw on unmatched #(...)', () => {
-      expect(() => parseForms(tokenize('#(+ 1 2'))).toThrow(ParserError)
+      expect(() => readForms(tokenize('#(+ 1 2'))).toThrow(ReaderError)
     })
   })
 
   describe('auto-qualified keywords (::)', () => {
     it('expands ::foo to :user/foo using default namespace', () => {
-      const result = parseForms(tokenize('::foo'))
+      const result = readForms(tokenize('::foo'))
       expect(result).toEqual([cljKeyword(':user/foo')])
     })
 
     it('expands ::foo to :my.ns/foo when currentNs is provided', () => {
-      const result = parseForms(tokenize('::foo'), 'my.ns')
+      const result = readForms(tokenize('::foo'), 'my.ns')
       expect(result).toEqual([cljKeyword(':my.ns/foo')])
     })
 
     it('expands ::some-key with hyphens correctly', () => {
-      const result = parseForms(tokenize('::some-key'), 'app.domain')
+      const result = readForms(tokenize('::some-key'), 'app.domain')
       expect(result).toEqual([cljKeyword(':app.domain/some-key')])
     })
 
     it('does not modify regular qualified keyword :ns/foo', () => {
-      const result = parseForms(tokenize(':ns/foo'), 'user')
+      const result = readForms(tokenize(':ns/foo'), 'user')
       expect(result).toEqual([cljKeyword(':ns/foo')])
     })
 
     it('does not modify unqualified keyword :foo', () => {
-      const result = parseForms(tokenize(':foo'), 'user')
+      const result = readForms(tokenize(':foo'), 'user')
       expect(result).toEqual([cljKeyword(':foo')])
     })
 
     it('expands ::foo inside a map', () => {
-      const result = parseForms(tokenize('{::foo 1}'), 'user')
+      const result = readForms(tokenize('{::foo 1}'), 'user')
       expect(result).toEqual([cljMap([[cljKeyword(':user/foo'), cljNumber(1)]])])
     })
 
     it('throws ParserError for ::alias/foo (not yet supported)', () => {
-      expect(() => parseForms(tokenize('::ns/foo'), 'user')).toThrow(ParserError)
+      expect(() => readForms(tokenize('::ns/foo'), 'user')).toThrow(ReaderError)
     })
   })
 })

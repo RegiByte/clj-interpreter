@@ -23,6 +23,7 @@ import {
   type CljValue,
   type CljVector,
   type Env,
+  type EvaluationContext,
   valueKeywords,
 } from './types'
 import {
@@ -38,6 +39,7 @@ import {
   isSymbol,
   isVector,
 } from './assertions.ts'
+import { EvaluationError } from './errors.ts'
 
 export const specialFormKeywords = {
   quote: 'quote',
@@ -54,15 +56,6 @@ export const specialFormKeywords = {
   defmulti: 'defmulti',
   defmethod: 'defmethod',
 } as const
-
-export class EvaluationError extends Error {
-  context: any
-  constructor(message: string, context: any) {
-    super(message)
-    this.name = 'EvaluationError'
-    this.context = context
-  }
-}
 
 export class RecurSignal {
   args: CljValue[]
@@ -229,12 +222,16 @@ export function resolveArity(arities: Arity[], argCount: number): Arity {
   )
 }
 
-export function applyFunction(
+export function applyFunctionWithContext(
   fn: CljFunction | CljNativeFunction,
   args: CljValue[],
-  env?: Env
+  ctx: EvaluationContext
 ): CljValue {
   if (fn.kind === 'native-function') {
+    // New path, native fns receive evaluation context as first argument
+    if (fn.fnWithContext) {
+      return fn.fnWithContext(ctx, ...args)
+    }
     return fn.fn(...args)
   }
   if (fn.kind === 'function') {
@@ -248,7 +245,7 @@ export function applyFunction(
         fn.env
       )
       try {
-        return evaluateForms(arity.body, localEnv)
+        return ctx.evaluateForms(arity.body, localEnv)
       } catch (e) {
         if (e instanceof RecurSignal) {
           currentArgs = e.args
@@ -264,26 +261,37 @@ export function applyFunction(
     {
       fn,
       args,
-      env,
     }
   )
 }
 
-export function applyMacro(macro: CljMacro, rawArgs: CljValue[]): CljValue {
+export function applyMacroWithContext(
+  macro: CljMacro,
+  rawArgs: CljValue[],
+  ctx: EvaluationContext
+): CljValue {
   const arity = resolveArity(macro.arities, rawArgs.length)
   const localEnv = bindParams(arity.params, arity.restParam, rawArgs, macro.env)
-  return evaluateForms(arity.body, localEnv)
+  return ctx.evaluateForms(arity.body, localEnv)
 }
 
-export function evaluateVector(vector: CljVector, env: Env): CljValue {
-  return cljVector(vector.value.map((v) => evaluate(v, env)))
+export function evaluateVector(
+  vector: CljVector,
+  env: Env,
+  ctx: EvaluationContext
+): CljValue {
+  return cljVector(vector.value.map((v) => ctx.evaluate(v, env)))
 }
 
-export function evaluateMap(map: CljMap, env: Env): CljValue {
+export function evaluateMap(
+  map: CljMap,
+  env: Env,
+  ctx: EvaluationContext
+): CljValue {
   let entries: [CljValue, CljValue][] = []
   for (const [key, value] of map.entries) {
-    const evaluatedKey = evaluate(key, env)
-    const evaluatedValue = evaluate(value, env)
+    const evaluatedKey = ctx.evaluate(key, env)
+    const evaluatedValue = ctx.evaluate(value, env)
     entries.push([evaluatedKey, evaluatedValue])
   }
   return cljMap(entries)
@@ -292,7 +300,8 @@ export function evaluateMap(map: CljMap, env: Env): CljValue {
 function evaluateQuasiquote(
   form: CljValue,
   env: Env,
-  autoGensyms: Map<string, string> = new Map()
+  autoGensyms: Map<string, string> = new Map(),
+  ctx: EvaluationContext
 ): CljValue {
   switch (form.kind) {
     case valueKeywords.vector:
@@ -305,7 +314,7 @@ function evaluateQuasiquote(
         isSymbol(form.value[0]) &&
         form.value[0].name === 'unquote'
       ) {
-        return evaluate(form.value[1], env)
+        return ctx.evaluate(form.value[1], env)
       }
 
       // Build new collection
@@ -318,7 +327,7 @@ function evaluateQuasiquote(
           isSymbol(elem.value[0]) &&
           elem.value[0].name === 'unquote-splicing'
         ) {
-          const toSplice = evaluate(elem.value[1], env)
+          const toSplice = ctx.evaluate(elem.value[1], env)
           if (!isList(toSplice) && !isVector(toSplice)) {
             throw new EvaluationError(
               'Unquote-splicing must evaluate to a list or vector',
@@ -329,15 +338,15 @@ function evaluateQuasiquote(
           continue
         }
         // Otherwise, recursively evaluate the quasiquote
-        elements.push(evaluateQuasiquote(elem, env, autoGensyms))
+        elements.push(evaluateQuasiquote(elem, env, autoGensyms, ctx))
       }
       return isAList ? cljList(elements) : cljVector(elements)
     }
     case valueKeywords.map: {
       const entries: [CljValue, CljValue][] = []
       for (const [key, value] of form.entries) {
-        const evaluatedKey = evaluateQuasiquote(key, env, autoGensyms)
-        const evaluatedValue = evaluateQuasiquote(value, env, autoGensyms)
+        const evaluatedKey = evaluateQuasiquote(key, env, autoGensyms, ctx)
+        const evaluatedValue = evaluateQuasiquote(value, env, autoGensyms, ctx)
         entries.push([evaluatedKey, evaluatedValue])
       }
       return cljMap(entries)
@@ -368,14 +377,15 @@ function evaluateQuasiquote(
 export function evaluateSpecialForm(
   symbol: string,
   list: CljList,
-  env: Env
+  env: Env,
+  ctx: EvaluationContext
 ): CljValue {
   switch (symbol) {
     case 'quote':
       // (quote expr) -> expr (unevaluated)
       return list.value[1]
     case 'quasiquote':
-      return evaluateQuasiquote(list.value[1], env)
+      return evaluateQuasiquote(list.value[1], env, new Map(), ctx)
     case 'def':
       // (def name expr) -> nil
       // defines a global binding for the given name
@@ -387,23 +397,23 @@ export function evaluateSpecialForm(
           env,
         })
       }
-      define(name.name, evaluate(list.value[2], env), getNamespaceEnv(env))
+      define(name.name, ctx.evaluate(list.value[2], env), getNamespaceEnv(env))
       return cljNil()
     case 'ns':
       return cljNil()
     case 'if':
       // (if condition then else) -> result
-      const condition = evaluate(list.value[1], env)
+      const condition = ctx.evaluate(list.value[1], env)
       if (!isFalsy(condition)) {
-        return evaluate(list.value[2], env)
+        return ctx.evaluate(list.value[2], env)
       }
       if (!list.value[3]) {
         return cljNil() // no-else case, return nil
       }
-      return evaluate(list.value[3], env)
+      return ctx.evaluate(list.value[3], env)
     case 'do':
       // (do exprs) -> evals all, returns last expr
-      return evaluateForms(list.value.slice(1), env)
+      return ctx.evaluateForms(list.value.slice(1), env)
     case 'let':
       // (let [bindings] body)
       // for let, each binding extends the outer environment, creating a new one
@@ -431,11 +441,11 @@ export function evaluateSpecialForm(
         if (!isSymbol(key)) {
           throw new EvaluationError('Keys must be symbols', { key, env })
         }
-        const value = evaluate(bindings.value[i + 1], localEnv)
+        const value = ctx.evaluate(bindings.value[i + 1], localEnv)
         localEnv = extend([key.name], [value], localEnv)
       }
 
-      return evaluateForms(body, localEnv)
+      return ctx.evaluateForms(body, localEnv)
     case 'fn': {
       const arities = parseArities(list.value.slice(1), env)
       return cljMultiArityFunction(arities, env)
@@ -458,7 +468,7 @@ export function evaluateSpecialForm(
       return cljNil()
     }
     case 'recur': {
-      const args = list.value.slice(1).map((v) => evaluate(v, env))
+      const args = list.value.slice(1).map((v) => ctx.evaluate(v, env))
       throw new RecurSignal(args)
     }
     case 'loop': {
@@ -488,7 +498,7 @@ export function evaluateSpecialForm(
           })
         }
         names.push(key.name)
-        const value = evaluate(loopBindings.value[i + 1], initEnv)
+        const value = ctx.evaluate(loopBindings.value[i + 1], initEnv)
         initEnv = extend([key.name], [value], initEnv)
       }
 
@@ -497,7 +507,7 @@ export function evaluateSpecialForm(
       while (true) {
         const loopEnv = extend(names, currentArgs, env)
         try {
-          return evaluateForms(loopBody, loopEnv)
+          return ctx.evaluateForms(loopBody, loopEnv)
         } catch (e) {
           if (e instanceof RecurSignal) {
             if (e.args.length !== names.length) {
@@ -526,7 +536,7 @@ export function evaluateSpecialForm(
       if (isKeyword(dispatchFnExpr)) {
         dispatchFn = keywordToDispatchFn(dispatchFnExpr)
       } else {
-        const evaluated = evaluate(dispatchFnExpr, env)
+        const evaluated = ctx.evaluate(dispatchFnExpr, env)
         if (!isAFunction(evaluated)) {
           throw new EvaluationError(
             'defmulti: dispatch-fn must be a function or keyword',
@@ -547,7 +557,7 @@ export function evaluateSpecialForm(
           { list, env }
         )
       }
-      const dispatchVal = evaluate(list.value[2], env)
+      const dispatchVal = ctx.evaluate(list.value[2], env)
       const existing = lookup(mmName.name, env)
       if (!isMultiMethod(existing)) {
         throw new EvaluationError(
@@ -557,7 +567,8 @@ export function evaluateSpecialForm(
       }
       const arities = parseArities([list.value[3], ...list.value.slice(4)], env)
       const methodFn = cljMultiArityFunction(arities, env)
-      const isDefault = isKeyword(dispatchVal) && dispatchVal.name === ':default'
+      const isDefault =
+        isKeyword(dispatchVal) && dispatchVal.name === ':default'
       let updated: CljMultiMethod
       if (isDefault) {
         updated = cljMultiMethod(
@@ -596,11 +607,17 @@ function keywordToDispatchFn(kw: CljKeyword): CljNativeFunction {
   })
 }
 
-function dispatchMultiMethod(mm: CljMultiMethod, args: CljValue[]): CljValue {
-  const dispatchVal = applyFunction(mm.dispatchFn, args)
-  const method = mm.methods.find(({ dispatchVal: dv }) => isEqual(dv, dispatchVal))
-  if (method) return applyFunction(method.fn, args)
-  if (mm.defaultMethod) return applyFunction(mm.defaultMethod, args)
+function dispatchMultiMethod(
+  mm: CljMultiMethod,
+  args: CljValue[],
+  ctx: EvaluationContext
+): CljValue {
+  const dispatchVal = ctx.applyFunction(mm.dispatchFn, args)
+  const method = mm.methods.find(({ dispatchVal: dv }) =>
+    isEqual(dv, dispatchVal)
+  )
+  if (method) return ctx.applyFunction(method.fn, args)
+  if (mm.defaultMethod) return ctx.applyFunction(mm.defaultMethod, args)
   // TODO: Clojure supports a custom default-dispatch-val per multimethod:
   //   (defmulti foo identity :default ::no-match)
   // This lets :default be a real dispatchable value while ::no-match is the
@@ -614,30 +631,34 @@ function dispatchMultiMethod(mm: CljMultiMethod, args: CljValue[]): CljValue {
   )
 }
 
-export function evaluateList(list: CljList, env: Env): CljValue {
+export function evaluateList(
+  list: CljList,
+  env: Env,
+  ctx: EvaluationContext
+): CljValue {
   if (list.value.length === 0) {
     throw new EvaluationError('Unexpected empty list', { list, env })
   }
   const first = list.value[0]
 
   if (isSpecialForm(first)) {
-    return evaluateSpecialForm(first.name, list, env)
+    return evaluateSpecialForm(first.name, list, env, ctx)
   }
 
-  const evaledFirst = evaluate(first, env)
+  const evaledFirst = ctx.evaluate(first, env)
   if (isMacro(evaledFirst)) {
     const rawArgs = list.value.slice(1)
-    const expanded = applyMacro(evaledFirst, rawArgs)
-    return evaluate(expanded, env)
+    const expanded = applyMacroWithContext(evaledFirst, rawArgs, ctx)
+    return ctx.evaluate(expanded, env)
   }
   if (isAFunction(evaledFirst)) {
-    const args = list.value.slice(1).map((v) => evaluate(v, env))
-    return applyFunction(evaledFirst, args, env)
+    const args = list.value.slice(1).map((v) => ctx.evaluate(v, env))
+    return ctx.applyFunction(evaledFirst, args)
   }
   if (isKeyword(evaledFirst)) {
-    const next = evaluate(list.value[1], env)
+    const next = ctx.evaluate(list.value[1], env)
     const defaultReturn =
-      list.value.length > 2 ? evaluate(list.value[2], env) : cljNil()
+      list.value.length > 2 ? ctx.evaluate(list.value[2], env) : cljNil()
     if (isMap(next)) {
       const entry = next.entries.find(([key]) => {
         return isEqual(key, evaledFirst)
@@ -650,8 +671,8 @@ export function evaluateList(list: CljList, env: Env): CljValue {
     return defaultReturn
   }
   if (isMultiMethod(evaledFirst)) {
-    const args = list.value.slice(1).map((v) => evaluate(v, env))
-    return dispatchMultiMethod(evaledFirst, args)
+    const args = list.value.slice(1).map((v) => ctx.evaluate(v, env))
+    return dispatchMultiMethod(evaledFirst, args, ctx)
   }
   if (!isSymbol(first)) {
     throw new EvaluationError(
@@ -666,11 +687,15 @@ export function evaluateList(list: CljList, env: Env): CljValue {
     throw new EvaluationError(`${symbol} is not a function`, { list, env })
   }
 
-  const args = list.value.slice(1).map((v) => evaluate(v, env))
-  return applyFunction(fnSymbol, args, env)
+  const args = list.value.slice(1).map((v) => ctx.evaluate(v, env))
+  return ctx.applyFunction(fnSymbol, args)
 }
 
-export function evaluate(expr: CljValue, env: Env): CljValue {
+export function evaluateWithContext(
+  expr: CljValue,
+  env: Env,
+  ctx: EvaluationContext
+): CljValue {
   switch (expr.kind) {
     // self-evaluating forms
     case valueKeywords.number:
@@ -702,20 +727,56 @@ export function evaluate(expr: CljValue, env: Env): CljValue {
       return lookup(expr.name, env)
     }
     case valueKeywords.vector:
-      return evaluateVector(expr, env)
+      return evaluateVector(expr, env, ctx)
     case valueKeywords.map:
-      return evaluateMap(expr, env)
+      return evaluateMap(expr, env, ctx)
     case valueKeywords.list:
-      return evaluateList(expr, env)
+      return evaluateList(expr, env, ctx)
     default:
       throw new EvaluationError('Unexpected value', { expr, env })
   }
 }
 
-export function evaluateForms(forms: CljValue[], env: Env): CljValue {
+export function evaluateFormsWithContext(
+  forms: CljValue[],
+  env: Env,
+  ctx: EvaluationContext
+): CljValue {
   let result: CljValue = cljNil()
   for (const form of forms) {
-    result = evaluate(form, env)
+    result = ctx.evaluate(form, env)
   }
   return result
+}
+
+function createEvaluationContext(): EvaluationContext {
+  const ctx = {
+    evaluate: (expr: CljValue, env: Env) => evaluateWithContext(expr, env, ctx),
+    evaluateForms: (forms: CljValue[], env: Env) =>
+      evaluateFormsWithContext(forms, env, ctx),
+    applyFunction: (fn: CljFunction | CljNativeFunction, args: CljValue[]) =>
+      applyFunctionWithContext(fn, args, ctx),
+    applyMacro: (macro: CljMacro, rawArgs: CljValue[]) =>
+      applyMacroWithContext(macro, rawArgs, ctx),
+  }
+  return ctx
+}
+
+/** Public API, this is the only place where we create a new evaluation context
+ * All inner evaluations will use the same context
+ */
+export function applyFunction(
+  fn: CljFunction | CljNativeFunction,
+  args: CljValue[]
+): CljValue {
+  return createEvaluationContext().applyFunction(fn, args)
+}
+export function applyMacro(macro: CljMacro, rawArgs: CljValue[]): CljValue {
+  return createEvaluationContext().applyMacro(macro, rawArgs)
+}
+export function evaluate(expr: CljValue, env: Env): CljValue {
+  return createEvaluationContext().evaluate(expr, env)
+}
+export function evaluateForms(forms: CljValue[], env: Env): CljValue {
+  return createEvaluationContext().evaluateForms(forms, env)
 }

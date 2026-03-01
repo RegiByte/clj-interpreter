@@ -1,3 +1,4 @@
+import { EvaluationError } from './errors'
 import type {
   Arity,
   CljBoolean,
@@ -15,6 +16,7 @@ import type {
   CljValue,
   CljVector,
   Env,
+  EvaluationContext,
 } from './types'
 
 export const cljNumber = <T extends number>(value: T) =>
@@ -61,6 +63,25 @@ export const cljNativeFunction = <
   fn: U
 ) =>
   ({ kind: 'native-function', name, fn }) as const satisfies CljNativeFunction
+export const cljNativeFunctionWithContext = <
+  T extends string,
+  U extends (ctx: EvaluationContext, ...args: CljValue[]) => CljValue,
+>(
+  name: T,
+  fn: U
+) =>
+  ({
+    kind: 'native-function',
+    name,
+    // for now wrap this, we won't use it
+    fn: () => {
+      throw new EvaluationError('Native function called without context', {
+        name,
+      })
+    },
+    fnWithContext: fn,
+  }) as const satisfies CljNativeFunction
+
 export const cljMacro = (
   params: CljSymbol[],
   restParam: CljSymbol | null,
