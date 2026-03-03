@@ -60,6 +60,16 @@ describe('safeJsIdentifier', () => {
     expect(safeJsIdentifier('helper')).toBe('helper')
   })
 
+  it('encodes standalone - (subtraction fn) as _MINUS_', () => {
+    expect(safeJsIdentifier('-')).toBe('_MINUS_')
+  })
+
+  it('keeps - as _ when used as a kebab-case word separator', () => {
+    expect(safeJsIdentifier('not-found')).toBe('not_found')
+    expect(safeJsIdentifier('not-found-bro')).toBe('not_found_bro')
+    expect(safeJsIdentifier('take-while')).toBe('take_while')
+  })
+
   it('prefixes JS reserved word throw with $', () => {
     expect(safeJsIdentifier('throw')).toBe('$throw')
   })

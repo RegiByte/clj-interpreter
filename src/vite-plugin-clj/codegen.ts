@@ -171,7 +171,8 @@ const JS_RESERVED_WORDS = new Set([
 
 export function safeJsIdentifier(name: string): string {
   const transformed = name
-    .replace(/-/g, '_')
+    .replace(/(?<=[a-zA-Z0-9])-(?=[a-zA-Z0-9])/g, '_')
+    .replace(/-/g, '_MINUS_')
     .replace(/\//g, '_DIV_')
     .replace(/\?/g, '_QMARK_')
     .replace(/!/g, '_BANG_')
