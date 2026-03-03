@@ -330,6 +330,7 @@ describe('evaluator spec', () => {
         ["(count '())", 0],
         ['(count [])', 0],
         ['(count {})', 0],
+        ['(count "abc")', 3],
       ])(
         'should evaluate count core function: %s should be %s',
         (code, expected) => {
@@ -340,7 +341,6 @@ describe('evaluator spec', () => {
       )
 
       it.each([
-        ['(count "a")', 'count expects a countable value, got "a"'],
         ['(count true)', 'count expects a countable value, got true'],
         ['(count 1)', 'count expects a countable value, got 1'],
         ['(count nil)', 'count expects a countable value, got nil'],
@@ -866,14 +866,11 @@ describe('evaluator spec', () => {
         ],
         // nil collection returns empty vector
         ['(map (fn [n] (+ n 1)) nil)', []],
-      ])(
-        `should evaluate map: %s should be %s`,
-        (code, expected) => {
-          const session = createSession()
-          const result = session.evaluate(code)
-          expect(result).toMatchObject(toCljValue(expected))
-        }
-      )
+      ])(`should evaluate map: %s should be %s`, (code, expected) => {
+        const session = createSession()
+        const result = session.evaluate(code)
+        expect(result).toMatchObject(toCljValue(expected))
+      })
 
       it.each([
         ['(map)', 'No matching arity for 0'],
@@ -888,6 +885,52 @@ describe('evaluator spec', () => {
           expectEvalError(code, expected)
         }
       )
+
+      describe('multi-collection (zip)', () => {
+        it('(map + [1 2 3] [10 20 30]) applies f to corresponding items', () => {
+          const s = createSession()
+          expect(s.evaluate('(map + [1 2 3] [10 20 30])')).toMatchObject(
+            cljVector([cljNumber(11), cljNumber(22), cljNumber(33)])
+          )
+        })
+
+        it('(map vector ...) zips two collections into pairs', () => {
+          const s = createSession()
+          expect(s.evaluate('(map vector [1 2 3] [4 5 6])')).toMatchObject(
+            cljVector([
+              cljVector([cljNumber(1), cljNumber(4)]),
+              cljVector([cljNumber(2), cljNumber(5)]),
+              cljVector([cljNumber(3), cljNumber(6)]),
+            ])
+          )
+        })
+
+        it('stops at the shortest collection', () => {
+          const s = createSession()
+          expect(s.evaluate('(map + [1 2 3] [10 20])')).toMatchObject(
+            cljVector([cljNumber(11), cljNumber(22)])
+          )
+        })
+
+        it('returns empty vector when any collection is empty', () => {
+          const s = createSession()
+          expect(s.evaluate('(map + [] [1 2 3])')).toMatchObject(cljVector([]))
+        })
+
+        it('3+ collections: (map + [1 2] [10 20] [100 200])', () => {
+          const s = createSession()
+          expect(s.evaluate('(map + [1 2] [10 20] [100 200])')).toMatchObject(
+            cljVector([cljNumber(111), cljNumber(222)])
+          )
+        })
+
+        it('4 collections zip correctly', () => {
+          const s = createSession()
+          expect(
+            s.evaluate('(map + [1 2] [10 20] [100 200] [1000 2000])')
+          ).toMatchObject(cljVector([cljNumber(1111), cljNumber(2222)]))
+        })
+      })
     })
 
     describe('filter', () => {
@@ -914,14 +957,11 @@ describe('evaluator spec', () => {
         ],
         // nil collection returns empty vector
         ['(filter (fn [n] (> n 2)) nil)', []],
-      ])(
-        'should evaluate filter: %s should be %s',
-        (code, expected) => {
-          const session = createSession()
-          const result = session.evaluate(code)
-          expect(result).toMatchObject(toCljValue(expected))
-        }
-      )
+      ])('should evaluate filter: %s should be %s', (code, expected) => {
+        const session = createSession()
+        const result = session.evaluate(code)
+        expect(result).toMatchObject(toCljValue(expected))
+      })
 
       it.each([
         ['(filter)', 'No matching arity for 0'],
@@ -2276,23 +2316,23 @@ describe('evaluator spec', () => {
 
     it('vreset! sets new value and returns it', () => {
       const s = createSession()
-      expect(
-        s.evaluate('(let [v (volatile! 0)] (vreset! v 99) @v)')
-      ).toEqual(cljNumber(99))
+      expect(s.evaluate('(let [v (volatile! 0)] (vreset! v 99) @v)')).toEqual(
+        cljNumber(99)
+      )
     })
 
     it('vswap! applies a function and stores result', () => {
       const s = createSession()
-      expect(
-        s.evaluate('(let [v (volatile! 10)] (vswap! v + 5) @v)')
-      ).toEqual(cljNumber(15))
+      expect(s.evaluate('(let [v (volatile! 10)] (vswap! v + 5) @v)')).toEqual(
+        cljNumber(15)
+      )
     })
 
     it('vswap! returns the new value', () => {
       const s = createSession()
-      expect(
-        s.evaluate('(let [v (volatile! 0)] (vswap! v inc))')
-      ).toEqual(cljNumber(1))
+      expect(s.evaluate('(let [v (volatile! 0)] (vswap! v inc))')).toEqual(
+        cljNumber(1)
+      )
     })
 
     it('vreset! on non-volatile throws', () => {
@@ -2319,6 +2359,13 @@ describe('evaluator spec', () => {
       ).toMatchObject(cljVector([cljNumber(2), cljNumber(4)]))
     })
 
+    it('(transduce (remove even?) conj [] [1 3 5]) produces [1 3 5]', () => {
+      const s = createSession()
+      expect(
+        s.evaluate('(transduce (remove even?) conj [] [1 2 3 4 5])')
+      ).toMatchObject(cljVector([cljNumber(1), cljNumber(3), cljNumber(5)]))
+    })
+
     it('transduce over nil collection returns empty result', () => {
       const s = createSession()
       expect(s.evaluate('(transduce (map inc) conj [] nil)')).toMatchObject(
@@ -2332,9 +2379,78 @@ describe('evaluator spec', () => {
         s.evaluate(
           '(transduce (comp (map inc) (filter even?)) conj [] [1 2 3 4 5])'
         )
-      ).toMatchObject(
-        cljVector([cljNumber(2), cljNumber(4), cljNumber(6)])
-      )
+      ).toMatchObject(cljVector([cljNumber(2), cljNumber(4), cljNumber(6)]))
+    })
+
+    describe('3-arity (init derived from (f))', () => {
+      it('(transduce (map inc) + [1 2 3]) sums incremented items, init from (+)', () => {
+        // (+) = 0; map inc gives [2 3 4]; sum = 9
+        const s = createSession()
+        expect(s.evaluate('(transduce (map inc) + [1 2 3])')).toMatchObject(
+          cljNumber(9)
+        )
+      })
+
+      it('(transduce (filter even?) + [1 2 3 4 5]) sums even items', () => {
+        // (+) = 0; filter even? gives [2 4]; sum = 6
+        const s = createSession()
+        expect(
+          s.evaluate('(transduce (filter even?) + [1 2 3 4 5])')
+        ).toMatchObject(cljNumber(6))
+      })
+
+      it('(transduce (map inc) * [1 2 3]) multiplies incremented items, init from (*)', () => {
+        // (*) = 1; map inc gives [2 3 4]; product = 24
+        const s = createSession()
+        expect(s.evaluate('(transduce (map inc) * [1 2 3])')).toMatchObject(
+          cljNumber(24)
+        )
+      })
+
+      it('3-arity transduce over nil collection returns init', () => {
+        // (+) = 0; nil → empty loop; completion returns 0
+        const s = createSession()
+        expect(s.evaluate('(transduce (map inc) + nil)')).toMatchObject(
+          cljNumber(0)
+        )
+      })
+
+      it('throws when f has no 0-arity', () => {
+        // - requires at least 1 arg, so (-) throws
+        const s = createSession()
+        expect(() => s.evaluate('(transduce (map inc) - [1 2 3])')).toThrow()
+      })
+    })
+
+    describe('completing', () => {
+      it('completing wraps a 2-arity fn so it works with transduce completion step', () => {
+        // (defn my-sum [acc x] (+ acc x)) has no 1-arity; without completing,
+        // transduce would call (my-sum 9) at completion and throw an arity error.
+        // completing adds ([x] (identity x)) so the completion just returns acc.
+        const s = createSession()
+        s.evaluate('(defn my-sum [acc x] (+ acc x))')
+        expect(
+          s.evaluate('(transduce (map inc) (completing my-sum) 0 [1 2 3])')
+        ).toMatchObject(cljNumber(9))
+      })
+
+      it('completing accepts a custom completion fn', () => {
+        // Use a completion fn that doubles the final result
+        const s = createSession()
+        s.evaluate('(defn my-sum [acc x] (+ acc x))')
+        expect(
+          s.evaluate(
+            '(transduce (map inc) (completing my-sum (fn [r] (* r 2))) 0 [1 2 3])'
+          )
+        ).toMatchObject(cljNumber(18))
+      })
+
+      it('completing (f) defaults to identity for 1-arity', () => {
+        const s = createSession()
+        expect(
+          s.evaluate('((completing (fn [acc x] (+ acc x))) 42)')
+        ).toMatchObject(cljNumber(42))
+      })
     })
   })
 
@@ -2398,6 +2514,22 @@ describe('evaluator spec', () => {
     })
   })
 
+  describe('drop-last transducer', () => {
+    it('(drop-last 2 [1 2 3 4]) drops the last 2 elements', () => {
+      const s = createSession()
+      expect(s.evaluate('(drop-last 2 [1 2 3 4])')).toMatchObject(
+        cljVector([cljNumber(1), cljNumber(2)])
+      )
+    })
+
+    it('(drop-last [1 2 3 4]) drops the last 1 elements', () => {
+      const s = createSession()
+      expect(s.evaluate('(drop-last [1 2 3 4])')).toMatchObject(
+        cljVector([cljNumber(1), cljNumber(2), cljNumber(3)])
+      )
+    })
+  })
+
   describe('drop-while transducer', () => {
     it('(drop-while neg? [-1 -2 3 4]) skips negatives', () => {
       const s = createSession()
@@ -2410,6 +2542,15 @@ describe('evaluator spec', () => {
       const s = createSession()
       expect(s.evaluate('(drop-while even? [2 4 5 6])')).toMatchObject(
         cljVector([cljNumber(5), cljNumber(6)])
+      )
+    })
+  })
+
+  describe('take-last transducer', () => {
+    it('(take-last 2 [1 2 3 4]) takes the last 2 elements', () => {
+      const s = createSession()
+      expect(s.evaluate('(take-last 2 [1 2 3 4])')).toMatchObject(
+        cljList([cljNumber(3), cljNumber(4)])
       )
     })
   })
@@ -2547,10 +2688,13 @@ describe('evaluator spec', () => {
         )
       })
 
-      it('meta is nil when defn has no docstring', () => {
+      it('meta carries :arglists even when defn has no docstring', () => {
         const s = createSession()
         s.evaluate('(defn add [a b] (+ a b))')
-        expect(s.evaluate('(meta add)')).toMatchObject(cljNil())
+        expect(s.evaluate('(vector? (:arglists (meta add)))')).toMatchObject(
+          cljBoolean(true)
+        )
+        expect(s.evaluate('(:doc (meta add))')).toMatchObject(cljNil())
       })
 
       it('defn with docstring still works as a normal function', () => {
@@ -2614,19 +2758,22 @@ describe('evaluator spec', () => {
     })
 
     describe('doc macro', () => {
-      it('prints the docstring for a user-defined function', () => {
+      it('prints arglists then docstring for a user-defined function', () => {
         const outputs: string[] = []
         const s = createSession({ output: (t) => outputs.push(t) })
-        s.evaluate('(defn inc-all "Increments every element." [coll] (map inc coll))')
+        s.evaluate(
+          '(defn inc-all "Increments every element." [coll] (map inc coll))'
+        )
         s.evaluate('(doc inc-all)')
-        expect(outputs).toEqual(['Increments every element.'])
+        expect(outputs).toEqual(['([coll])\n\nIncrements every element.'])
       })
 
-      it('prints the docstring for a native function', () => {
+      it('prints arglists then docstring for a native function', () => {
         const outputs: string[] = []
         const s = createSession({ output: (t) => outputs.push(t) })
         s.evaluate('(doc reduce)')
         expect(outputs).toHaveLength(1)
+        expect(outputs[0]).toMatch(/^\(\[f coll\]\)\n\(\[f val coll\]\)\n/)
         expect(outputs[0]).toContain('Reduces a collection')
       })
 
@@ -2643,6 +2790,84 @@ describe('evaluator spec', () => {
         const s = createSession({ output: (t) => outputs.push(t) })
         s.evaluate('(defn f "A fn." [x] x)')
         expect(s.evaluate('(doc f)')).toMatchObject(cljNil())
+      })
+    })
+
+    describe('arglists metadata', () => {
+      it(':arglists is a vector containing the single param vector', () => {
+        const s = createSession()
+        s.evaluate('(defn f [x] x)')
+        expect(s.evaluate('(:arglists (meta f))')).toMatchObject(
+          cljVector([cljVector([cljSymbol('x')])])
+        )
+      })
+
+      it(':arglists contains all param vectors for multi-arity defn', () => {
+        const s = createSession()
+        s.evaluate('(defn f ([x] x) ([x y] (+ x y)))')
+        expect(s.evaluate('(:arglists (meta f))')).toMatchObject(
+          cljVector([
+            cljVector([cljSymbol('x')]),
+            cljVector([cljSymbol('x'), cljSymbol('y')]),
+          ])
+        )
+      })
+
+      it(':arglists includes & for variadic params', () => {
+        const s = createSession()
+        s.evaluate('(defn f [x & rest] rest)')
+        const arglists = s.evaluate('(:arglists (meta f))')
+        expect(arglists).toMatchObject(
+          cljVector([
+            cljVector([cljSymbol('x'), cljSymbol('&'), cljSymbol('rest')]),
+          ])
+        )
+      })
+
+      it(':arglists is present on defn with docstring', () => {
+        const s = createSession()
+        s.evaluate('(defn f "Docs." [a b] (+ a b))')
+        expect(s.evaluate('(:arglists (meta f))')).toMatchObject(
+          cljVector([cljVector([cljSymbol('a'), cljSymbol('b')])])
+        )
+      })
+
+      it(':arglists is present on native functions (identity)', () => {
+        const s = createSession()
+        expect(s.evaluate('(:arglists (meta identity))')).toMatchObject(
+          cljVector([cljVector([cljSymbol('x')])])
+        )
+      })
+
+      it(':arglists is present on native functions (comp)', () => {
+        const s = createSession()
+        expect(s.evaluate('(vector? (:arglists (meta comp)))')).toMatchObject(
+          cljBoolean(true)
+        )
+      })
+
+      it('doc prints each arity on its own line for multi-arity', () => {
+        const outputs: string[] = []
+        const s = createSession({ output: (t) => outputs.push(t) })
+        s.evaluate('(defn f "Multi." ([x] x) ([x y] x))')
+        s.evaluate('(doc f)')
+        expect(outputs).toEqual(['([x])\n([x y])\n\nMulti.'])
+      })
+
+      it('doc prints arglists for defn without docstring', () => {
+        const outputs: string[] = []
+        const s = createSession({ output: (t) => outputs.push(t) })
+        s.evaluate('(defn f [x] x)')
+        s.evaluate('(doc f)')
+        expect(outputs).toEqual(['([x])\n\nNo documentation available.'])
+      })
+
+      it('doc prints arglists for identity (native)', () => {
+        const outputs: string[] = []
+        const s = createSession({ output: (t) => outputs.push(t) })
+        s.evaluate('(doc identity)')
+        expect(outputs).toHaveLength(1)
+        expect(outputs[0]).toMatch(/^\(\[x\]\)\n/)
       })
     })
   })
@@ -2718,6 +2943,342 @@ describe('evaluator spec', () => {
     it('arithmetic with scientific notation literals', () => {
       const s = createSession()
       expect(s.evaluate('(+ 1e3 2e3)')).toEqual(cljNumber(3000))
+    })
+  })
+
+  describe('try / catch / finally / throw', () => {
+    describe('try with no error', () => {
+      it('returns body value when no exception is thrown', () => {
+        const s = createSession()
+        expect(s.evaluate('(try 42)')).toEqual(cljNumber(42))
+      })
+
+      it('returns last body form value', () => {
+        const s = createSession()
+        expect(s.evaluate('(try 1 2 3)')).toEqual(cljNumber(3))
+      })
+
+      it('discards finally result and returns body value', () => {
+        const s = createSession()
+        expect(s.evaluate('(try 42 (finally "ignored"))')).toEqual(
+          cljNumber(42)
+        )
+      })
+
+      it('returns catch-body result — catch clause is not evaluated when no throw', () => {
+        const s = createSession()
+        expect(
+          s.evaluate('(try 42 (catch :default e "should-not-see-this"))')
+        ).toEqual(cljNumber(42))
+      })
+
+      it('should fail with multiple finally clauses', () => {
+        expectEvalError(
+          '(try 42 (finally "ignored") (finally "also-ignored"))',
+          'finally clause must be the last in try expression'
+        )
+      })
+    })
+
+    describe('throw', () => {
+      it('unhandled throw surfaces as EvaluationError at session boundary', () => {
+        expectEvalError(
+          '(throw {:type :error/test :message "oops"})',
+          'Unhandled throw'
+        )
+      })
+
+      it('thrown value appears in the error message via printString', () => {
+        const s = createSession()
+        let msg = ''
+        try {
+          s.evaluate('(throw "bare string")')
+        } catch (e) {
+          if (e instanceof EvaluationError) msg = e.message
+        }
+        expect(msg).toContain('bare string')
+      })
+    })
+
+    describe('catch with keyword discriminator', () => {
+      it('catches by :type keyword match', () => {
+        const s = createSession()
+        expect(
+          s.evaluate(`
+            (try
+              (throw {:type :error/test :message "oops"})
+              (catch :error/test e (:message e)))
+          `)
+        ).toEqual(cljString('oops'))
+      })
+
+      it('first matching catch clause wins', () => {
+        const s = createSession()
+        expect(
+          s.evaluate(`
+            (try
+              (throw {:type :error/test})
+              (catch :error/other e "wrong")
+              (catch :error/test e "right")
+              (catch :default e "also-wrong"))
+          `)
+        ).toEqual(cljString('right'))
+      })
+
+      it('non-matching keyword clause does not catch', () => {
+        expectEvalError(
+          `(try
+             (throw {:type :error/test})
+             (catch :error/other e "nope"))`,
+          'Unhandled throw'
+        )
+      })
+    })
+
+    describe('catch with :default', () => {
+      it('catches any thrown value', () => {
+        const s = createSession()
+        expect(
+          s.evaluate(`
+            (try
+              (throw {:type :error/anything})
+              (catch :error/random e "caught random")
+              (catch :default e "caught"))
+          `)
+        ).toEqual(cljString('caught'))
+      })
+
+      it('catches a bare non-map thrown value', () => {
+        const s = createSession()
+        expect(s.evaluate('(try (throw 99) (catch :default e e))')).toEqual(
+          cljNumber(99)
+        )
+      })
+
+      it('binds the thrown value to the catch symbol', () => {
+        const s = createSession()
+        expect(
+          s.evaluate(`
+            (try
+              (throw {:type :error/test :message "hello"})
+              (catch :default e (:message e)))
+          `)
+        ).toEqual(cljString('hello'))
+      })
+    })
+
+    describe('catch with predicate function', () => {
+      it('catches when predicate returns truthy', () => {
+        const s = createSession()
+        expect(
+          s.evaluate(`
+            (try
+              (throw {:type :error/test})
+              (catch map? e "is-a-map"))
+          `)
+        ).toEqual(cljString('is-a-map'))
+      })
+
+      it('does not catch when predicate returns falsy', () => {
+        expectEvalError(
+          `(try
+             (throw {:type :error/test})
+             (catch string? e "nope"))`,
+          'Unhandled throw'
+        )
+      })
+
+      it('catches a thrown string with string? predicate', () => {
+        const s = createSession()
+        expect(
+          s.evaluate('(try (throw "oops") (catch string? e (str "got: " e)))')
+        ).toEqual(cljString('got: oops'))
+      })
+    })
+
+    describe('catching EvaluationErrors (runtime errors)', () => {
+      it('catches a runtime evaluation error with :error/runtime', () => {
+        const s = createSession()
+        expect(
+          s.evaluate('(try (+ "a" 1) (catch :error/runtime e "runtime-error"))')
+        ).toEqual(cljString('runtime-error'))
+      })
+
+      it('catches a runtime evaluation error with :default', () => {
+        const s = createSession()
+        expect(
+          s.evaluate('(try (+ "a" 1) (catch :default e (:type e)))')
+        ).toEqual(cljKeyword(':error/runtime'))
+      })
+
+      it('synthesized map has a :message key with the error text', () => {
+        const s = createSession()
+        const result = s.evaluate(
+          '(try (+ "a" 1) (catch :error/runtime e (ex-message e)))'
+        )
+        expect(result.kind).toBe('string')
+      })
+
+      it('domain-specific keyword does not catch a runtime error', () => {
+        expectEvalError(
+          '(try (+ "a" 1) (catch :error/not-found e "x"))',
+          'expects all arguments to be numbers'
+        )
+      })
+    })
+
+    describe('finally', () => {
+      it('runs finally when no error occurs', () => {
+        const s = createSession()
+        s.evaluate('(def ran (atom false))')
+        s.evaluate('(try 42 (finally (reset! ran true)))')
+        expect(s.evaluate('@ran')).toEqual(cljBoolean(true))
+      })
+
+      it('runs finally when error is caught', () => {
+        const s = createSession()
+        s.evaluate('(def ran (atom false))')
+        s.evaluate(`
+          (try
+            (throw {:type :error/test})
+            (catch :default e nil)
+            (finally (reset! ran true)))
+        `)
+        expect(s.evaluate('@ran')).toEqual(cljBoolean(true))
+      })
+
+      it('runs finally even when error is not caught (observed via outer try)', () => {
+        const s = createSession()
+        s.evaluate('(def ran (atom false))')
+        s.evaluate(`
+          (try
+            (try
+              (throw {:type :error/test})
+              (finally (reset! ran true)))
+            (catch :default e nil))
+        `)
+        expect(s.evaluate('@ran')).toEqual(cljBoolean(true))
+      })
+
+      it('finally result is discarded — catch result is returned', () => {
+        const s = createSession()
+        expect(
+          s.evaluate(`
+            (try
+              (throw {:type :error/test})
+              (catch :default e "catch-result")
+              (finally "finally-result"))
+          `)
+        ).toEqual(cljString('catch-result'))
+      })
+    })
+
+    describe('nested try', () => {
+      it('inner catch handles; outer never sees the error', () => {
+        const s = createSession()
+        expect(
+          s.evaluate(`
+            (try
+              (try
+                (throw {:type :error/inner})
+                (catch :error/inner e "handled-inner"))
+              (catch :default e "outer-should-not-run"))
+          `)
+        ).toEqual(cljString('handled-inner'))
+      })
+
+      it('inner does not catch; outer does', () => {
+        const s = createSession()
+        expect(
+          s.evaluate(`
+            (try
+              (try
+                (throw {:type :error/escaped})
+                (catch :error/other e "wrong"))
+              (catch :error/escaped e "caught-by-outer"))
+          `)
+        ).toEqual(cljString('caught-by-outer'))
+      })
+    })
+
+    describe('ex-info / ex-message / ex-data / ex-cause', () => {
+      it('ex-info 2-arity returns a map with :message and :data', () => {
+        const s = createSession()
+        expect(s.evaluate('(ex-info "oops" {:id 1})')).toEqual(
+          cljMap([
+            [cljKeyword(':message'), cljString('oops')],
+            [cljKeyword(':data'), cljMap([[cljKeyword(':id'), cljNumber(1)]])],
+          ])
+        )
+      })
+
+      it('ex-info 3-arity includes :cause', () => {
+        const s = createSession()
+        const result = s.evaluate(
+          '(ex-info "outer" {:k 1} (ex-info "root" {}))'
+        )
+        expect(result.kind).toBe('map')
+        if (result.kind === 'map') {
+          const causeEntry = result.entries.find(
+            ([k]) => k.kind === 'keyword' && k.name === ':cause'
+          )
+          expect(causeEntry).toBeDefined()
+        }
+      })
+
+      it('ex-message returns the :message string', () => {
+        const s = createSession()
+        expect(s.evaluate('(ex-message (ex-info "my-error" {}))')).toEqual(
+          cljString('my-error')
+        )
+      })
+
+      it('ex-data returns the :data map', () => {
+        const s = createSession()
+        expect(s.evaluate('(ex-data (ex-info "err" {:code 42}))')).toEqual(
+          cljMap([[cljKeyword(':code'), cljNumber(42)]])
+        )
+      })
+
+      it('ex-cause returns the :cause value', () => {
+        const s = createSession()
+        expect(
+          s.evaluate('(ex-cause (ex-info "outer" {} (ex-info "inner" {})))')
+        ).toEqual(
+          cljMap([
+            [cljKeyword(':message'), cljString('inner')],
+            [cljKeyword(':data'), cljMap([])],
+          ])
+        )
+      })
+
+      it('ex-message returns nil on a non-map', () => {
+        const s = createSession()
+        expect(s.evaluate('(ex-message 42)')).toEqual(cljNil())
+      })
+
+      it('ex-data returns nil on a non-map', () => {
+        const s = createSession()
+        expect(s.evaluate('(ex-data nil)')).toEqual(cljNil())
+      })
+
+      it('ex-cause returns nil when :cause is absent', () => {
+        const s = createSession()
+        expect(s.evaluate('(ex-cause (ex-info "no-cause" {}))')).toEqual(
+          cljNil()
+        )
+      })
+
+      it('throw + ex-info round-trip', () => {
+        const s = createSession()
+        expect(
+          s.evaluate(`
+            (try
+              (throw (ex-info "not found" {:id 99}))
+              (catch :default e (ex-message e)))
+          `)
+        ).toEqual(cljString('not found'))
+      })
     })
   })
 })

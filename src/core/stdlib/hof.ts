@@ -1,10 +1,6 @@
 // Higher-order functions: map, filter, reduce, apply, partial, comp,
 // map-indexed, identity
-import {
-  isAFunction,
-  isCollection,
-  isReduced,
-} from '../assertions'
+import { isAFunction, isCollection, isReduced } from '../assertions'
 import { EvaluationError } from '../errors'
 import {
   cljNativeFunction,
@@ -149,13 +145,21 @@ export const hofFunctions: Record<string, CljValue> = {
         return acc
       }
     ),
-    'Reduces a collection to a single value by iteratively applying f. (reduce f coll) or (reduce f init coll).'
+    'Reduces a collection to a single value by iteratively applying f. (reduce f coll) or (reduce f init coll).',
+    [
+      ['f', 'coll'],
+      ['f', 'val', 'coll'],
+    ]
   ),
 
   apply: withDoc(
     cljNativeFunctionWithContext(
       'apply',
-      (ctx: EvaluationContext, fn: CljValue | undefined, ...rest: CljValue[]) => {
+      (
+        ctx: EvaluationContext,
+        fn: CljValue | undefined,
+        ...rest: CljValue[]
+      ) => {
         if (fn === undefined || !isAFunction(fn)) {
           throw new EvaluationError(
             `apply expects a function as first argument${fn !== undefined ? `, got ${printString(fn)}` : ''}`,
@@ -179,29 +183,31 @@ export const hofFunctions: Record<string, CljValue> = {
         return ctx.applyFunction(fn, args)
       }
     ),
-    'Calls f with the elements of the last argument (a collection) as its arguments, optionally prepended by fixed args.'
+    'Calls f with the elements of the last argument (a collection) as its arguments, optionally prepended by fixed args.',
+    [
+      ['f', 'args'],
+      ['f', '&', 'args'],
+    ]
   ),
 
   partial: withDoc(
-    cljNativeFunction(
-      'partial',
-      (fn: CljValue, ...preArgs: CljValue[]) => {
-        if (fn === undefined || !isAFunction(fn)) {
-          throw new EvaluationError(
-            `partial expects a function as first argument${fn !== undefined ? `, got ${printString(fn)}` : ''}`,
-            { fn }
-          )
-        }
-        const capturedFn = fn as CljFunction | CljNativeFunction
-        return cljNativeFunctionWithContext(
-          'partial',
-          (ctx: EvaluationContext, ...moreArgs: CljValue[]) => {
-            return ctx.applyFunction(capturedFn, [...preArgs, ...moreArgs])
-          }
+    cljNativeFunction('partial', (fn: CljValue, ...preArgs: CljValue[]) => {
+      if (fn === undefined || !isAFunction(fn)) {
+        throw new EvaluationError(
+          `partial expects a function as first argument${fn !== undefined ? `, got ${printString(fn)}` : ''}`,
+          { fn }
         )
       }
-    ),
-    'Returns a function that calls f with pre-applied args prepended to any additional arguments.'
+      const capturedFn = fn as CljFunction | CljNativeFunction
+      return cljNativeFunctionWithContext(
+        'partial',
+        (ctx: EvaluationContext, ...moreArgs: CljValue[]) => {
+          return ctx.applyFunction(capturedFn, [...preArgs, ...moreArgs])
+        }
+      )
+    }),
+    'Returns a function that calls f with pre-applied args prepended to any additional arguments.',
+    [['f', '&', 'args']]
   ),
 
   comp: withDoc(
@@ -232,7 +238,8 @@ export const hofFunctions: Record<string, CljValue> = {
         }
       )
     }),
-    'Returns the composition of fns, applied right-to-left. (comp f g) is equivalent to (fn [x] (f (g x))).'
+    'Returns the composition of fns, applied right-to-left. (comp f g) is equivalent to (fn [x] (f (g x))).',
+    [[], ['f'], ['f', 'g'], ['f', 'g', '&', 'fns']]
   ),
 
   // 'map-indexed': cljNativeFunctionWithContext(
@@ -270,6 +277,7 @@ export const hofFunctions: Record<string, CljValue> = {
       }
       return x
     }),
-    'Returns its single argument unchanged.'
+    'Returns its single argument unchanged.',
+    [['x']]
   ),
 }

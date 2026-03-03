@@ -19,6 +19,7 @@ import {
 } from './types.ts'
 import { specialFormKeywords } from './evaluator/special-forms.ts'
 
+export const isNil = (value: CljValue): boolean => value.kind === 'nil'
 export const isFalsy = (value: CljValue): boolean => {
   if (value.kind === 'nil') return true
   if (value.kind === 'boolean') return !value.value

@@ -2,9 +2,10 @@ import { isKeyword, isList, isSymbol, isVector } from './assertions'
 import { loadCoreFunctions } from './core-env'
 import { define, lookup, makeEnv } from './env'
 import { evaluateForms, RecurSignal } from './evaluator'
-import { EvaluationError, ReaderError } from './errors'
+import { CljThrownSignal, EvaluationError, ReaderError } from './errors'
 import { cljNativeFunction, cljNil } from './factories'
 import { formatErrorContext } from './positions'
+import { printString } from './printer'
 import { readForms } from './reader'
 import { tokenize } from './tokenizer'
 import type { CljValue, Env, Token, TokenSymbol } from './types'
@@ -375,6 +376,12 @@ export function createSession(options?: SessionOptions): Session {
         processNsRequires(forms, env)
         return evaluateForms(forms, env)
       } catch (e) {
+        if (e instanceof CljThrownSignal) {
+          throw new EvaluationError(
+            `Unhandled throw: ${printString(e.value)}`,
+            { thrownValue: e.value }
+          )
+        }
         if (e instanceof RecurSignal) {
           throw new EvaluationError('recur called outside of loop or fn', {
             args: e.args,
@@ -393,6 +400,12 @@ export function createSession(options?: SessionOptions): Session {
       try {
         return evaluateForms(forms, getNs(currentNs)!)
       } catch (e) {
+        if (e instanceof CljThrownSignal) {
+          throw new EvaluationError(
+            `Unhandled throw: ${printString(e.value)}`,
+            { thrownValue: e.value }
+          )
+        }
         if (e instanceof RecurSignal) {
           throw new EvaluationError('recur called outside of loop or fn', {
             args: e.args,

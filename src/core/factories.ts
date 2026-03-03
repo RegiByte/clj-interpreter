@@ -102,12 +102,32 @@ export const cljMultiArityMacro = (arities: Arity[], env: Env): CljMacro => ({
 })
 
 export const cljAtom = (value: CljValue): CljAtom => ({ kind: 'atom', value })
-export const cljReduced = (value: CljValue): CljReduced => ({ kind: 'reduced', value })
-export const cljVolatile = (value: CljValue): CljVolatile => ({ kind: 'volatile', value })
+export const cljReduced = (value: CljValue): CljReduced => ({
+  kind: 'reduced',
+  value,
+})
+export const cljVolatile = (value: CljValue): CljVolatile => ({
+  kind: 'volatile',
+  value,
+})
 
-export const withDoc = <T extends CljNativeFunction | CljFunction>(fn: T, doc: string): T => ({
+export const withDoc = <T extends CljNativeFunction | CljFunction>(
+  fn: T,
+  doc: string,
+  arglists?: string[][]
+): T => ({
   ...fn,
-  meta: cljMap([[cljKeyword(':doc'), cljString(doc)]]),
+  meta: cljMap([
+    [cljKeyword(':doc'), cljString(doc)],
+    ...(arglists
+      ? ([
+          [
+            cljKeyword(':arglists'),
+            cljVector(arglists.map((args) => cljVector(args.map(cljSymbol)))),
+          ],
+        ] as [CljValue, CljValue][])
+      : []),
+  ]),
 })
 
 export const cljMultiMethod = (

@@ -1,4 +1,4 @@
-import type { Pos } from './types'
+import type { CljValue, Pos } from './types'
 
 export class TokenizerError extends Error {
   context: unknown
@@ -28,5 +28,12 @@ export class EvaluationError extends Error {
     this.name = 'EvaluationError'
     this.context = context
     this.pos = pos
+  }
+}
+
+export class CljThrownSignal {
+  value: CljValue
+  constructor(value: CljValue) {
+    this.value = value
   }
 }

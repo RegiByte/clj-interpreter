@@ -6,6 +6,7 @@ import {
 import { arithmeticFunctions } from './stdlib/arithmetic'
 import { atomFunctions } from './stdlib/atoms'
 import { collectionFunctions } from './stdlib/collections'
+import { errorFunctions } from './stdlib/errors'
 import { hofFunctions } from './stdlib/hof'
 import { metaFunctions } from './stdlib/meta'
 import { predicateFunctions } from './stdlib/predicates'
@@ -22,6 +23,7 @@ function getCoreFunctions(globalEnv: Env) {
     ...arithmeticFunctions,
     ...atomFunctions,
     ...collectionFunctions,
+    ...errorFunctions,
     ...predicateFunctions,
     ...hofFunctions,
     ...metaFunctions,

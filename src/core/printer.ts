@@ -75,3 +75,7 @@ export function printString(value: CljValue): string {
       })
   }
 }
+
+export function joinLines(lines: string[]): string {
+  return lines.join('\n')
+}

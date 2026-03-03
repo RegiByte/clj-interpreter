@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { cljBoolean, cljKeyword, cljNil, cljNumber, cljString, cljVector } from '../factories'
+import {
+  cljBoolean,
+  cljKeyword,
+  cljNil,
+  cljNumber,
+  cljString,
+  cljVector,
+} from '../factories'
 import { printString } from '../printer'
 import { createSession } from '../session'
 
@@ -173,21 +180,23 @@ describe('stdlib macros', () => {
 
   describe('defn', () => {
     it('defines a named function', () => {
-      expect(session().evaluate('(defn square [x] (* x x)) (square 5)')).toEqual(
-        cljNumber(25)
-      )
+      expect(
+        session().evaluate('(defn square [x] (* x x)) (square 5)')
+      ).toEqual(cljNumber(25))
     })
 
     it('supports multiple body forms', () => {
       expect(
-        session().evaluate('(defn add-and-double [a b] (def s (+ a b)) (* s 2)) (add-and-double 3 4)')
+        session().evaluate(
+          '(defn add-and-double [a b] (def s (+ a b)) (* s 2)) (add-and-double 3 4)'
+        )
       ).toEqual(cljNumber(14))
     })
 
     it('supports rest params', () => {
-      expect(session().evaluate('(defn sum [& xs] (reduce + 0 xs)) (sum 1 2 3 4)')).toEqual(
-        cljNumber(10)
-      )
+      expect(
+        session().evaluate('(defn sum [& xs] (reduce + 0 xs)) (sum 1 2 3 4)')
+      ).toEqual(cljNumber(10))
     })
   })
 
@@ -219,27 +228,31 @@ describe('stdlib macros', () => {
 
   describe('macroexpand-1', () => {
     it('expands when once', () => {
-      expect(printString(session().evaluate("(macroexpand-1 '(when true 1 2))"))).toEqual(
-        '(if true (do 1 2) nil)'
-      )
+      expect(
+        printString(session().evaluate("(macroexpand-1 '(when true 1 2))"))
+      ).toEqual('(if true (do 1 2) nil)')
     })
 
     it('expands when-not once', () => {
-      expect(printString(session().evaluate("(macroexpand-1 '(when-not false 42))"))).toEqual(
-        '(if false nil (do 42))'
-      )
+      expect(
+        printString(session().evaluate("(macroexpand-1 '(when-not false 42))"))
+      ).toEqual('(if false nil (do 42))')
     })
 
     it('expands and once — binding symbol is a hygienic gensym', () => {
       // The exact gensym name is non-deterministic; verify structure via pattern
-      const expanded = printString(session().evaluate("(macroexpand-1 '(and 1 2 3))"))
-      expect(expanded).toMatch(/^\(let \[v__\d+ 1\] \(if v__\d+ \(and 2 3\) v__\d+\)\)$/)
+      const expanded = printString(
+        session().evaluate("(macroexpand-1 '(and 1 2 3))")
+      )
+      expect(expanded).toMatch(
+        /^\(let \[v__\d+ 1\] \(if v__\d+ \(and 2 3\) v__\d+\)\)$/
+      )
     })
 
     it('returns form unchanged when head is not a macro', () => {
-      expect(printString(session().evaluate("(macroexpand-1 '(+ 1 2))"))).toEqual(
-        '(+ 1 2)'
-      )
+      expect(
+        printString(session().evaluate("(macroexpand-1 '(+ 1 2))"))
+      ).toEqual('(+ 1 2)')
     })
 
     it('returns form unchanged for non-list input', () => {
@@ -249,9 +262,9 @@ describe('stdlib macros', () => {
 
   describe('macroexpand', () => {
     it('expands when fully (stops at if, a special form)', () => {
-      expect(printString(session().evaluate("(macroexpand '(when true 1))"))).toEqual(
-        '(if true (do 1) nil)'
-      )
+      expect(
+        printString(session().evaluate("(macroexpand '(when true 1))"))
+      ).toEqual('(if true (do 1) nil)')
     })
 
     it('expands chained macros all the way', () => {
@@ -259,13 +272,13 @@ describe('stdlib macros', () => {
       const s = session()
       s.evaluate('(defmacro my-when-not [c & b] `(when (not ~c) ~@b))')
       // macroexpand-1: my-when-not → (when (not c) ...) — still a macro
-      expect(printString(s.evaluate("(macroexpand-1 '(my-when-not false 1))"))).toEqual(
-        '(when (not false) 1)'
-      )
+      expect(
+        printString(s.evaluate("(macroexpand-1 '(my-when-not false 1))"))
+      ).toEqual('(when (not false) 1)')
       // macroexpand: keeps going until when → (if ...) — no longer a macro
-      expect(printString(s.evaluate("(macroexpand '(my-when-not false 1))"))).toEqual(
-        '(if (not false) (do 1) nil)'
-      )
+      expect(
+        printString(s.evaluate("(macroexpand '(my-when-not false 1))"))
+      ).toEqual('(if (not false) (do 1) nil)')
     })
 
     it('returns form unchanged when head is not a macro', () => {
@@ -427,7 +440,9 @@ describe('empty?', () => {
 
 describe('some', () => {
   it('returns first truthy result', () => {
-    expect(session().evaluate('(some even? [1 3 4 6])')).toEqual(cljBoolean(true))
+    expect(session().evaluate('(some even? [1 3 4 6])')).toEqual(
+      cljBoolean(true)
+    )
   })
 
   it('returns nil when no element satisfies pred', () => {
@@ -435,9 +450,9 @@ describe('some', () => {
   })
 
   it('returns the truthy result value, not always true', () => {
-    expect(session().evaluate('(some (fn [x] (when (even? x) x)) [1 3 4])')).toEqual(
-      cljNumber(4)
-    )
+    expect(
+      session().evaluate('(some (fn [x] (when (even? x) x)) [1 3 4])')
+    ).toEqual(cljNumber(4))
   })
 
   it('returns nil for empty collection', () => {
@@ -445,13 +460,34 @@ describe('some', () => {
   })
 })
 
+describe('some?', () => {
+  it('returns true when any non nil value is passed', () => {
+    expect(session().evaluate('(some? 42)')).toEqual(cljBoolean(true))
+    expect(session().evaluate('(some? "hello")')).toEqual(cljBoolean(true))
+    expect(session().evaluate('(some? true)')).toEqual(cljBoolean(true))
+    expect(session().evaluate('(some? [1 2 3])')).toEqual(cljBoolean(true))
+    expect(session().evaluate('(some? {:a 1})')).toEqual(cljBoolean(true))
+    expect(session().evaluate('(some? :a)')).toEqual(cljBoolean(true))
+    expect(session().evaluate('(some? true)')).toEqual(cljBoolean(true))
+    expect(session().evaluate('(some? false)')).toEqual(cljBoolean(true))
+  })
+
+  it('returns false when nil is passed', () => {
+    expect(session().evaluate('(some? nil)')).toEqual(cljBoolean(false))
+  })
+})
+
 describe('every?', () => {
   it('returns true when all elements satisfy pred', () => {
-    expect(session().evaluate('(every? number? [1 2 3])')).toEqual(cljBoolean(true))
+    expect(session().evaluate('(every? number? [1 2 3])')).toEqual(
+      cljBoolean(true)
+    )
   })
 
   it('returns false when any element fails pred', () => {
-    expect(session().evaluate('(every? number? [1 "a" 3])')).toEqual(cljBoolean(false))
+    expect(session().evaluate('(every? number? [1 "a" 3])')).toEqual(
+      cljBoolean(false)
+    )
   })
 
   it('returns true for empty collection (vacuously true)', () => {
@@ -514,15 +550,15 @@ describe('comp', () => {
 
 describe('map-indexed', () => {
   it('passes index and element to function (list input) — returns vector', () => {
-    expect(session().evaluate("(map-indexed (fn [i x] i) '(:a :b :c))")).toEqual(
-      cljVector([cljNumber(0), cljNumber(1), cljNumber(2)])
-    )
+    expect(
+      session().evaluate("(map-indexed (fn [i x] i) '(:a :b :c))")
+    ).toEqual(cljVector([cljNumber(0), cljNumber(1), cljNumber(2)]))
   })
 
   it('passes element correctly (list input) — returns vector', () => {
-    expect(session().evaluate("(map-indexed (fn [i x] x) '(:a :b :c))")).toEqual(
-      cljVector([cljKeyword(':a'), cljKeyword(':b'), cljKeyword(':c')])
-    )
+    expect(
+      session().evaluate("(map-indexed (fn [i x] x) '(:a :b :c))")
+    ).toEqual(cljVector([cljKeyword(':a'), cljKeyword(':b'), cljKeyword(':c')]))
   })
 
   it('returns a vector when given a vector input', () => {
@@ -568,69 +604,97 @@ describe('constantly', () => {
 
 describe('complement', () => {
   it('returns the logical negation of a predicate', () => {
-    expect(session().evaluate('((complement nil?) 42)')).toEqual(cljBoolean(true))
-    expect(session().evaluate('((complement nil?) nil)')).toEqual(cljBoolean(false))
+    expect(session().evaluate('((complement nil?) 42)')).toEqual(
+      cljBoolean(true)
+    )
+    expect(session().evaluate('((complement nil?) nil)')).toEqual(
+      cljBoolean(false)
+    )
   })
 
   it('works with even? to filter odd numbers — returns vector', () => {
-    expect(session().evaluate("(filter (complement even?) '(1 2 3 4 5))")).toEqual(
-      cljVector([cljNumber(1), cljNumber(3), cljNumber(5)])
-    )
+    expect(
+      session().evaluate("(filter (complement even?) '(1 2 3 4 5))")
+    ).toEqual(cljVector([cljNumber(1), cljNumber(3), cljNumber(5)]))
   })
 })
 
 describe('not-any?', () => {
   it('returns true when no element satisfies pred', () => {
-    expect(session().evaluate("(not-any? even? '(1 3 5))")).toEqual(cljBoolean(true))
+    expect(session().evaluate("(not-any? even? '(1 3 5))")).toEqual(
+      cljBoolean(true)
+    )
   })
 
   it('returns false when any element satisfies pred', () => {
-    expect(session().evaluate("(not-any? even? '(1 2 3))")).toEqual(cljBoolean(false))
+    expect(session().evaluate("(not-any? even? '(1 2 3))")).toEqual(
+      cljBoolean(false)
+    )
   })
 })
 
 describe('not-every?', () => {
   it('returns false when all elements satisfy pred', () => {
-    expect(session().evaluate("(not-every? number? '(1 2 3))")).toEqual(cljBoolean(false))
+    expect(session().evaluate("(not-every? number? '(1 2 3))")).toEqual(
+      cljBoolean(false)
+    )
   })
 
   it('returns true when some elements fail pred', () => {
-    expect(session().evaluate("(not-every? number? '(1 \"a\" 3))")).toEqual(cljBoolean(true))
+    expect(session().evaluate('(not-every? number? \'(1 "a" 3))')).toEqual(
+      cljBoolean(true)
+    )
   })
 })
 
 describe('qualified-keyword?', () => {
   it('returns true for a qualified keyword', () => {
-    expect(session().evaluate('(qualified-keyword? :user/foo)')).toEqual(cljBoolean(true))
+    expect(session().evaluate('(qualified-keyword? :user/foo)')).toEqual(
+      cljBoolean(true)
+    )
   })
 
   it('returns false for an unqualified keyword', () => {
-    expect(session().evaluate('(qualified-keyword? :foo)')).toEqual(cljBoolean(false))
+    expect(session().evaluate('(qualified-keyword? :foo)')).toEqual(
+      cljBoolean(false)
+    )
   })
 
   it('returns false for a non-keyword', () => {
-    expect(session().evaluate('(qualified-keyword? "user/foo")')).toEqual(cljBoolean(false))
-    expect(session().evaluate("(qualified-keyword? 'user/foo)")).toEqual(cljBoolean(false))
+    expect(session().evaluate('(qualified-keyword? "user/foo")')).toEqual(
+      cljBoolean(false)
+    )
+    expect(session().evaluate("(qualified-keyword? 'user/foo)")).toEqual(
+      cljBoolean(false)
+    )
   })
 })
 
 describe('qualified-symbol?', () => {
   it('returns true for a qualified symbol', () => {
-    expect(session().evaluate("(qualified-symbol? 'user/foo)")).toEqual(cljBoolean(true))
+    expect(session().evaluate("(qualified-symbol? 'user/foo)")).toEqual(
+      cljBoolean(true)
+    )
   })
 
   it('returns false for an unqualified symbol', () => {
-    expect(session().evaluate("(qualified-symbol? 'foo)")).toEqual(cljBoolean(false))
+    expect(session().evaluate("(qualified-symbol? 'foo)")).toEqual(
+      cljBoolean(false)
+    )
   })
 
   it('returns false for a non-symbol', () => {
-    expect(session().evaluate('(qualified-symbol? :user/foo)')).toEqual(cljBoolean(false))
+    expect(session().evaluate('(qualified-symbol? :user/foo)')).toEqual(
+      cljBoolean(false)
+    )
   })
 })
 
 describe('namespace', () => {
   it('returns the namespace string of a qualified keyword', () => {
-    expect(session().evaluate('(namespace :user/foo)')).toEqual(cljString('user'))
+    expect(session().evaluate('(namespace :user/foo)')).toEqual(
+      cljString('user')
+    )
   })
 
   it('returns nil for an unqualified keyword', () => {
@@ -638,7 +702,9 @@ describe('namespace', () => {
   })
 
   it('returns the namespace string of a qualified symbol', () => {
-    expect(session().evaluate("(namespace 'my.ns/bar)")).toEqual(cljString('my.ns'))
+    expect(session().evaluate("(namespace 'my.ns/bar)")).toEqual(
+      cljString('my.ns')
+    )
   })
 
   it('returns nil for an unqualified symbol', () => {
@@ -678,7 +744,9 @@ describe('keyword constructor', () => {
   })
 
   it('creates a qualified keyword from two strings', () => {
-    expect(session().evaluate('(keyword "user" "foo")')).toEqual(cljKeyword(':user/foo'))
+    expect(session().evaluate('(keyword "user" "foo")')).toEqual(
+      cljKeyword(':user/foo')
+    )
   })
 
   it('creates a keyword with namespace containing dots', () => {
