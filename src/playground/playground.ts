@@ -161,11 +161,13 @@ function appendEntries(
       entryEl.appendChild(outEl)
     } else if (entry.kind === 'result') {
       const resEl = el('div', 'pg-entry__result')
-      resEl.textContent = `→ ${entry.output} (${formatDuration(entry.durationMs)})`
+      resEl.textContent = `→ ${entry.output} `
+      resEl.appendChild(createDurationEl(entry.durationMs))
       entryEl.appendChild(resEl)
     } else if (entry.kind === 'error') {
       const errEl = el('div', 'pg-entry__result pg-entry__result--error')
-      errEl.textContent = `✗ ${entry.message}`
+      errEl.textContent = `✗ ${entry.message} `
+      errEl.appendChild(createDurationEl(entry.durationMs))
       entryEl.appendChild(errEl)
     }
   }
@@ -178,6 +180,12 @@ function formatDuration(durationMs: number): string {
   if (durationMs < 10) return `${durationMs.toFixed(2)} ms`
   if (durationMs < 100) return `${durationMs.toFixed(1)} ms`
   return `${Math.round(durationMs)} ms`
+}
+
+function createDurationEl(durationMs: number): HTMLSpanElement {
+  const durationEl = el('span', 'pg-entry__duration')
+  durationEl.textContent = `(${formatDuration(durationMs)})`
+  return durationEl
 }
 
 // ── Playground bootstrap ──────────────────────────────────────────────────────

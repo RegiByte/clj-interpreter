@@ -18,6 +18,7 @@ export type ReplEntryError = {
   kind: 'error'
   source: string
   message: string
+  durationMs: number
 }
 
 export type ReplEntryOutput = {
@@ -64,9 +65,9 @@ export function evalSource(state: ReplState, source: string): ReplEntry[] {
 
   // Clear outputs from previous evaluation
   state.outputs = []
+  const start = performance.now()
 
   try {
-    const start = performance.now()
     const result = state.session.evaluate(trimmed)
     const end = performance.now()
 
@@ -88,16 +89,21 @@ export function evalSource(state: ReplState, source: string): ReplEntry[] {
     state.entries.push(...entries)
     return entries
   } catch (e) {
-    const entry = makeErrorEntry(trimmed, e)
+    const end = performance.now()
+    const entry = makeErrorEntry(trimmed, e, end - start)
     state.entries.push(entry)
     return [entry]
   }
 }
 
-function makeErrorEntry(source: string, e: unknown): ReplEntryError {
+function makeErrorEntry(
+  source: string,
+  e: unknown,
+  durationMs: number
+): ReplEntryError {
   const message =
     e instanceof EvaluationError || e instanceof Error ? e.message : String(e)
-  return { kind: 'error', source, message }
+  return { kind: 'error', source, message, durationMs }
 }
 
 export function resetEnv(state: ReplState): void {
