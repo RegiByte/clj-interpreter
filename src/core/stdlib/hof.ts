@@ -13,6 +13,7 @@ import type {
   CljFunction,
   CljNativeFunction,
   CljValue,
+  Env,
   EvaluationContext,
 } from '../types'
 
@@ -92,7 +93,12 @@ export const hofFunctions: Record<string, CljValue> = {
   reduce: withDoc(
     cljNativeFunctionWithContext(
       'reduce',
-      (ctx: EvaluationContext, fn: CljValue, ...rest: CljValue[]) => {
+      (
+        ctx: EvaluationContext,
+        callEnv: Env,
+        fn: CljValue,
+        ...rest: CljValue[]
+      ) => {
         if (fn === undefined || !isAFunction(fn)) {
           throw new EvaluationError(
             `reduce expects a function as first argument${fn !== undefined ? `, got ${printString(fn)}` : ''}`,
@@ -129,7 +135,7 @@ export const hofFunctions: Record<string, CljValue> = {
           if (items.length === 1) return items[0]
           let acc = items[0]
           for (let i = 1; i < items.length; i++) {
-            const result = ctx.applyFunction(fn, [acc, items[i]])
+            const result = ctx.applyFunction(fn, [acc, items[i]], callEnv)
             if (isReduced(result)) return result.value
             acc = result
           }
@@ -138,7 +144,7 @@ export const hofFunctions: Record<string, CljValue> = {
 
         let acc = init!
         for (const item of items) {
-          const result = ctx.applyFunction(fn, [acc, item])
+          const result = ctx.applyFunction(fn, [acc, item], callEnv)
           if (isReduced(result)) return result.value
           acc = result
         }
@@ -157,6 +163,7 @@ export const hofFunctions: Record<string, CljValue> = {
       'apply',
       (
         ctx: EvaluationContext,
+        callEnv: Env,
         fn: CljValue | undefined,
         ...rest: CljValue[]
       ) => {
@@ -180,7 +187,7 @@ export const hofFunctions: Record<string, CljValue> = {
         }
 
         const args = [...rest.slice(0, -1), ...toSeq(lastArg)]
-        return ctx.applyFunction(fn, args)
+        return ctx.applyFunction(fn, args, callEnv)
       }
     ),
     'Calls f with the elements of the last argument (a collection) as its arguments, optionally prepended by fixed args.',
@@ -201,8 +208,8 @@ export const hofFunctions: Record<string, CljValue> = {
       const capturedFn = fn as CljFunction | CljNativeFunction
       return cljNativeFunctionWithContext(
         'partial',
-        (ctx: EvaluationContext, ...moreArgs: CljValue[]) => {
-          return ctx.applyFunction(capturedFn, [...preArgs, ...moreArgs])
+        (ctx: EvaluationContext, callEnv: Env, ...moreArgs: CljValue[]) => {
+          return ctx.applyFunction(capturedFn, [...preArgs, ...moreArgs], callEnv)
         }
       )
     }),
@@ -221,17 +228,19 @@ export const hofFunctions: Record<string, CljValue> = {
       const capturedFns = fns as Array<CljFunction | CljNativeFunction>
       return cljNativeFunctionWithContext(
         'composed',
-        (ctx: EvaluationContext, ...args: CljValue[]) => {
+        (ctx: EvaluationContext, callEnv: Env, ...args: CljValue[]) => {
           let result = ctx.applyFunction(
             capturedFns[capturedFns.length - 1] as
               | CljFunction
               | CljNativeFunction,
-            args
+            args,
+            callEnv
           )
           for (let i = capturedFns.length - 2; i >= 0; i--) {
             result = ctx.applyFunction(
               capturedFns[i] as CljFunction | CljNativeFunction,
-              [result]
+              [result],
+              callEnv
             )
           }
           return result

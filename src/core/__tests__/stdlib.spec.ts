@@ -10,10 +10,12 @@ import {
   cljVector,
 } from '../factories'
 import { printString } from '../printer'
-import { createSession } from '../session'
+import { createSession, createSessionFromSnapshot, snapshotSession } from '../session'
+
+const _snapshot = snapshotSession(createSession())
 
 function session() {
-  return createSession()
+  return createSessionFromSnapshot(_snapshot)
 }
 
 describe('stdlib macros', () => {

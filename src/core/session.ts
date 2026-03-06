@@ -262,27 +262,64 @@ function processRequireSpec(
   }
 }
 
-export function createSession(options?: SessionOptions): Session {
-  const registry: NamespaceRegistry = new Map()
+// ---------------------------------------------------------------------------
+// Clone helpers — used by snapshotSession / createSessionFromSnapshot
+// ---------------------------------------------------------------------------
 
-  const coreEnv = makeEnv()
-  coreEnv.namespace = 'clojure.core'
+function cloneEnv(env: Env, memo: Map<Env, Env>): Env {
+  if (memo.has(env)) return memo.get(env)!
+  const cloned: Env = {
+    bindings: new Map(env.bindings),
+    outer: null,
+    namespace: env.namespace,
+  }
+  memo.set(env, cloned)
+  if (env.outer) cloned.outer = cloneEnv(env.outer, memo)
+  if (env.aliases)
+    cloned.aliases = new Map(
+      [...env.aliases].map(([k, v]) => [k, cloneEnv(v, memo)])
+    )
+  if (env.readerAliases) cloned.readerAliases = new Map(env.readerAliases)
+  return cloned
+}
+
+function cloneRegistry(registry: NamespaceRegistry): NamespaceRegistry {
+  const memo = new Map<Env, Env>()
+  const next = new Map<string, Env>()
+  for (const [name, env] of registry) next.set(name, cloneEnv(env, memo))
+  return next
+}
+
+// ---------------------------------------------------------------------------
+// SessionState — the minimal data a session operates on
+// ---------------------------------------------------------------------------
+
+type SessionState = {
+  registry: NamespaceRegistry
+  currentNs: string
+}
+
+// ---------------------------------------------------------------------------
+// buildSessionApi — single source of truth for all session behavior.
+// Accepts a pre-populated registry (fresh or cloned) and wires up all
+// closures + the public API. Always re-wires resolveNs and require since
+// both must close over the specific registry instance they receive.
+// ---------------------------------------------------------------------------
+
+function buildSessionApi(
+  state: SessionState,
+  options?: SessionOptions
+): Session {
+  const registry = state.registry
+  let currentNs = state.currentNs
+
+  const coreEnv = registry.get('clojure.core')!
   coreEnv.resolveNs = (name: string) => registry.get(name) ?? null
-  loadCoreFunctions(coreEnv, options?.output)
-  registry.set('clojure.core', coreEnv)
-
-  const userEnv = makeEnv(coreEnv)
-  userEnv.namespace = 'user'
-  registry.set('user', userEnv)
-
-  let currentNs = 'user'
 
   // One shared evaluation context for the lifetime of this session.
-  // All macro expansion and evaluation share the same ctx instance so
-  // ctx.expandAll / ctx.evaluate / ctx.applyFunction are always consistent.
   const ctx = createEvaluationContext()
 
-  const resolveNamespace = (nsName: string): boolean => {
+  function resolveNamespace(nsName: string): boolean {
     const builtInLoader = builtInNamespaceSources[nsName]
     if (builtInLoader) {
       loadFile(builtInLoader(), nsName)
@@ -356,16 +393,6 @@ export function createSession(options?: SessionOptions): Session {
       const expanded = ctx.expandAll(form, env)
       ctx.evaluate(expanded, env)
     }
-  }
-
-  const coreLoader = builtInNamespaceSources['clojure.core']
-  if (!coreLoader) {
-    throw new Error('Missing built-in clojure.core source in registry')
-  }
-  loadFile(coreLoader(), 'clojure.core')
-
-  for (const source of options?.entries ?? []) {
-    loadFile(source)
   }
 
   const api: Session = {
@@ -444,4 +471,79 @@ export function createSession(options?: SessionOptions): Session {
     },
   }
   return api
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+export function createSession(options?: SessionOptions): Session {
+  const registry: NamespaceRegistry = new Map()
+
+  const coreEnv = makeEnv()
+  coreEnv.namespace = 'clojure.core'
+  loadCoreFunctions(coreEnv, options?.output)
+  registry.set('clojure.core', coreEnv)
+
+  const userEnv = makeEnv(coreEnv)
+  userEnv.namespace = 'user'
+  registry.set('user', userEnv)
+
+  const session = buildSessionApi({ registry, currentNs: 'user' }, options)
+
+  const coreLoader = builtInNamespaceSources['clojure.core']
+  if (!coreLoader) {
+    throw new Error('Missing built-in clojure.core source in registry')
+  }
+  session.loadFile(coreLoader(), 'clojure.core')
+
+  for (const source of options?.entries ?? []) {
+    session.loadFile(source)
+  }
+
+  return session
+}
+
+/**
+ * A snapshot of a session's registry + current namespace.
+ * Produced by snapshotSession; consumed by createSessionFromSnapshot.
+ * CljValue objects are shared (they are immutable); only the Env containers
+ * are deep-copied so each derived session gets independent namespace state.
+ */
+export type SessionSnapshot = {
+  registry: NamespaceRegistry
+  currentNs: string
+}
+
+/**
+ * Capture a deep clone of the session's env state.
+ * Typically called once after createSession() and before any user code is
+ * evaluated, to produce a pristine snapshot that can be cloned cheaply per test.
+ */
+export function snapshotSession(session: Session): SessionSnapshot {
+  return {
+    registry: cloneRegistry(session.registry),
+    currentNs: session.currentNs,
+  }
+}
+
+/**
+ * Create a new session from a previously captured snapshot.
+ * Skips the core.clj bootstrap — the cloned registry already contains the
+ * fully-expanded core environment. Re-wires all registry-dependent closures
+ * (resolveNs, require) to the new registry instance.
+ */
+export function createSessionFromSnapshot(
+  snapshot: SessionSnapshot,
+  options?: SessionOptions
+): Session {
+  const registry = cloneRegistry(snapshot.registry)
+  const session = buildSessionApi(
+    { registry, currentNs: snapshot.currentNs },
+    options
+  )
+  for (const source of options?.entries ?? []) {
+    session.loadFile(source)
+  }
+  return session
 }

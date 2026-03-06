@@ -28,6 +28,17 @@ export function lookup(name: string, env: Env): CljValue {
   throw new EvaluationError(`Symbol ${name} not found`, { name })
 }
 
+export function tryLookup(name: string, env: Env): CljValue | undefined {
+  let current = env as Env | null
+  while (current) {
+    if (current.bindings.has(name)) {
+      return current.bindings.get(name)!
+    }
+    current = current.outer
+  }
+  return undefined
+}
+
 export function define(name: string, value: CljValue, env: Env) {
   env.bindings.set(name, value)
 }

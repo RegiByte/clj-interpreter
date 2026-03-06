@@ -22,6 +22,7 @@ import type {
   CljFunction,
   CljNativeFunction,
   CljValue,
+  Env,
   EvaluationContext,
 } from '../types'
 
@@ -111,6 +112,7 @@ export const transducerFunctions: Record<string, CljValue> = {
       'vswap!',
       (
         ctx: EvaluationContext,
+        callEnv: Env,
         vol: CljValue,
         fn: CljValue,
         ...extraArgs: CljValue[]
@@ -129,7 +131,8 @@ export const transducerFunctions: Record<string, CljValue> = {
         }
         const newVal = ctx.applyFunction(
           fn as CljFunction | CljNativeFunction,
-          [vol.value, ...extraArgs]
+          [vol.value, ...extraArgs],
+          callEnv
         )
         vol.value = newVal
         return newVal
@@ -155,6 +158,7 @@ export const transducerFunctions: Record<string, CljValue> = {
       'transduce',
       (
         ctx: EvaluationContext,
+        callEnv: Env,
         xform: CljValue,
         f: CljValue,
         init: CljValue,
@@ -186,7 +190,8 @@ export const transducerFunctions: Record<string, CljValue> = {
           actualColl = init
           actualInit = ctx.applyFunction(
             f as CljFunction | CljNativeFunction,
-            []
+            [],
+            callEnv
           )
         } else {
           actualInit = init
@@ -194,15 +199,19 @@ export const transducerFunctions: Record<string, CljValue> = {
         }
 
         // Apply transducer to bottom reducer to get the composed reducing fn
-        const rf = ctx.applyFunction(xform as CljFunction | CljNativeFunction, [
-          f,
-        ]) as CljFunction | CljNativeFunction
+        const rf = ctx.applyFunction(
+          xform as CljFunction | CljNativeFunction,
+          [f],
+          callEnv
+        ) as CljFunction | CljNativeFunction
 
         // nil collection is treated as empty — skip loop, run completion only
         if (isNil(actualColl)) {
-          return ctx.applyFunction(rf as CljFunction | CljNativeFunction, [
-            actualInit,
-          ])
+          return ctx.applyFunction(
+            rf as CljFunction | CljNativeFunction,
+            [actualInit],
+            callEnv
+          )
         }
 
         if (!isCollection(actualColl)) {
@@ -217,7 +226,7 @@ export const transducerFunctions: Record<string, CljValue> = {
         let acc = actualInit
         for (const item of items) {
           // 2-arity call on the composed rf
-          const result = ctx.applyFunction(rf, [acc, item])
+          const result = ctx.applyFunction(rf, [acc, item], callEnv)
           if (isReduced(result)) {
             acc = result.value
             break
@@ -226,7 +235,7 @@ export const transducerFunctions: Record<string, CljValue> = {
         }
 
         // Completion (1-arity call on the composed rf)
-        return ctx.applyFunction(rf, [acc])
+        return ctx.applyFunction(rf, [acc], callEnv)
       }
     ),
     joinLines([

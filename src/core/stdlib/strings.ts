@@ -14,7 +14,14 @@ import {
 } from '../factories'
 import { printString } from '../printer'
 import { valueToString } from '../transformations'
-import type { CljFunction, CljNativeFunction, CljRegex, CljValue, EvaluationContext } from '../types'
+import type {
+  CljFunction,
+  CljNativeFunction,
+  CljRegex,
+  CljValue,
+  Env,
+  EvaluationContext,
+} from '../types'
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -74,6 +81,7 @@ function buildMatchValue(whole: string, args: unknown[]): CljValue {
 // When global=true all occurrences are replaced; when false, only the first.
 function doReplace(
   ctx: EvaluationContext,
+  callEnv: Env,
   fnName: string,
   sVal: CljValue,
   matchVal: CljValue,
@@ -114,7 +122,7 @@ function doReplace(
       const fn = replVal as CljFunction | CljNativeFunction
       const result = s.replace(jsRe, (whole: string, ...args: unknown[]) => {
         const matchClj = buildMatchValue(whole, args)
-        const replResult = ctx.applyFunction(fn, [matchClj])
+        const replResult = ctx.applyFunction(fn, [matchClj], callEnv)
         return valueToString(replResult)
       })
       return cljString(result)
@@ -265,8 +273,13 @@ export const stringFunctions: Record<string, CljValue> = {
   'str-replace*': withDoc(
     cljNativeFunctionWithContext(
       'str-replace*',
-      (ctx: EvaluationContext, sVal: CljValue, matchVal: CljValue, replVal: CljValue) =>
-        doReplace(ctx, 'str-replace*', sVal, matchVal, replVal, true)
+      (
+        ctx: EvaluationContext,
+        callEnv: Env,
+        sVal: CljValue,
+        matchVal: CljValue,
+        replVal: CljValue
+      ) => doReplace(ctx, callEnv, 'str-replace*', sVal, matchVal, replVal, true)
     ),
     'Internal helper. Replaces all occurrences of match with replacement in s.',
     [['s', 'match', 'replacement']]
@@ -275,14 +288,24 @@ export const stringFunctions: Record<string, CljValue> = {
   'str-replace-first*': withDoc(
     cljNativeFunctionWithContext(
       'str-replace-first*',
-      (ctx: EvaluationContext, sVal: CljValue, matchVal: CljValue, replVal: CljValue) =>
-        doReplace(ctx, 'str-replace-first*', sVal, matchVal, replVal, false)
+      (
+        ctx: EvaluationContext,
+        callEnv: Env,
+        sVal: CljValue,
+        matchVal: CljValue,
+        replVal: CljValue
+      ) =>
+        doReplace(
+          ctx,
+          callEnv,
+          'str-replace-first*',
+          sVal,
+          matchVal,
+          replVal,
+          false
+        )
     ),
     'Internal helper. Replaces the first occurrence of match with replacement in s.',
     [['s', 'match', 'replacement']]
   ),
-}
-
-export function getStringFunctions(): Record<string, CljValue> {
-  return stringFunctions
 }

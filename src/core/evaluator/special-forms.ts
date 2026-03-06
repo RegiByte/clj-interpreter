@@ -134,7 +134,7 @@ function evaluateTry(
       return isEqual(typeEntry[1], disc)
     }
     if (isAFunction(disc)) {
-      const result = ctx.applyFunction(disc, [thrown])
+      const result = ctx.applyFunction(disc, [thrown], env)
       return isTruthy(result)
     }
     throw new EvaluationError(

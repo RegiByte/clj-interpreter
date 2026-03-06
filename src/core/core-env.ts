@@ -1,8 +1,5 @@
 import { define, makeEnv } from './env'
-import {
-  cljNativeFunction,
-  cljNil
-} from './factories'
+import { cljNativeFunction, cljNil } from './factories'
 import { arithmeticFunctions } from './stdlib/arithmetic'
 import { atomFunctions } from './stdlib/atoms'
 import { collectionFunctions } from './stdlib/collections'
@@ -10,37 +7,29 @@ import { errorFunctions } from './stdlib/errors'
 import { hofFunctions } from './stdlib/hof'
 import { metaFunctions } from './stdlib/meta'
 import { predicateFunctions } from './stdlib/predicates'
-import { getRegexFunctions } from './stdlib/regex'
-import { getStringFunctions } from './stdlib/strings'
+import { regexFunctions } from './stdlib/regex'
+import { stringFunctions } from './stdlib/strings'
 import { transducerFunctions } from './stdlib/transducers'
-import { getUtilFunctions } from './stdlib/utils'
+import { utilFunctions } from './stdlib/utils'
 import { valueToString } from './transformations'
-import {
-  type CljValue,
-  type Env
-} from './types'
+import { type CljValue, type Env } from './types'
 
-function getCoreFunctions(globalEnv: Env) {
-  const nativeFunctions = {
-    ...arithmeticFunctions,
-    ...atomFunctions,
-    ...collectionFunctions,
-    ...errorFunctions,
-    ...predicateFunctions,
-    ...hofFunctions,
-    ...metaFunctions,
-    ...transducerFunctions,
-    ...getRegexFunctions(),
-    ...getStringFunctions(),
-    ...getUtilFunctions(globalEnv),
-  }
-
-  return nativeFunctions
+const nativeFunctions = {
+  ...arithmeticFunctions,
+  ...atomFunctions,
+  ...collectionFunctions,
+  ...errorFunctions,
+  ...predicateFunctions,
+  ...hofFunctions,
+  ...metaFunctions,
+  ...transducerFunctions,
+  ...regexFunctions,
+  ...stringFunctions,
+  ...utilFunctions,
 }
 
 export function loadCoreFunctions(env: Env, output?: (text: string) => void) {
-  const coreFunctions = getCoreFunctions(env)
-  for (const [key, value] of Object.entries(coreFunctions)) {
+  for (const [key, value] of Object.entries(nativeFunctions)) {
     define(key, value, env)
   }
   if (output) {

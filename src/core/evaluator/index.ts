@@ -6,6 +6,7 @@ import {
   type Env,
   type EvaluationContext,
 } from '../types.ts'
+import { makeEnv } from '../env.ts'
 import { applyFunctionWithContext, applyMacroWithContext } from './apply.ts'
 import { macroExpandAllWithContext } from './expand.ts'
 import {
@@ -23,8 +24,11 @@ export function createEvaluationContext(): EvaluationContext {
     evaluate: (expr: CljValue, env: Env) => evaluateWithContext(expr, env, ctx),
     evaluateForms: (forms: CljValue[], env: Env) =>
       evaluateFormsWithContext(forms, env, ctx),
-    applyFunction: (fn: CljFunction | CljNativeFunction, args: CljValue[]) =>
-      applyFunctionWithContext(fn, args, ctx),
+    applyFunction: (
+      fn: CljFunction | CljNativeFunction,
+      args: CljValue[],
+      callEnv: Env
+    ) => applyFunctionWithContext(fn, args, ctx, callEnv),
     applyMacro: (macro: CljMacro, rawArgs: CljValue[]) =>
       applyMacroWithContext(macro, rawArgs, ctx),
     expandAll: (form: CljValue, env: Env) =>
@@ -38,9 +42,10 @@ export function createEvaluationContext(): EvaluationContext {
  */
 export function applyFunction(
   fn: CljFunction | CljNativeFunction,
-  args: CljValue[]
+  args: CljValue[],
+  callEnv: Env = makeEnv()
 ): CljValue {
-  return createEvaluationContext().applyFunction(fn, args)
+  return createEvaluationContext().applyFunction(fn, args, callEnv)
 }
 export function applyMacro(macro: CljMacro, rawArgs: CljValue[]): CljValue {
   return createEvaluationContext().applyMacro(macro, rawArgs)

@@ -4,6 +4,7 @@ import type {
   CljMacro,
   CljNativeFunction,
   CljValue,
+  Env,
   EvaluationContext,
 } from '../types'
 import { bindParams, RecurSignal, resolveArity } from './arity'
@@ -11,12 +12,13 @@ import { bindParams, RecurSignal, resolveArity } from './arity'
 export function applyFunctionWithContext(
   fn: CljFunction | CljNativeFunction,
   args: CljValue[],
-  ctx: EvaluationContext
+  ctx: EvaluationContext,
+  callEnv: Env
 ): CljValue {
   if (fn.kind === 'native-function') {
     // New path, native fns receive evaluation context as first argument
     if (fn.fnWithContext) {
-      return fn.fnWithContext(ctx, ...args)
+      return fn.fnWithContext(ctx, callEnv, ...args)
     }
     return fn.fn(...args)
   }

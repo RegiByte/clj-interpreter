@@ -7,7 +7,7 @@ import {
   cljNativeFunction,
   withDoc,
 } from '../factories'
-import type { CljValue } from '../types'
+import type { CljValue, Env } from '../types'
 
 export const atomFunctions: Record<string, CljValue> = {
   atom: withDoc(
@@ -35,7 +35,13 @@ export const atomFunctions: Record<string, CljValue> = {
   'swap!': withDoc(
     cljNativeFunctionWithContext(
       'swap!',
-      (ctx, atomVal: CljValue, fn: CljValue, ...extraArgs: CljValue[]) => {
+      (
+        ctx,
+        callEnv: Env,
+        atomVal: CljValue,
+        fn: CljValue,
+        ...extraArgs: CljValue[]
+      ) => {
         if (!isAtom(atomVal)) {
           throw new EvaluationError(
             `swap! expects an atom as its first argument, got ${atomVal.kind}`,
@@ -48,7 +54,7 @@ export const atomFunctions: Record<string, CljValue> = {
             { fn }
           )
         }
-        const newVal = ctx.applyFunction(fn, [atomVal.value, ...extraArgs])
+        const newVal = ctx.applyFunction(fn, [atomVal.value, ...extraArgs], callEnv)
         atomVal.value = newVal
         return newVal
       }

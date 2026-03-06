@@ -24,14 +24,15 @@ import { evaluateSpecialForm } from './special-forms'
 function dispatchMultiMethod(
   mm: CljMultiMethod,
   args: CljValue[],
-  ctx: EvaluationContext
+  ctx: EvaluationContext,
+  env: Env
 ): CljValue {
-  const dispatchVal = ctx.applyFunction(mm.dispatchFn, args)
+  const dispatchVal = ctx.applyFunction(mm.dispatchFn, args, env)
   const method = mm.methods.find(({ dispatchVal: dv }) =>
     isEqual(dv, dispatchVal)
   )
-  if (method) return ctx.applyFunction(method.fn, args)
-  if (mm.defaultMethod) return ctx.applyFunction(mm.defaultMethod, args)
+  if (method) return ctx.applyFunction(method.fn, args, env)
+  if (mm.defaultMethod) return ctx.applyFunction(mm.defaultMethod, args, env)
   // TODO: Clojure supports a custom default-dispatch-val per multimethod:
   //   (defmulti foo identity :default ::no-match)
   // This lets :default be a real dispatchable value while ::no-match is the
@@ -69,7 +70,7 @@ export function evaluateList(
   // }
   if (isAFunction(evaledFirst)) {
     const args = list.value.slice(1).map((v) => ctx.evaluate(v, env))
-    return ctx.applyFunction(evaledFirst, args)
+    return ctx.applyFunction(evaledFirst, args, env)
   }
   if (isKeyword(evaledFirst)) {
     const next = ctx.evaluate(list.value[1], env)
@@ -101,7 +102,7 @@ export function evaluateList(
   }
   if (isMultiMethod(evaledFirst)) {
     const args = list.value.slice(1).map((v) => ctx.evaluate(v, env))
-    return dispatchMultiMethod(evaledFirst, args, ctx)
+    return dispatchMultiMethod(evaledFirst, args, ctx, env)
   }
   if (!isSymbol(first)) {
     throw new EvaluationError(
@@ -117,5 +118,5 @@ export function evaluateList(
   }
 
   const args = list.value.slice(1).map((v) => ctx.evaluate(v, env))
-  return ctx.applyFunction(fnSymbol, args)
+  return ctx.applyFunction(fnSymbol, args, env)
 }

@@ -263,7 +263,7 @@ bar"`,
       { kind: 'RParen', value: ')' },
     ])
   })
-  
+
   it('should parse code with unquote', () => {
     const tokens = tokenize('`(1 2 ~3.12)')
     expect(tokens).toMatchObject([
@@ -276,7 +276,7 @@ bar"`,
       { kind: 'RParen', value: ')' },
     ])
   })
-  
+
   it('should parse code with unquote splicing', () => {
     const tokens = tokenize('`(1 2 ~@(3 4 5))')
     expect(tokens).toMatchObject([

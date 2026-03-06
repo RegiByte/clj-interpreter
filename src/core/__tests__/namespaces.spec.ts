@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { cljKeyword, cljNumber, cljString } from '../factories'
-import { createSession } from '../session'
+import { createSession, createSessionFromSnapshot, snapshotSession } from '../session'
 import { EvaluationError } from '../errors'
 import { ReaderError } from '../errors'
 
+const _snapshot = snapshotSession(createSession())
+
 function session() {
-  return createSession()
+  return createSessionFromSnapshot(_snapshot)
 }
 
 function sessionWithNs(nsName: string, defs: string) {

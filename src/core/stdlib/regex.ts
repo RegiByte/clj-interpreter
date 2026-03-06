@@ -236,7 +236,3 @@ function splitWithRegex(s: string, re: RegExp, limit: number | undefined): strin
 
   return parts
 }
-
-export function getRegexFunctions(): Record<string, CljValue> {
-  return regexFunctions
-}

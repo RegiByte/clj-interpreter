@@ -74,7 +74,8 @@ export type EvaluationContext = {
   evaluateForms: (forms: CljValue[], env: Env) => CljValue
   applyFunction: (
     fn: CljFunction | CljNativeFunction,
-    args: CljValue[]
+    args: CljValue[],
+    callEnv: Env
   ) => CljValue
   applyMacro: (macro: CljMacro, rawArgs: CljValue[]) => CljValue
   expandAll: (form: CljValue, env: Env) => CljValue
@@ -85,7 +86,11 @@ export type CljNativeFunction = {
   name: string
   fn: (...args: CljValue[]) => CljValue
   // Only used in case the function needs to access the evaluation context
-  fnWithContext?: (ctx: EvaluationContext, ...args: CljValue[]) => CljValue
+  fnWithContext?: (
+    ctx: EvaluationContext,
+    callEnv: Env,
+    ...args: CljValue[]
+  ) => CljValue
   meta?: CljMap
 }
 

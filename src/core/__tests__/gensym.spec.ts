@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { cljNumber, cljNil } from '../factories'
 import { isSymbol } from '../assertions'
-import { createSession } from '../session'
+import {
+  createSession as createPristineSession,
+  createSessionFromSnapshot,
+  snapshotSession,
+} from '../session'
 import { makeGensym, resetGensymCounter } from '../gensym'
 
-function session() {
-  return createSession()
-}
+const _snapshot = snapshotSession(createPristineSession())
+
+const session = () => createSessionFromSnapshot(_snapshot)
 
 describe('makeGensym', () => {
   it('returns a unique string each call', () => {
@@ -38,51 +42,51 @@ describe('makeGensym', () => {
 
 describe('gensym native function', () => {
   it('(gensym) returns a symbol', () => {
-    const s = createSession()
+    const s = session()
     const result = s.evaluate('(gensym)')
     expect(isSymbol(result)).toBe(true)
   })
 
   it('(gensym) returns a symbol matching G__N pattern', () => {
-    const s = createSession()
+    const s = session()
     const result = s.evaluate('(gensym)')
     expect(isSymbol(result) && result.name).toMatch(/^G__\d+$/)
   })
 
   it('(gensym "prefix") uses the provided prefix', () => {
-    const s = createSession()
+    const s = session()
     const result = s.evaluate('(gensym "foo")')
     expect(isSymbol(result) && result.name).toMatch(/^foo__\d+$/)
   })
 
   it('each call returns a different symbol', () => {
-    const s = createSession()
+    const s = session()
     const a = s.evaluate('(gensym)')
     const b = s.evaluate('(gensym)')
     expect(isSymbol(a) && isSymbol(b) && a.name !== b.name).toBe(true)
   })
 
   it('throws if more than one argument', () => {
-    const s = createSession()
+    const s = session()
     expect(() => s.evaluate('(gensym "a" "b")')).toThrow()
   })
 
   it('throws if argument is not a string', () => {
-    const s = createSession()
+    const s = session()
     expect(() => s.evaluate('(gensym 42)')).toThrow()
   })
 })
 
 describe('auto-gensym in quasiquote', () => {
   it('sym# expands to a unique symbol', () => {
-    const s = createSession()
+    const s = session()
     const result = s.evaluate('`x#')
     expect(isSymbol(result)).toBe(true)
     expect(isSymbol(result) && result.name).toMatch(/^x__\d+$/)
   })
 
   it('two occurrences of the same sym# in one quasiquote expand to the same symbol', () => {
-    const s = createSession()
+    const s = session()
     // (let [v# 1] v#) should work correctly — both v# expand to the same name
     const result = s.evaluate('`(let [v# 1] v#)')
     // result is (let [<gensym> 1] <gensym>) — check both positions are equal
@@ -106,14 +110,14 @@ describe('auto-gensym in quasiquote', () => {
   })
 
   it('two separate quasiquotes produce different gensyms for the same sym#', () => {
-    const s = createSession()
+    const s = session()
     const a = s.evaluate('`x#')
     const b = s.evaluate('`x#')
     expect(isSymbol(a) && isSymbol(b) && a.name !== b.name).toBe(true)
   })
 
   it('different sym# names in the same quasiquote expand to different symbols', () => {
-    const s = createSession()
+    const s = session()
     const result = s.evaluate('`[a# b#]')
     expect(result.kind).toBe('vector')
     if (result.kind === 'vector') {

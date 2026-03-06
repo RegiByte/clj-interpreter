@@ -69,7 +69,7 @@ export const cljNativeFunction = <
   ({ kind: 'native-function', name, fn }) as const satisfies CljNativeFunction
 export const cljNativeFunctionWithContext = <
   T extends string,
-  U extends (ctx: EvaluationContext, ...args: CljValue[]) => CljValue,
+  U extends (ctx: EvaluationContext, callEnv: Env, ...args: CljValue[]) => CljValue,
 >(
   name: T,
   fn: U
