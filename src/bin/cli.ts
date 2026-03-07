@@ -75,7 +75,7 @@ export function runFile(fileArg: string, io: CliIo = makeCliIo()): number {
 
 function shouldExitRepl(source: string): boolean {
   const trimmed = source.trim()
-  return trimmed === '.exit' || trimmed === ':quit'
+  return trimmed === '(exit)'
 }
 
 function evaluateReplLine(session: Session, line: string, io: CliIo): boolean {
@@ -133,8 +133,8 @@ async function startStreamRepl(session: Session, io: CliIo): Promise<number> {
 export async function startRepl(io: CliIo = makeCliIo()): Promise<number> {
   const session = createCliSession(getSourceRoots(), io)
 
-  io.writeLine('RegiByte Clojure REPL')
-  io.writeLine("Type .exit or :quit to exit.")
+  io.writeLine('Conjure REPL')
+  io.writeLine("Type (exit) to exit the REPL.")
 
   if (!input.isTTY) {
     return startStreamRepl(session, io)

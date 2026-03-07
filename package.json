@@ -15,7 +15,7 @@
     "bun:repl": "bun run src/bin/cli.ts repl",
     "bun:run": "bun run src/bin/cli.ts run",
     "bun:nrepl": "bun run src/bin/cli.ts nrepl-server",
-    "bun:build-cli": "bun build --compile src/bin/cli.ts --outfile cli",
+    "bun:build-cli": "bun build --compile src/bin/cli.ts --outfile conjure",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "test": "vitest",
