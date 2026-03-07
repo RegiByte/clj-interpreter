@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   cljBoolean,
   cljKeyword,
@@ -46,10 +46,11 @@ describe('println', () => {
     expect(outputs).toEqual(['Hello world', '1 2 3'])
   })
 
-  it('println should not be defined if no output callback provided', () => {
-    expect(() =>
-      freshSession().evaluate('(println "test")')
-    ).toThrow('Symbol println not found')
+  it('println falls back to console.log when no output callback provided', () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    expect(freshSession().evaluate('(println "test")')).toMatchObject(cljNil())
+    expect(spy).toHaveBeenCalledWith('test')
+    spy.mockRestore()
   })
 })
 

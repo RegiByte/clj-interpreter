@@ -32,17 +32,23 @@ export function loadCoreFunctions(env: Env, output?: (text: string) => void) {
   for (const [key, value] of Object.entries(nativeFunctions)) {
     define(key, value, env)
   }
-  if (output) {
-    define(
-      'println',
-      cljNativeFunction('println', (...args: CljValue[]) => {
-        const text = args.map(valueToString).join(' ')
-        output(text)
-        return cljNil()
-      }),
-      env
-    )
-  }
+  const emit = output ?? ((text: string) => console.log(text))
+  define(
+    'println',
+    cljNativeFunction('println', (...args: CljValue[]) => {
+      emit(args.map(valueToString).join(' '))
+      return cljNil()
+    }),
+    env
+  )
+  define(
+    'print',
+    cljNativeFunction('print', (...args: CljValue[]) => {
+      emit(args.map(valueToString).join(' '))
+      return cljNil()
+    }),
+    env
+  )
 }
 
 export function makeCoreEnv(output?: (text: string) => void): Env {

@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 
-const input = '(def x 41)\n(+ x 1)\n.exit\n'
+const input = '(def x 41)\n(+ x 1)\n(exit)\n'
 const result = spawnSync(
   'bun',
   ['run', 'src/bin/cli.ts', 'repl'],

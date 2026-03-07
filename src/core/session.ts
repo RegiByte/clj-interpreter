@@ -318,21 +318,25 @@ function buildSessionApi(
   const coreEnv = registry.get('clojure.core')!
   coreEnv.resolveNs = (name: string) => registry.get(name) ?? null
 
-  // Re-wire output-dependent functions if an output callback is provided.
-  // This matters for sessions created via createSessionFromSnapshot, where
-  // the cloned coreEnv was built without an output callback.
-  if (options?.output) {
-    const outputFn = options.output
-    define(
-      'println',
-      cljNativeFunction('println', (...args: CljValue[]) => {
-        const text = args.map(valueToString).join(' ')
-        outputFn(text)
-        return cljNil()
-      }),
-      coreEnv
-    )
-  }
+  // Always re-wire print/println so snapshot-derived sessions get the right
+  // emit target. Falls back to console.log when no output callback is provided.
+  const emitFn = options?.output ?? ((text: string) => console.log(text))
+  define(
+    'println',
+    cljNativeFunction('println', (...args: CljValue[]) => {
+      emitFn(args.map(valueToString).join(' '))
+      return cljNil()
+    }),
+    coreEnv
+  )
+  define(
+    'print',
+    cljNativeFunction('print', (...args: CljValue[]) => {
+      emitFn(args.map(valueToString).join(' '))
+      return cljNil()
+    }),
+    coreEnv
+  )
 
   // Mutable source roots — seeded from options, growable via addSourceRoot.
   const sourceRoots = new Set<string>(options?.sourceRoots ?? [])

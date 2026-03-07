@@ -68,7 +68,7 @@ describe('bun cli', () => {
     )
 
     expect(result.status).toBe(0)
-    expect(result.stdout).toContain('RegiByte Clojure REPL')
+    expect(result.stdout).toContain('Conjure REPL')
     expect(result.stdout).toContain('42')
     expect(result.stderr).toBe('')
   })
