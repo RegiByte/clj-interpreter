@@ -58,7 +58,6 @@
     "vitest": "^4.0.18"
   },
   "dependencies": {
-    "conjure-js": "^0.0.1",
     "monaco-editor": "^0.55.1"
   },
   "conjure": {
