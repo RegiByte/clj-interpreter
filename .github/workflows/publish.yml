@@ -44,5 +44,4 @@ jobs:
       - name: Publish to npm
         working-directory: packages/conjure-js
         run: |
-          sed -i '/authToken/d' $GITHUB_WORKSPACE/.npmrc
           npm publish --provenance
