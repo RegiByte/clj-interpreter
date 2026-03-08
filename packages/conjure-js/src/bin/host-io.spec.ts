@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it, afterEach } from 'vitest'
 import { printString } from '../core'
 import { createCliSession } from './cli'
@@ -133,7 +134,7 @@ describe('slurp/spit round-trip', () => {
 // load
 // ---------------------------------------------------------------------------
 
-const fixtureDir = join(process.cwd(), 'src/bin/__fixtures__/smoke')
+const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), '__fixtures__/smoke')
 
 describe('load', () => {
   it('evaluates a .clj file and switches the current namespace', () => {
