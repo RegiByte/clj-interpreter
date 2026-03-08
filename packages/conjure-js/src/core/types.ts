@@ -16,6 +16,7 @@ export const valueKeywords = {
   reduced: 'reduced',
   volatile: 'volatile',
   regex: 'regex',
+  var: 'var',
 } as const
 export type ValueKeywords = (typeof valueKeywords)[keyof typeof valueKeywords]
 
@@ -28,13 +29,18 @@ export type CljSymbol = { kind: 'symbol'; name: string }
 export type CljList = { kind: 'list'; value: CljValue[] }
 export type CljVector = { kind: 'vector'; value: CljValue[] }
 export type CljMap = { kind: 'map'; entries: [CljValue, CljValue][] }
+export type CljNamespace = {
+  name: string
+  vars: Map<string, CljVar>            // user defs from (def ...)
+  aliases: Map<string, CljNamespace>   // :as namespace aliases
+  readerAliases: Map<string, string>   // :as-alias reader aliases
+}
+
 export type Env = {
-  bindings: Map<string, CljValue>
+  bindings: Map<string, CljValue>      // native fns, macros, multimethods, local values
   outer: Env | null
-  namespace?: string // only present on namespace-root envs
-  aliases?: Map<string, Env> // only present on namespace-root envs; set by :as
-  readerAliases?: Map<string, string> // only present on namespace-root envs; set by :as-alias
-  resolveNs?: (name: string) => Env | null // only present on the root coreEnv
+  ns?: CljNamespace                    // set on namespace-root envs only
+  resolveNs?: (name: string) => Env | null // set on coreEnv only
 }
 
 export type DestructurePattern = CljSymbol | CljVector | CljMap
@@ -62,6 +68,14 @@ export type CljAtom = { kind: 'atom'; value: CljValue }
 export type CljReduced = { kind: 'reduced'; value: CljValue }
 export type CljVolatile = { kind: 'volatile'; value: CljValue }
 export type CljRegex = { kind: 'regex'; pattern: string; flags: string }
+
+export type CljVar = {
+  kind: 'var'
+  ns: string
+  name: string
+  value: CljValue
+  meta?: CljMap
+}
 
 export type CljMultiMethod = {
   kind: 'multi-method'
@@ -116,6 +130,7 @@ export type CljValue =
   | CljReduced
   | CljVolatile
   | CljRegex
+  | CljVar
 
 /** Tokens */
 export const tokenKeywords = {
@@ -138,6 +153,7 @@ export const tokenKeywords = {
   AnonFnStart: 'AnonFnStart',
   Deref: 'Deref',
   Regex: 'Regex',
+  VarQuote: 'VarQuote',
 } as const
 export const tokenSymbols = {
   Quote: 'quote',
@@ -235,6 +251,9 @@ export type TokenRegex = {
   kind: 'Regex'
   value: string
 }
+export type TokenVarQuote = {
+  kind: 'VarQuote'
+}
 export type Token = (
   | TokenLParen
   | TokenRParen
@@ -255,4 +274,5 @@ export type Token = (
   | TokenAnonFnStart
   | TokenDeref
   | TokenRegex
+  | TokenVarQuote
 ) & { start: Cursor; end: Cursor }

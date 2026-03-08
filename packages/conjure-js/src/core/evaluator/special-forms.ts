@@ -10,7 +10,7 @@ import {
   isTruthy,
   isVector,
 } from '../assertions'
-import { define, extend, getNamespaceEnv, getRootEnv, lookup } from '../env'
+import { define, extend, getNamespaceEnv, getRootEnv, lookup, lookupVar } from '../env'
 import { CljThrownSignal, EvaluationError } from '../errors'
 import {
   cljKeyword,
@@ -21,6 +21,7 @@ import {
   cljNativeFunction,
   cljNil,
   cljString,
+  cljVar,
 } from '../factories'
 import type {
   CljFunction,
@@ -52,6 +53,7 @@ export const specialFormKeywords = {
   defmulti: 'defmulti',
   defmethod: 'defmethod',
   try: 'try',
+  var: 'var',
 } as const
 
 function keywordToDispatchFn(kw: CljKeyword): CljNativeFunction {
@@ -220,7 +222,17 @@ function evaluateDef(
   // This lets .clj source files declare runtime-injected symbols so that
   // clojure-lsp can resolve them, without clobbering the native binding.
   if (list.value[2] === undefined) return cljNil()
-  define(name.name, ctx.evaluate(list.value[2], env), getNamespaceEnv(env))
+
+  const nsEnv = getNamespaceEnv(env)
+  const cljNs = nsEnv.ns!
+  const newValue = ctx.evaluate(list.value[2], env)
+
+  const existing = cljNs.vars.get(name.name)
+  if (existing) {
+    existing.value = newValue
+  } else {
+    cljNs.vars.set(name.name, cljVar(cljNs.name, name.name, newValue))
+  }
   return cljNil()
 }
 
@@ -470,6 +482,48 @@ function evaluateDefmethod(
   return cljNil()
 }
 
+function evaluateVar(
+  list: CljList,
+  env: Env,
+  _ctx: EvaluationContext
+): CljValue {
+  const sym = list.value[1]
+  if (!isSymbol(sym)) {
+    throw new EvaluationError('var expects a symbol', { list })
+  }
+
+  const slashIdx = sym.name.indexOf('/')
+  if (slashIdx > 0 && slashIdx < sym.name.length - 1) {
+    const alias = sym.name.slice(0, slashIdx)
+    const localName = sym.name.slice(slashIdx + 1)
+    const nsEnv = getNamespaceEnv(env)
+    // Try alias lookup (CljNamespace) first
+    const aliasCljNs = nsEnv.ns?.aliases.get(alias)
+    if (aliasCljNs) {
+      const v = aliasCljNs.vars.get(localName)
+      if (!v) throw new EvaluationError(`Var ${sym.name} not found`, { sym })
+      return v
+    }
+    // Fall back to full namespace Env chain (handles clojure.core/sym etc.)
+    const targetEnv = getRootEnv(env).resolveNs?.(alias) ?? null
+    if (!targetEnv) {
+      throw new EvaluationError(`No such namespace: ${alias}`, { sym })
+    }
+    const v = lookupVar(localName, targetEnv)
+    if (!v) throw new EvaluationError(`Var ${sym.name} not found`, { sym })
+    return v
+  }
+
+  const v = lookupVar(sym.name, env)
+  if (!v) {
+    throw new EvaluationError(
+      `Unable to resolve var: ${sym.name} in this context`,
+      { sym }
+    )
+  }
+  return v
+}
+
 type SpecialFormEvaluatorFn = (
   list: CljList,
   env: Env,
@@ -491,6 +545,7 @@ const specialFormEvaluatorEntries = {
   recur: evaluateRecur,
   defmulti: evaluateDefmulti,
   defmethod: evaluateDefmethod,
+  var: evaluateVar,
 } as const satisfies Record<
   keyof typeof specialFormKeywords,
   SpecialFormEvaluatorFn

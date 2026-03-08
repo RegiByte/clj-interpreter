@@ -121,6 +121,20 @@ const readUnquote = (ctx: ReaderCtx) => {
   return { kind: valueKeywords.list, value: [cljSymbol('unquote'), value] }
 }
 
+const readVarQuote = (ctx: ReaderCtx) => {
+  const scanner = ctx.scanner
+  const token = scanner.peek()
+  if (!token) {
+    throw new ReaderError(
+      "Unexpected end of input while parsing var quote",
+      scanner.position()
+    )
+  }
+  scanner.advance() // consume VarQuote token
+  const value = readForm(ctx)
+  return cljList([cljSymbol('var'), value])
+}
+
 const readDeref = (ctx: ReaderCtx) => {
   const scanner = ctx.scanner
   const token = scanner.peek()
@@ -521,6 +535,8 @@ function readForm(ctx: ReaderCtx): CljValue {
       return readAnonFn(ctx)
     case tokenKeywords.Deref:
       return readDeref(ctx)
+    case tokenKeywords.VarQuote:
+      return readVarQuote(ctx)
     case tokenKeywords.Regex:
       return readRegex(ctx)
     default:

@@ -30,20 +30,23 @@ export function generateModuleCode(
     .filter(Boolean)
     .join('\n')
 
-  const nsEnv = ctx.session.getNs(nsName)
-  if (!nsEnv) {
+  const nsData = ctx.session.getNs(nsName)
+  if (!nsData) {
     return `throw new Error('Namespace ${nsName} failed to load');`
   }
 
   const exportLines: string[] = []
-  for (const [name, value] of nsEnv.bindings) {
+  for (const [name, v] of nsData.vars) {
+    const value = v.value
     if (isMacro(value)) continue
 
     const safeName = safeJsIdentifier(name)
+    // At runtime, vars.get() returns a CljVar; deref with .value
+    const deref = `__ns.vars.get(${JSON.stringify(name)}).value`
     if (isAFunction(value)) {
       exportLines.push(
         `export function ${safeName}(...args) {` +
-          `  const fn = __ns.bindings.get(${JSON.stringify(name)});` +
+          `  const fn = ${deref};` +
           `  const cljArgs = args.map(jsToClj);` +
           `  const result = applyFunction(fn, cljArgs);` +
           `  return cljToJs(result);` +
@@ -51,7 +54,7 @@ export function generateModuleCode(
       )
     } else {
       exportLines.push(
-        `export const ${safeName} = cljToJs(__ns.bindings.get(${JSON.stringify(name)}));`
+        `export const ${safeName} = cljToJs(${deref});`
       )
     }
   }
@@ -99,6 +102,8 @@ function cljValueToTsType(value: CljValue): string {
       return '(...args: unknown[]) => unknown'
     case 'macro':
       return 'never'
+    case 'var':
+      return 'unknown'
     default:
       throw new Error(`Unknown CljValue kind: ${value.kind}`)
   }
@@ -141,11 +146,12 @@ export function generateDts(
     return ''
   }
 
-  const nsEnv = ctx.session.getNs(nsName)
-  if (!nsEnv) return ''
+  const nsData = ctx.session.getNs(nsName)
+  if (!nsData) return ''
 
   const declarations: string[] = []
-  for (const [name, value] of nsEnv.bindings) {
+  for (const [name, v] of nsData.vars) {
+    const value = v.value
     if (isMacro(value)) continue
 
     const safeName = safeJsIdentifier(name)

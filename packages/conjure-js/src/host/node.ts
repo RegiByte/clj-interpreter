@@ -12,7 +12,7 @@ import {
 import { inferSourceRoot } from '../bin/nrepl-utils'
 
 export function injectNodeHostFunctions(session: Session): void {
-  const coreEnv = session.getNs('clojure.core')!
+  const coreEnv = session.registry.get('clojure.core')!
 
   define(
     'slurp',

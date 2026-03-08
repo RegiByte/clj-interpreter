@@ -34,7 +34,7 @@ describe('evaluator spec', () => {
 
     it('should evaluate functions to self', () => {
       const session = freshSession()
-      const userEnv = session.getNs('user')!
+      const userEnv = session.registry.get('user')!
       const form = cljFunction([cljSymbol('n1')], null, [cljNumber(1)], userEnv)
       const result = session.evaluateForms([form])
       expect(result).toMatchObject(form)
@@ -52,7 +52,7 @@ describe('evaluator spec', () => {
       const session = freshSession()
       session.evaluate('(def some-symbol 1)')
       const result = session.evaluate('(fn [a b] (+ a b))')
-      const userEnv = session.getNs('user')!
+      const userEnv = session.registry.get('user')!
       expect(result).toMatchObject(
         cljFunction(
           [cljSymbol('a'), cljSymbol('b')],
@@ -72,7 +72,7 @@ describe('evaluator spec', () => {
       const session = freshSession()
       const result = session.evaluate('(def some-symbol 1)')
       expect(result).toMatchObject(cljNil())
-      expect(lookup('some-symbol', session.getNs('user')!)).toMatchObject(
+      expect(lookup('some-symbol', session.registry.get('user')!)).toMatchObject(
         cljNumber(1)
       )
     })

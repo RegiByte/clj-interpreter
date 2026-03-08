@@ -52,7 +52,7 @@ describe('rest parameters', () => {
             cljSymbol('rest'),
           ]),
         ],
-        session.getNs('user')!
+        session.registry.get('user')!
       )
     )
   })

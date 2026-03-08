@@ -13,6 +13,7 @@ export const metaFunctions: Record<string, CljValue> = {
       if (val.kind === 'function' || val.kind === 'native-function') {
         return val.meta ?? cljNil()
       }
+      if (val.kind === 'var') return val.meta ?? cljNil()
       return cljNil()
     }),
     'Returns the metadata map of a value, or nil if the value has no metadata.',

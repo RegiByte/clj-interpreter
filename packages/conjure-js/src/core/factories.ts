@@ -17,6 +17,7 @@ import type {
   CljString,
   CljSymbol,
   CljValue,
+  CljVar,
   CljVector,
   CljVolatile,
   DestructurePattern,
@@ -108,6 +109,9 @@ export const cljRegex = (pattern: string, flags: string = ''): CljRegex => ({
   pattern,
   flags,
 })
+
+export const cljVar = (ns: string, name: string, value: CljValue, meta?: CljMap): CljVar =>
+  ({ kind: 'var', ns, name, value, meta })
 
 export const cljAtom = (value: CljValue): CljAtom => ({ kind: 'atom', value })
 export const cljReduced = (value: CljValue): CljReduced => ({

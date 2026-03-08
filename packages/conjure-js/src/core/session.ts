@@ -1,6 +1,6 @@
 import { isKeyword, isList, isSymbol, isVector } from './assertions'
 import { loadCoreFunctions } from './core-env'
-import { define, lookup, makeEnv, tryLookup } from './env'
+import { define, lookup, lookupVar, makeEnv, makeNamespace, tryLookup } from './env'
 import { valueToString } from './transformations'
 import { createEvaluationContext, RecurSignal } from './evaluator'
 import { CljThrownSignal, EvaluationError, ReaderError } from './errors'
@@ -9,7 +9,7 @@ import { formatErrorContext } from './positions'
 import { printString } from './printer'
 import { readForms } from './reader'
 import { tokenize } from './tokenizer'
-import type { CljValue, Env, Token, TokenSymbol } from './types'
+import type { CljNamespace, CljValue, Env, Token, TokenSymbol } from './types'
 import { builtInNamespaceSources } from '../clojure/generated/builtin-namespace-registry'
 
 type NamespaceRegistry = Map<string, Env>
@@ -25,7 +25,7 @@ export type Session = {
   registry: NamespaceRegistry
   readonly currentNs: string
   setNs: (namespace: string) => void
-  getNs: (namespace: string) => Env | null
+  getNs: (namespace: string) => CljNamespace | null
   loadFile: (source: string, nsName?: string) => string
   evaluate: (source: string) => CljValue
   evaluateForms: (forms: CljValue[]) => CljValue
@@ -177,10 +177,7 @@ function processRequireSpec(
             position: i,
           })
         }
-        if (!currentEnv.readerAliases) {
-          currentEnv.readerAliases = new Map()
-        }
-        currentEnv.readerAliases.set(alias.name, nsName)
+        currentEnv.ns!.readerAliases.set(alias.name, nsName)
         i++
       } else {
         throw new EvaluationError(
@@ -223,10 +220,7 @@ function processRequireSpec(
           position: i,
         })
       }
-      if (!currentEnv.aliases) {
-        currentEnv.aliases = new Map()
-      }
-      currentEnv.aliases.set(alias.name, targetEnv)
+      currentEnv.ns!.aliases.set(alias.name, targetEnv.ns!)
       i++
     } else if (kw.name === ':refer') {
       i++
@@ -244,16 +238,21 @@ function processRequireSpec(
             sym,
           })
         }
-        let value: CljValue
-        try {
-          value = lookup(sym.name, targetEnv)
-        } catch {
-          throw new EvaluationError(
-            `Symbol ${sym.name} not found in namespace ${nsName}`,
-            { nsName, symbol: sym.name }
-          )
+        const v = lookupVar(sym.name, targetEnv)
+        if (v !== undefined) {
+          currentEnv.ns!.vars.set(sym.name, v)
+        } else {
+          let value: CljValue
+          try {
+            value = lookup(sym.name, targetEnv)
+          } catch {
+            throw new EvaluationError(
+              `Symbol ${sym.name} not found in namespace ${nsName}`,
+              { nsName, symbol: sym.name }
+            )
+          }
+          define(sym.name, value, currentEnv)
         }
-        define(sym.name, value, currentEnv)
       }
       i++
     } else {
@@ -269,27 +268,48 @@ function processRequireSpec(
 // Clone helpers — used by snapshotSession / createSessionFromSnapshot
 // ---------------------------------------------------------------------------
 
+function cloneBindings(bindings: Map<string, CljValue>): Map<string, CljValue> {
+  const out = new Map<string, CljValue>()
+  for (const [k, v] of bindings) {
+    out.set(k, v.kind === 'var' ? { ...v } : v)
+  }
+  return out
+}
+
 function cloneEnv(env: Env, memo: Map<Env, Env>): Env {
   if (memo.has(env)) return memo.get(env)!
   const cloned: Env = {
-    bindings: new Map(env.bindings),
+    bindings: cloneBindings(env.bindings),
     outer: null,
-    namespace: env.namespace,
+  }
+  if (env.ns) {
+    cloned.ns = {
+      name: env.ns.name,
+      vars: new Map([...env.ns.vars].map(([k, v]) => [k, { ...v }])),
+      aliases: new Map(), // wired in cloneRegistry pass 2
+      readerAliases: new Map(env.ns.readerAliases),
+    }
   }
   memo.set(env, cloned)
   if (env.outer) cloned.outer = cloneEnv(env.outer, memo)
-  if (env.aliases)
-    cloned.aliases = new Map(
-      [...env.aliases].map(([k, v]) => [k, cloneEnv(v, memo)])
-    )
-  if (env.readerAliases) cloned.readerAliases = new Map(env.readerAliases)
   return cloned
 }
 
 function cloneRegistry(registry: NamespaceRegistry): NamespaceRegistry {
   const memo = new Map<Env, Env>()
   const next = new Map<string, Env>()
+  // Pass 1: clone all envs (ns.aliases left empty)
   for (const [name, env] of registry) next.set(name, cloneEnv(env, memo))
+  // Pass 2: wire ns.aliases to the cloned CljNamespace objects
+  for (const [name, env] of registry) {
+    const clonedEnv = next.get(name)!
+    if (env.ns && clonedEnv.ns) {
+      for (const [alias, origNs] of env.ns.aliases) {
+        const targetCloned = next.get(origNs.name)
+        if (targetCloned?.ns) clonedEnv.ns.aliases.set(alias, targetCloned.ns)
+      }
+    }
+  }
   return next
 }
 
@@ -376,7 +396,7 @@ function buildSessionApi(
   function ensureNs(name: string): Env {
     if (!registry.has(name)) {
       const nsEnv = makeEnv(coreEnv)
-      nsEnv.namespace = name
+      nsEnv.ns = makeNamespace(name)
       registry.set(name, nsEnv)
     }
     return registry.get(name)!
@@ -387,7 +407,12 @@ function buildSessionApi(
     currentNs = name
   }
 
-  function getNs(name: string): Env | null {
+  function getNs(name: string): CljNamespace | null {
+    return registry.get(name)?.ns ?? null
+  }
+
+  // Internal: returns the full Env (with lexical chain) for a namespace name.
+  function getNsEnv(name: string): Env | null {
     return registry.get(name) ?? null
   }
 
@@ -464,14 +489,14 @@ function buildSessionApi(
           ensureNs(declaredNs)
           currentNs = declaredNs
         }
-        const env = getNs(currentNs)!
+        const env = getNsEnv(currentNs)!
         // Seed alias map from tokens (new aliases declared in this source) and
-        // from env.aliases/:as (prior require calls) and env.readerAliases/:as-alias.
+        // from ns.aliases/:as (prior require calls) and ns.readerAliases/:as-alias.
         const aliasMap = extractAliasMapFromTokens(tokens)
-        env.aliases?.forEach((nsEnv, alias) => {
-          if (nsEnv.namespace) aliasMap.set(alias, nsEnv.namespace)
+        env.ns?.aliases.forEach((ns, alias) => {
+          aliasMap.set(alias, ns.name)
         })
-        env.readerAliases?.forEach((nsName, alias) => {
+        env.ns?.readerAliases.forEach((nsName, alias) => {
           aliasMap.set(alias, nsName)
         })
         const forms = readForms(tokens, currentNs, aliasMap)
@@ -505,7 +530,7 @@ function buildSessionApi(
     },
     evaluateForms(forms: CljValue[]) {
       try {
-        const env = getNs(currentNs)!
+        const env = getNsEnv(currentNs)!
         let result: CljValue = cljNil()
         for (const form of forms) {
           const expanded = ctx.expandAll(form, env)
@@ -532,6 +557,7 @@ function buildSessionApi(
       const seen = new Set<string>()
       while (env) {
         for (const key of env.bindings.keys()) seen.add(key)
+        if (env.ns) for (const key of env.ns.vars.keys()) seen.add(key)
         env = env.outer
       }
       const candidates = [...seen]
@@ -550,12 +576,12 @@ export function createSession(options?: SessionOptions): Session {
   const registry: NamespaceRegistry = new Map()
 
   const coreEnv = makeEnv()
-  coreEnv.namespace = 'clojure.core'
+  coreEnv.ns = makeNamespace('clojure.core')
   loadCoreFunctions(coreEnv, options?.output)
   registry.set('clojure.core', coreEnv)
 
   const userEnv = makeEnv(coreEnv)
-  userEnv.namespace = 'user'
+  userEnv.ns = makeNamespace('user')
   registry.set('user', userEnv)
 
   const session = buildSessionApi({ registry, currentNs: 'user' }, options)

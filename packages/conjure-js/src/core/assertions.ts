@@ -15,6 +15,7 @@ import {
   type CljString,
   type CljSymbol,
   type CljValue,
+  type CljVar,
   type CljVector,
   type CljVolatile,
 } from './types.ts'
@@ -66,6 +67,7 @@ export const isVolatile = (value: CljValue): value is CljVolatile =>
   value.kind === 'volatile'
 export const isRegex = (value: CljValue): value is CljRegex =>
   value.kind === 'regex'
+export const isVar = (value: CljValue): value is CljVar => value.kind === 'var'
 export const isCollection = (
   value: CljValue
 ): value is CljList | CljVector | CljMap =>
@@ -123,6 +125,7 @@ const equalityHandlers = {
   // Regex uses reference equality matching Clojure Pattern semantics:
   // (= #"foo" #"foo") => false — each literal is a distinct object
   [valueKeywords.regex]: (a: CljRegex, b: CljRegex) => a === b,
+  [valueKeywords.var]: (a: CljVar, b: CljVar) => a === b,
 }
 
 export const isEqual = (a: CljValue, b: CljValue): boolean => {

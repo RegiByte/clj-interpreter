@@ -27,6 +27,7 @@ export {
   cljNativeFunction,
   cljMacro,
   cljMultiArityMacro,
+  cljVar,
 } from './factories'
 
 // Assertions
@@ -45,10 +46,11 @@ export {
   isAFunction,
   isCollection,
   isEqual,
+  isVar,
 } from './assertions'
 
 // Env
-export { define } from './env'
+export { define, derefValue, lookupVar, makeNamespace } from './env'
 
 // Transformations
 export { valueToString } from './transformations'
@@ -74,6 +76,8 @@ export type {
   CljFunction,
   CljNativeFunction,
   CljMacro,
+  CljVar,
+  CljNamespace,
   Env,
   Arity,
 } from './types'

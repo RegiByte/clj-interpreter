@@ -12,7 +12,7 @@ import {
   type Session,
   type SessionSnapshot,
 } from '../core'
-import { tryLookup, getNamespaceEnv } from '../core/env'
+import { tryLookup, lookupVar, getNamespaceEnv } from '../core/env'
 import { inferSourceRoot } from './nrepl-utils'
 import { VERSION } from './version'
 import { injectNodeHostFunctions } from '../host/node'
@@ -256,20 +256,20 @@ function resolveSymbol(
     const qualifier = sym.slice(0, slashIdx)
     const localName = sym.slice(slashIdx + 1)
 
-    // 1. Try as full namespace name
-    const nsEnv = managed.session.getNs(qualifier)
-    if (nsEnv) {
-      const value = tryLookup(localName, nsEnv)
+    // 1. Try as full namespace name (use registry Env for chain-based lookup)
+    const nsEnvFull = managed.session.registry.get(qualifier)
+    if (nsEnvFull) {
+      const value = tryLookup(localName, nsEnvFull)
       if (value !== undefined) return { value, resolvedNs: qualifier, localName }
     }
 
     // 2. Try as alias (:as str → clojure.string)
-    const currentEnv = managed.session.getNs(ns)
-    const aliasedEnv = currentEnv?.aliases?.get(qualifier)
-    if (aliasedEnv) {
-      const value = tryLookup(localName, aliasedEnv)
-      if (value !== undefined)
-        return { value, resolvedNs: aliasedEnv.namespace ?? qualifier, localName }
+    const currentNsData = managed.session.getNs(ns)
+    const aliasedNs = currentNsData?.aliases.get(qualifier)
+    if (aliasedNs) {
+      const v = aliasedNs.vars.get(localName)
+      if (v !== undefined)
+        return { value: v.value, resolvedNs: aliasedNs.name, localName }
     }
 
     return null
@@ -277,15 +277,19 @@ function resolveSymbol(
 
   // Unqualified symbol
   const localName = sym
-  const nsEnv = managed.session.getNs(ns)
-  if (!nsEnv) return null
-  const value = tryLookup(sym, nsEnv)
+  const nsEnvFull = managed.session.registry.get(ns)
+  if (!nsEnvFull) return null
+  const value = tryLookup(sym, nsEnvFull)
   if (value === undefined) return null
 
-  // Determine the namespace where this symbol is defined
+  // Determine the namespace where this symbol is defined.
+  // CljVar carries the authoritative ns; fall back to other heuristics.
+  const varObj = lookupVar(sym, nsEnvFull)
   let resolvedNs: string
-  if (value.kind === 'function' || value.kind === 'macro') {
-    resolvedNs = getNamespaceEnv(value.env).namespace ?? ns
+  if (varObj) {
+    resolvedNs = varObj.ns
+  } else if (value.kind === 'function' || value.kind === 'macro') {
+    resolvedNs = getNamespaceEnv(value.env).ns?.name ?? ns
   } else if (value.kind === 'native-function') {
     const i = value.name.indexOf('/')
     resolvedNs = i > 0 ? value.name.slice(0, i) : ns

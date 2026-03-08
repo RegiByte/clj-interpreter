@@ -74,6 +74,8 @@ export function printString(value: CljValue): string {
       const prefix = value.flags ? `(?${value.flags})` : ''
       return `#"${prefix}${escaped}"`
     }
+    case valueKeywords.var:
+      return `#'${value.ns}/${value.name}`
     default:
       throw new EvaluationError(`unhandled value type: ${value.kind}`, {
         value,

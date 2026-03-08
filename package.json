@@ -4,13 +4,16 @@
     "packages/*"
   ],
   "conjure": {
-    "sourceRoots": ["packages/conjure-js/src/clojure"]
+    "sourceRoots": [
+      "packages/conjure-js/src/clojure"
+    ]
   },
   "scripts": {
     "test": "bun run --filter 'conjure-js' test",
     "build": "bun run --filter 'conjure-js' build-npm-bin",
     "dev": "bun run --filter 'playground' dev",
     "repl": "bun run --filter 'conjure-js' repl",
-    "nrepl": "bun run --filter 'conjure-js' nrepl"
+    "nrepl": "bun run --filter 'conjure-js' nrepl",
+    "playground": "bun run --filter 'playground' dev"
   }
 }

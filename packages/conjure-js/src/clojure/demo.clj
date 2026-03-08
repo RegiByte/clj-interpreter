@@ -7,7 +7,19 @@
 greeting
 (def add m/add)
 
+pi
+
 (add 1 2)
+
+(square 3)
+
+(def x 42)
+
+(doc -)
+
+(var? #'x)
+
+#'x
 
 (+ 1 2)
 

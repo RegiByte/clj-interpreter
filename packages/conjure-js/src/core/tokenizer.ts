@@ -280,6 +280,10 @@ function parseDispatch(ctx: TokenizationContext): Token {
   if (next === '"') {
     return parseRegexLiteral(ctx, start)
   }
+  if (next === "'") {
+    scanner.advance() // consume "'"
+    return { kind: tokenKeywords.VarQuote, start, end: scanner.position() }
+  }
   if (next === '{') {
     // TODO: set literals — #{1 2 3}
     throw new TokenizerError('Set literals are not yet supported', start)

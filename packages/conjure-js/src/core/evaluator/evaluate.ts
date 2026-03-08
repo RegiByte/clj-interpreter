@@ -41,10 +41,20 @@ export function evaluateWithContext(
           const alias = expr.name.slice(0, slashIdx)
           const sym = expr.name.slice(slashIdx + 1)
           const nsEnv = getNamespaceEnv(env)
-          const targetEnv =
-            nsEnv.aliases?.get(alias) ??
-            getRootEnv(env).resolveNs?.(alias) ??
-            null
+          // Try alias lookup (CljNamespace) first
+          const aliasCljNs = nsEnv.ns?.aliases.get(alias)
+          if (aliasCljNs) {
+            const v = aliasCljNs.vars.get(sym)
+            if (v === undefined) {
+              throw new EvaluationError(`Symbol ${expr.name} not found`, {
+                symbol: expr.name,
+                env,
+              })
+            }
+            return v.value
+          }
+          // Fall back to full namespace Env chain (handles clojure.core/sym etc.)
+          const targetEnv = getRootEnv(env).resolveNs?.(alias) ?? null
           if (!targetEnv) {
             throw new EvaluationError(`No such namespace or alias: ${alias}`, {
               symbol: expr.name,

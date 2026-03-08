@@ -1,5 +1,5 @@
 import { EvaluationError } from './errors'
-import type { CljValue, Env } from './types'
+import type { CljNamespace, CljValue, CljVar, Env } from './types'
 
 class EnvError extends Error {
   context: any
@@ -10,6 +10,14 @@ class EnvError extends Error {
   }
 }
 
+export function derefValue(val: CljValue): CljValue {
+  return val.kind === 'var' ? val.value : val
+}
+
+export function makeNamespace(name: string): CljNamespace {
+  return { name, vars: new Map(), aliases: new Map(), readerAliases: new Map() }
+}
+
 export function makeEnv(outer?: Env): Env {
   return {
     bindings: new Map(),
@@ -18,22 +26,36 @@ export function makeEnv(outer?: Env): Env {
 }
 
 export function lookup(name: string, env: Env): CljValue {
-  let current = env as Env | null
+  let current: Env | null = env
   while (current) {
-    if (current.bindings.has(name)) {
-      return current.bindings.get(name)!
-    }
+    const raw = current.bindings.get(name)
+    if (raw !== undefined) return derefValue(raw)
+    const v = current.ns?.vars.get(name)
+    if (v !== undefined) return v.value
     current = current.outer
   }
   throw new EvaluationError(`Symbol ${name} not found`, { name })
 }
 
 export function tryLookup(name: string, env: Env): CljValue | undefined {
-  let current = env as Env | null
+  let current: Env | null = env
   while (current) {
-    if (current.bindings.has(name)) {
-      return current.bindings.get(name)!
-    }
+    const raw = current.bindings.get(name)
+    if (raw !== undefined) return derefValue(raw)
+    const v = current.ns?.vars.get(name)
+    if (v !== undefined) return v.value
+    current = current.outer
+  }
+  return undefined
+}
+
+export function lookupVar(name: string, env: Env): CljVar | undefined {
+  let current: Env | null = env
+  while (current) {
+    const raw = current.bindings.get(name)
+    if (raw !== undefined && raw.kind === 'var') return raw
+    const v = current.ns?.vars.get(name)
+    if (v !== undefined) return v
     current = current.outer
   }
   return undefined
@@ -69,10 +91,8 @@ export function getRootEnv(env: Env): Env {
 export function getNamespaceEnv(env: Env): Env {
   let current: Env | null = env
   while (current) {
-    if (current.namespace) return current
+    if (current.ns) return current
     current = current.outer
   }
-  // fallback for un-namespaced envs for backwards compact
-  // eventually we'll remove this and require all envs to be namespaced
   return getRootEnv(env)
 }

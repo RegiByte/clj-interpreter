@@ -78,6 +78,7 @@ export const utilFunctions: Record<string, CljValue> = {
         map: ':map',
         function: ':function',
         regex: ':regex',
+        var: ':var',
         'native-function': ':function',
       }
       const name = kindToKeyword[x.kind]
