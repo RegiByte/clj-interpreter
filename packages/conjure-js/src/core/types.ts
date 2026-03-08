@@ -25,7 +25,7 @@ export type CljString = { kind: 'string'; value: string }
 export type CljBoolean = { kind: 'boolean'; value: boolean }
 export type CljKeyword = { kind: 'keyword'; name: string }
 export type CljNil = { kind: 'nil'; value: null }
-export type CljSymbol = { kind: 'symbol'; name: string }
+export type CljSymbol = { kind: 'symbol'; name: string; meta?: CljMap }
 export type CljList = { kind: 'list'; value: CljValue[] }
 export type CljVector = { kind: 'vector'; value: CljValue[] }
 export type CljMap = { kind: 'map'; entries: [CljValue, CljValue][] }
@@ -74,6 +74,8 @@ export type CljVar = {
   ns: string
   name: string
   value: CljValue
+  dynamic?: boolean          // set when def is annotated with ^:dynamic
+  bindingStack?: CljValue[]  // active dynamic bindings (push/pop by `binding`)
   meta?: CljMap
 }
 
@@ -154,6 +156,7 @@ export const tokenKeywords = {
   Deref: 'Deref',
   Regex: 'Regex',
   VarQuote: 'VarQuote',
+  Meta: 'Meta',
 } as const
 export const tokenSymbols = {
   Quote: 'quote',
@@ -254,6 +257,9 @@ export type TokenRegex = {
 export type TokenVarQuote = {
   kind: 'VarQuote'
 }
+export type TokenMeta = {
+  kind: 'Meta'
+}
 export type Token = (
   | TokenLParen
   | TokenRParen
@@ -275,4 +281,5 @@ export type Token = (
   | TokenDeref
   | TokenRegex
   | TokenVarQuote
+  | TokenMeta
 ) & { start: Cursor; end: Cursor }

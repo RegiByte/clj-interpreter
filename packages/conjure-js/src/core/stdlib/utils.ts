@@ -1,7 +1,7 @@
 // Miscellaneous utilities: str, type, gensym, eval, macroexpand-1, macroexpand,
 // namespace, name, keyword
 import { isKeyword, isList, isMacro, isSymbol, isTruthy } from '../assertions'
-import { getRootEnv, tryLookup } from '../env'
+import { tryLookup } from '../env'
 import { EvaluationError } from '../errors'
 import {
   cljBoolean,
@@ -117,9 +117,8 @@ export const utilFunctions: Record<string, CljValue> = {
             form,
           })
         }
-        const rootEnv = getRootEnv(callEnv)
-        const expanded = ctx.expandAll(form, rootEnv)
-        return ctx.evaluate(expanded, rootEnv)
+        const expanded = ctx.expandAll(form, callEnv)
+        return ctx.evaluate(expanded, callEnv)
       }
     ),
     'Evaluates the given form in the global environment and returns the result.',
@@ -133,7 +132,7 @@ export const utilFunctions: Record<string, CljValue> = {
         if (!isList(form) || form.value.length === 0) return form
         const head = form.value[0]
         if (!isSymbol(head)) return form
-        const macroValue = tryLookup(head.name, getRootEnv(callEnv))
+        const macroValue = tryLookup(head.name, callEnv)
         if (macroValue === undefined) return form
         if (!isMacro(macroValue)) return form
         return ctx.applyMacro(macroValue, form.value.slice(1))
@@ -147,13 +146,12 @@ export const utilFunctions: Record<string, CljValue> = {
     cljNativeFunctionWithContext(
       'macroexpand',
       (ctx: EvaluationContext, callEnv: Env, form: CljValue) => {
-        const rootEnv = getRootEnv(callEnv)
         let current = form
         while (true) {
           if (!isList(current) || current.value.length === 0) return current
           const head = current.value[0]
           if (!isSymbol(head)) return current
-          const macroValue = tryLookup(head.name, rootEnv)
+          const macroValue = tryLookup(head.name, callEnv)
           if (macroValue === undefined) return current
           if (!isMacro(macroValue)) return current
           current = ctx.applyMacro(macroValue, current.value.slice(1))
@@ -172,7 +170,7 @@ export const utilFunctions: Record<string, CljValue> = {
     cljNativeFunctionWithContext(
       'macroexpand-all',
       (ctx: EvaluationContext, callEnv: Env, form: CljValue) =>
-        ctx.expandAll(form, getRootEnv(callEnv))
+        ctx.expandAll(form, callEnv)
     ),
     joinLines([
       'Fully expands all macros in a form recursively — including in sub-forms.',

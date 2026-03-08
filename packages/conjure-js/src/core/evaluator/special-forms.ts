@@ -10,7 +10,7 @@ import {
   isTruthy,
   isVector,
 } from '../assertions'
-import { define, extend, getNamespaceEnv, getRootEnv, lookup, lookupVar } from '../env'
+import { define, extend, getNamespaceEnv, getRootEnv, internVar, lookup, lookupVar } from '../env'
 import { CljThrownSignal, EvaluationError } from '../errors'
 import {
   cljKeyword,
@@ -27,6 +27,7 @@ import type {
   CljFunction,
   CljKeyword,
   CljList,
+  CljMap,
   CljMultiMethod,
   CljNativeFunction,
   CljValue,
@@ -37,6 +38,16 @@ import { parseArities, RecurSignal } from './arity'
 import { destructureBindings } from './destructure'
 import { evaluateQuasiquote } from './quasiquote'
 import { assertRecurInTailPosition } from './recur-check'
+
+function hasDynamicMeta(meta: CljMap | undefined): boolean {
+  if (!meta) return false
+  for (const [k, v] of meta.entries) {
+    if (k.kind === 'keyword' && k.name === ':dynamic' && v.kind === 'boolean' && v.value === true) {
+      return true
+    }
+  }
+  return false
+}
 
 export const specialFormKeywords = {
   quote: 'quote',
@@ -54,6 +65,7 @@ export const specialFormKeywords = {
   defmethod: 'defmethod',
   try: 'try',
   var: 'var',
+  binding: 'binding',
 } as const
 
 function keywordToDispatchFn(kw: CljKeyword): CljNativeFunction {
@@ -226,12 +238,19 @@ function evaluateDef(
   const nsEnv = getNamespaceEnv(env)
   const cljNs = nsEnv.ns!
   const newValue = ctx.evaluate(list.value[2], env)
+  const symMeta = name.meta
 
   const existing = cljNs.vars.get(name.name)
   if (existing) {
     existing.value = newValue
+    if (symMeta) {
+      existing.meta = symMeta
+      if (hasDynamicMeta(symMeta)) existing.dynamic = true
+    }
   } else {
-    cljNs.vars.set(name.name, cljVar(cljNs.name, name.name, newValue))
+    const v = cljVar(cljNs.name, name.name, newValue, symMeta)
+    if (hasDynamicMeta(symMeta)) v.dynamic = true
+    cljNs.vars.set(name.name, v)
   }
   return cljNil()
 }
@@ -320,7 +339,7 @@ function evaluateDefmacro(
   }
   const arities = parseArities(list.value.slice(2), env)
   const macro = cljMultiArityMacro(arities, env)
-  define(name.name, macro, getRootEnv(env))
+  internVar(name.name, macro, getNamespaceEnv(env))
   return cljNil()
 }
 
@@ -434,7 +453,7 @@ function evaluateDefmulti(
     dispatchFn = evaluated
   }
   const mm = cljMultiMethod(mmName.name, dispatchFn, [])
-  define(mmName.name, mm, getNamespaceEnv(env))
+  internVar(mmName.name, mm, getNamespaceEnv(env))
   return cljNil()
 }
 
@@ -478,7 +497,13 @@ function evaluateDefmethod(
       { dispatchVal, fn: methodFn },
     ])
   }
-  define(mmName.name, updated, getNamespaceEnv(env))
+  // Update the var's value in place if possible, otherwise fall back to define
+  const v = lookupVar(mmName.name, env)
+  if (v) {
+    v.value = updated
+  } else {
+    define(mmName.name, updated, getNamespaceEnv(env))
+  }
   return cljNil()
 }
 
@@ -524,6 +549,63 @@ function evaluateVar(
   return v
 }
 
+function evaluateBinding(
+  list: CljList,
+  env: Env,
+  ctx: EvaluationContext
+): CljValue {
+  const bindings = list.value[1]
+  if (!isVector(bindings)) {
+    throw new EvaluationError('binding requires a vector of bindings', {
+      list,
+      env,
+    })
+  }
+  if (bindings.value.length % 2 !== 0) {
+    throw new EvaluationError(
+      'binding vector must have an even number of forms',
+      { list, env }
+    )
+  }
+  const body = list.value.slice(2)
+  const boundVars: import('../types').CljVar[] = []
+
+  for (let i = 0; i < bindings.value.length; i += 2) {
+    const sym = bindings.value[i]
+    if (!isSymbol(sym)) {
+      throw new EvaluationError(
+        'binding left-hand side must be a symbol',
+        { sym }
+      )
+    }
+    const newVal = ctx.evaluate(bindings.value[i + 1], env)
+    const v = lookupVar(sym.name, env)
+    if (!v) {
+      throw new EvaluationError(
+        `No var found for symbol '${sym.name}' in binding form`,
+        { sym }
+      )
+    }
+    if (!v.dynamic) {
+      throw new EvaluationError(
+        `Cannot use binding with non-dynamic var ${v.ns}/${v.name}. Mark it dynamic with (def ^:dynamic ${sym.name} ...)`,
+        { sym }
+      )
+    }
+    v.bindingStack ??= []
+    v.bindingStack.push(newVal)
+    boundVars.push(v)
+  }
+
+  try {
+    return ctx.evaluateForms(body, env)
+  } finally {
+    for (const v of boundVars) {
+      v.bindingStack!.pop()
+    }
+  }
+}
+
 type SpecialFormEvaluatorFn = (
   list: CljList,
   env: Env,
@@ -546,6 +628,7 @@ const specialFormEvaluatorEntries = {
   defmulti: evaluateDefmulti,
   defmethod: evaluateDefmethod,
   var: evaluateVar,
+  binding: evaluateBinding,
 } as const satisfies Record<
   keyof typeof specialFormKeywords,
   SpecialFormEvaluatorFn

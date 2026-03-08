@@ -1,7 +1,9 @@
 import { ReaderError } from './errors'
 import {
   cljBoolean,
+  cljKeyword,
   cljList,
+  cljMap,
   cljNil,
   cljRegex,
   cljSymbol,
@@ -119,6 +121,41 @@ const readUnquote = (ctx: ReaderCtx) => {
     throw new ReaderError(`Unexpected token: ${getTokenValue(token)}`, token)
   }
   return { kind: valueKeywords.list, value: [cljSymbol('unquote'), value] }
+}
+
+const readMeta = (ctx: ReaderCtx): CljValue => {
+  const scanner = ctx.scanner
+  const token = scanner.peek()
+  if (!token) {
+    throw new ReaderError(
+      'Unexpected end of input while parsing metadata',
+      scanner.position()
+    )
+  }
+  scanner.advance() // consume Meta token
+
+  const metaForm = readForm(ctx)
+  const target = readForm(ctx)
+
+  // Convert metaForm to a CljMap
+  let metaEntries: [CljValue, CljValue][]
+  if (metaForm.kind === 'keyword') {
+    metaEntries = [[metaForm, cljBoolean(true)]]
+  } else if (metaForm.kind === 'map') {
+    metaEntries = metaForm.entries
+  } else if (metaForm.kind === 'symbol') {
+    metaEntries = [[cljKeyword(':tag'), metaForm]]
+  } else {
+    throw new ReaderError('Metadata must be a keyword, map, or symbol', token)
+  }
+
+  // Attach metadata to symbol targets (the annotated name in def position).
+  // For other forms, metadata is silently ignored.
+  if (target.kind === 'symbol') {
+    const existingEntries = target.meta ? target.meta.entries : []
+    return { ...target, meta: cljMap([...existingEntries, ...metaEntries]) }
+  }
+  return target
 }
 
 const readVarQuote = (ctx: ReaderCtx) => {
@@ -537,6 +574,8 @@ function readForm(ctx: ReaderCtx): CljValue {
       return readDeref(ctx)
     case tokenKeywords.VarQuote:
       return readVarQuote(ctx)
+    case tokenKeywords.Meta:
+      return readMeta(ctx)
     case tokenKeywords.Regex:
       return readRegex(ctx)
     default:

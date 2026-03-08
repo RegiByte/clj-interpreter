@@ -1,4 +1,4 @@
-import { define, makeEnv } from './env'
+import { internVar, makeEnv, makeNamespace } from './env'
 import { cljNativeFunction, cljNil } from './factories'
 import { arithmeticFunctions } from './stdlib/arithmetic'
 import { atomFunctions } from './stdlib/atoms'
@@ -32,10 +32,10 @@ const nativeFunctions = {
 
 export function loadCoreFunctions(env: Env, output?: (text: string) => void) {
   for (const [key, value] of Object.entries(nativeFunctions)) {
-    define(key, value, env)
+    internVar(key, value, env)
   }
   const emit = output ?? ((text: string) => console.log(text))
-  define(
+  internVar(
     'println',
     cljNativeFunction('println', (...args: CljValue[]) => {
       emit(args.map(valueToString).join(' '))
@@ -43,7 +43,7 @@ export function loadCoreFunctions(env: Env, output?: (text: string) => void) {
     }),
     env
   )
-  define(
+  internVar(
     'print',
     cljNativeFunction('print', (...args: CljValue[]) => {
       emit(args.map(valueToString).join(' '))
@@ -55,6 +55,7 @@ export function loadCoreFunctions(env: Env, output?: (text: string) => void) {
 
 export function makeCoreEnv(output?: (text: string) => void): Env {
   const env = makeEnv()
+  env.ns = makeNamespace('clojure.core')
   loadCoreFunctions(env, output)
   return env
 }

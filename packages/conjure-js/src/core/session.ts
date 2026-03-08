@@ -1,6 +1,6 @@
 import { isKeyword, isList, isSymbol, isVector } from './assertions'
 import { loadCoreFunctions } from './core-env'
-import { define, lookup, lookupVar, makeEnv, makeNamespace, tryLookup } from './env'
+import { define, internVar, lookup, lookupVar, makeEnv, makeNamespace, tryLookup } from './env'
 import { valueToString } from './transformations'
 import { createEvaluationContext, RecurSignal } from './evaluator'
 import { CljThrownSignal, EvaluationError, ReaderError } from './errors'
@@ -342,7 +342,7 @@ function buildSessionApi(
   // Always re-wire print/println so snapshot-derived sessions get the right
   // emit target. Falls back to console.log when no output callback is provided.
   const emitFn = options?.output ?? ((text: string) => console.log(text))
-  define(
+  internVar(
     'println',
     cljNativeFunction('println', (...args: CljValue[]) => {
       emitFn(args.map(valueToString).join(' '))
@@ -350,7 +350,7 @@ function buildSessionApi(
     }),
     coreEnv
   )
-  define(
+  internVar(
     'print',
     cljNativeFunction('print', (...args: CljValue[]) => {
       emitFn(args.map(valueToString).join(' '))
@@ -416,7 +416,7 @@ function buildSessionApi(
     return registry.get(name) ?? null
   }
 
-  define(
+  internVar(
     'require',
     cljNativeFunction('require', (...args: CljValue[]) => {
       const currentEnv = registry.get(currentNs)!
@@ -428,7 +428,7 @@ function buildSessionApi(
     coreEnv
   )
 
-  define(
+  internVar(
     'resolve',
     cljNativeFunction('resolve', (sym: CljValue) => {
       if (!isSymbol(sym)) return cljNil()

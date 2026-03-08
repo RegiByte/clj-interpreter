@@ -33,6 +33,7 @@ const isNumber = (char: string) => {
 const isDot = (char: string) => char === '.'
 const isKeywordStart = (char: string) => char === ':'
 const isHash = (char: string) => char === '#'
+const isCaret = (char: string) => char === '^'
 
 const isDelimiter = (char: string) =>
   isLParen(char) ||
@@ -43,7 +44,8 @@ const isDelimiter = (char: string) =>
   isRBrace(char) ||
   isBacktick(char) ||
   isSingleQuote(char) ||
-  isAt(char)
+  isAt(char) ||
+  isCaret(char)
 
 const parseWhitespace = (ctx: TokenizationContext): Token => {
   const scanner = ctx.scanner
@@ -217,6 +219,13 @@ const parseDerefToken = (ctx: TokenizationContext): Token => {
   return { kind: 'Deref', start, end: scanner.position() }
 }
 
+const parseMetaToken = (ctx: TokenizationContext): Token => {
+  const scanner = ctx.scanner
+  const start = scanner.position()
+  scanner.advance() // consume '^'
+  return { kind: 'Meta', start, end: scanner.position() }
+}
+
 const parseRegexLiteral = (ctx: TokenizationContext, start: ReturnType<typeof ctx.scanner.position>): Token => {
   const scanner = ctx.scanner
   scanner.advance() // consume opening '"'
@@ -364,6 +373,7 @@ const tokenParseEntries: TokenParseEntry[] = [
   ],
   [isTilde, parseTilde],
   [isAt, parseDerefToken],
+  [isCaret, parseMetaToken],
   [isHash, parseDispatch],
 ]
 

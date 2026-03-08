@@ -50,7 +50,7 @@ export {
 } from './assertions'
 
 // Env
-export { define, derefValue, lookupVar, makeNamespace } from './env'
+export { define, derefValue, internVar, lookupVar, makeNamespace } from './env'
 
 // Transformations
 export { valueToString } from './transformations'

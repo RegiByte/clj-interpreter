@@ -1,5 +1,6 @@
 import { EvaluationError } from './errors'
-import type { CljNamespace, CljValue, CljVar, Env } from './types'
+import type { CljNamespace, CljMap, CljValue, CljVar, Env } from './types'
+import { cljVar } from './factories'
 
 class EnvError extends Error {
   context: any
@@ -11,7 +12,11 @@ class EnvError extends Error {
 }
 
 export function derefValue(val: CljValue): CljValue {
-  return val.kind === 'var' ? val.value : val
+  if (val.kind !== 'var') return val
+  if (val.dynamic && val.bindingStack && val.bindingStack.length > 0) {
+    return val.bindingStack[val.bindingStack.length - 1]
+  }
+  return val.value
 }
 
 export function makeNamespace(name: string): CljNamespace {
@@ -31,7 +36,7 @@ export function lookup(name: string, env: Env): CljValue {
     const raw = current.bindings.get(name)
     if (raw !== undefined) return derefValue(raw)
     const v = current.ns?.vars.get(name)
-    if (v !== undefined) return v.value
+    if (v !== undefined) return derefValue(v)
     current = current.outer
   }
   throw new EvaluationError(`Symbol ${name} not found`, { name })
@@ -43,10 +48,26 @@ export function tryLookup(name: string, env: Env): CljValue | undefined {
     const raw = current.bindings.get(name)
     if (raw !== undefined) return derefValue(raw)
     const v = current.ns?.vars.get(name)
-    if (v !== undefined) return v.value
+    if (v !== undefined) return derefValue(v)
     current = current.outer
   }
   return undefined
+}
+
+/**
+ * Interns a value as a Var in the namespace attached to `nsEnv`.
+ * Re-def: mutates the existing var's value in place.
+ * New def: creates a new CljVar and stores it in ns.vars.
+ */
+export function internVar(name: string, value: CljValue, nsEnv: Env, meta?: CljMap) {
+  const ns = nsEnv.ns!
+  const existing = ns.vars.get(name)
+  if (existing) {
+    existing.value = value
+    if (meta) existing.meta = meta
+  } else {
+    ns.vars.set(name, cljVar(ns.name, name, value, meta))
+  }
 }
 
 export function lookupVar(name: string, env: Env): CljVar | undefined {
