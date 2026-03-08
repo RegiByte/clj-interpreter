@@ -27,7 +27,8 @@
     "!src/**/*.test.ts",
     "!src/demo-entry.ts",
     "tsconfig.json",
-    "tsconfig.build.json"
+    "tsconfig.build.json",
+    "README.md"
   ],
   "keywords": [
     "clojure",
