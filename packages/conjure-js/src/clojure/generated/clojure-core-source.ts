@@ -461,7 +461,9 @@ export const clojure_coreSource = `\
        ([result] (rf result))
        ([result input] (rf result (f input))))))
   ([f coll]
-   (sequence (map f) coll))
+   (lazy-seq
+     (when-let [s (seq coll)]
+       (cons (f (first s)) (map f (rest s))))))
   ([f c1 c2]
    (loop [s1 (seq c1)
           s2 (seq c2)
@@ -494,7 +496,11 @@ export const clojure_coreSource = `\
           (rf result input)
           result)))))
   ([pred coll]
-   (sequence (filter pred) coll)))
+   (lazy-seq
+     (when-let [s (seq coll)]
+       (if (pred (first s))
+         (cons (first s) (filter pred (rest s)))
+         (filter pred (rest s)))))))
 
 (defn remove
   "Returns a lazy sequence of the items in coll for which
@@ -528,7 +534,10 @@ export const clojure_coreSource = `\
               (ensure-reduced result)
               result)))))))
   ([n coll]
-   (sequence (take n) coll)))
+   (lazy-seq
+     (when (pos? n)
+       (when-let [s (seq coll)]
+         (cons (first s) (take (dec n) (rest s))))))))
 
 ;; take-while: stateless transducer; emits reduced when pred fails
 (defn take-while
@@ -545,7 +554,10 @@ export const clojure_coreSource = `\
           (rf result input)
           (reduced result))))))
   ([pred coll]
-   (sequence (take-while pred) coll)))
+   (lazy-seq
+     (when-let [s (seq coll)]
+       (when (pred (first s))
+         (cons (first s) (take-while pred (rest s))))))))
 
 ;; drop: stateful transducer; skips first n items
 ;; r >= 0 → still skipping; r < 0 → past the drop zone, start taking
@@ -565,7 +577,9 @@ export const clojure_coreSource = `\
               result
               (rf result input))))))))
   ([n coll]
-   (sequence (drop n) coll)))
+   (if (pos? n)
+     (lazy-seq (drop (dec n) (rest coll)))
+     (lazy-seq (seq coll)))))
 
 (defn drop-last
   "Return a sequence of all but the last n (default 1) items in coll"
@@ -599,7 +613,11 @@ export const clojure_coreSource = `\
               (vreset! dropping false)
               (rf result input))))))))
   ([pred coll]
-   (sequence (drop-while pred) coll)))
+   (lazy-seq
+     (let [s (seq coll)]
+       (if (and s (pred (first s)))
+         (drop-while pred (rest s))
+         s)))))
 
 ;; map-indexed: stateful transducer; passes index and item to f
 (defn map-indexed
@@ -617,7 +635,11 @@ export const clojure_coreSource = `\
          ([result input]
           (rf result (f (vswap! i inc) input)))))))
   ([f coll]
-   (sequence (map-indexed f) coll)))
+   (letfn [(step [i s]
+             (lazy-seq
+               (when-let [xs (seq s)]
+                 (cons (f i (first xs)) (step (inc i) (rest xs))))))]
+     (step 0 coll))))
 
 ;; dedupe: stateful transducer; removes consecutive duplicates
 (defn dedupe
@@ -688,10 +710,10 @@ export const clojure_coreSource = `\
                    (if args-str# (str args-str# "\\n") "")
                    "  " (or d# "No documentation available.")))))
 
-(defn err
+(defn make-err
   "Creates an error map with type, message, data and optionally cause"
-  ([type message] (err type message nil nil))
-  ([type message data] (err type message data nil))
+  ([type message] (make-err type message nil nil))
+  ([type message data] (make-err type message data nil))
   ([type message data cause] {:type type :message message :data data :cause cause}))
 
 ;; ── Sequence utilities ──────────────────────────────────────────────────────
@@ -707,6 +729,10 @@ export const clojure_coreSource = `\
 (defn fnext
   "Same as (first (next x))"
   [x] (first (next x)))
+
+(defn nfirst
+  "Same as (next (first x))"
+  [x] (next (first x)))
 
 (defn nnext
   "Same as (next (next x))"
@@ -774,7 +800,12 @@ export const clojure_coreSource = `\
             result
             (rf result v)))))))
   ([f coll]
-   (sequence (keep f) coll)))
+   (lazy-seq
+     (when-let [s (seq coll)]
+       (let [v (f (first s))]
+         (if (nil? v)
+           (keep f (rest s))
+           (cons v (keep f (rest s)))))))))
 
 (defn keep-indexed
   "Returns a sequence of the non-nil results of (f index item). Note,
@@ -792,7 +823,14 @@ export const clojure_coreSource = `\
               result
               (rf result v))))))))
   ([f coll]
-   (sequence (keep-indexed f) coll)))
+   (letfn [(step [i s]
+             (lazy-seq
+               (when-let [xs (seq s)]
+                 (let [v (f i (first xs))]
+                   (if (nil? v)
+                     (step (inc i) (rest xs))
+                     (cons v (step (inc i) (rest xs))))))))]
+     (step 0 coll))))
 
 (defn mapcat
   "Returns the result of applying concat to the result of applying map
@@ -806,21 +844,26 @@ export const clojure_coreSource = `\
                             ([result input]
                              (reduce rf result input))))]
        inner)))
-  ([f & colls]
-   (apply concat (apply map f colls))))
+  ([f coll]
+   (lazy-seq
+     (when-let [s (seq coll)]
+       (concat (f (first s)) (mapcat f (rest s))))))
+  ([f coll & more]
+   (apply concat (apply map f coll more))))
 
 (defn interleave
-  "Returns a sequence of the first item in each coll, then the second etc."
+  "Returns a lazy sequence of the first item in each coll, then the second etc.
+  Stops as soon as any coll is exhausted."
   ([c1 c2]
-   (loop [s1 (seq c1) s2 (seq c2) acc []]
-     (if (and s1 s2)
-       (recur (next s1) (next s2) (conj (conj acc (first s1)) (first s2)))
-       (seq acc))))
+   (lazy-seq
+     (let [s1 (seq c1) s2 (seq c2)]
+       (when (and s1 s2)
+         (cons (first s1) (cons (first s2) (interleave (rest s1) (rest s2))))))))
   ([c1 c2 & colls]
-   (loop [seqs (map seq (cons c1 (cons c2 colls))) acc []]
-     (if (every? some? seqs)
-       (recur (map next seqs) (into acc (map first seqs)))
-       (seq acc)))))
+   (lazy-seq
+     (let [seqs (map seq (cons c1 (cons c2 colls)))]
+       (when (every? some? seqs)
+         (concat (map first seqs) (apply interleave (map rest seqs))))))))
 
 (defn interpose
   "Returns a sequence of the elements of coll separated by sep.
@@ -841,34 +884,97 @@ export const clojure_coreSource = `\
               (vreset! started true)
               (rf result input))))))))
   ([sep coll]
-   (drop 1 (interleave (repeat (count coll) sep) coll))))
+   (drop 1 (interleave (repeat sep) coll))))
+
+;; ── Lazy concat (shadows native eager concat) ──────────────────────────────
+(defn concat
+  "Returns a lazy seq representing the concatenation of the elements in the
+  supplied colls."
+  ([] nil)
+  ([x] (lazy-seq (seq x)))
+  ([x y]
+   (lazy-seq
+     (let [s (seq x)]
+       (if s
+         (cons (first s) (concat (rest s) y))
+         (seq y)))))
+  ([x y & zs]
+   (let [cat (fn cat [xy zs]
+               (lazy-seq
+                 (let [xys (seq xy)]
+                   (if xys
+                     (cons (first xys) (cat (rest xys) zs))
+                     (when (seq zs)
+                       (cat (first zs) (next zs)))))))]
+     (cat (concat x y) zs))))
 
 (defn iterate
-  "Returns a sequence of x, (f x), (f (f x)) etc. f must be free of
-  side-effects. Note: returns a finite sequence of n items."
-  [f x n]
-  (loop [i 0 v x acc []]
-    (if (< i n)
-      (recur (inc i) (f v) (conj acc v))
-      acc)))
+  "Returns a lazy sequence of x, (f x), (f (f x)) etc.
+  With 3 args, returns a finite sequence of n items (backwards compat)."
+  ([f x]
+   (lazy-seq (cons x (iterate f (f x)))))
+  ([f x n]
+   (loop [i 0 v x acc []]
+     (if (< i n)
+       (recur (inc i) (f v) (conj acc v))
+       acc))))
 
 (defn repeatedly
   "Takes a function of no args, presumably with side effects, and
-  returns a sequence of n calls to it."
-  [n f]
-  (loop [i 0 acc []]
-    (if (< i n)
-      (recur (inc i) (conj acc (f)))
-      acc)))
+  returns a lazy infinite sequence of calls to it.
+  With 2 args (n f), returns a finite sequence of n calls."
+  ([f] (lazy-seq (cons (f) (repeatedly f))))
+  ([n f]
+   (loop [i 0 acc []]
+     (if (< i n)
+       (recur (inc i) (conj acc (f)))
+       acc))))
 
 (defn cycle
-  "Returns a sequence of n repetitions of the items in coll."
-  [n coll]
-  (let [s (into [] coll)]
-    (loop [i 0 acc []]
-      (if (< i n)
-        (recur (inc i) (into acc s))
-        acc))))
+  "Returns a lazy infinite sequence of repetitions of the items in coll.
+  With 2 args (n coll), returns a finite sequence (backwards compat)."
+  ([coll]
+   (lazy-seq
+     (when (seq coll)
+       (concat coll (cycle coll)))))
+  ([n coll]
+   (let [s (into [] coll)]
+     (loop [i 0 acc []]
+       (if (< i n)
+         (recur (inc i) (into acc s))
+         acc)))))
+
+(defn repeat
+  "Returns a lazy infinite sequence of xs.
+  With 2 args (n x), returns a finite sequence of n copies."
+  ([x] (lazy-seq (cons x (repeat x))))
+  ([n x] (repeat* n x)))
+
+(defn range
+  "Returns a lazy infinite sequence of integers from 0.
+  With args, returns a finite sequence (delegates to native range*)."
+  ([] (iterate inc 0))
+  ([end] (range* end))
+  ([start end] (range* start end))
+  ([start end step] (range* start end step)))
+
+(defn newline
+  "Writes a newline to *out*."
+  [] (println ""))
+
+(defn dorun
+  "Forces realization of a (possibly lazy) sequence. Walks the sequence
+  without retaining the head. Returns nil."
+  [coll]
+  (when (seq coll)
+    (recur (rest coll))))
+
+(defn doall
+  "Forces realization of a (possibly lazy) sequence. Unlike dorun,
+  retains the head and returns the seq."
+  [coll]
+  (dorun coll)
+  coll)
 
 (defn take-nth
   "Returns a sequence of every nth item in coll.  Returns a stateful
@@ -937,7 +1043,12 @@ export const clojure_coreSource = `\
                 (vreset! buf [input])
                 (rf result b)))))))))
   ([f coll]
-   (sequence (partition-by f) coll)))
+   (lazy-seq
+     (when-let [s (seq coll)]
+       (let [fv        (f (first s))
+             run       (into [] (cons (first s) (take-while #(= (f %) fv) (next s))))
+             remaining (drop-while #(= (f %) fv) (next s))]
+         (cons run (partition-by f remaining)))))))
 
 (defn reductions
   "Returns a sequence of the intermediate values of the reduction (as
@@ -1041,6 +1152,24 @@ export const clojure_coreSource = `\
      (if (fn? ret)
        (recur (ret))
        ret))))
+
+(defmacro with-redefs
+  "binding => var-symbol temp-value-expr
+  Temporarily redefines Vars while executing the body. The
+  temp-value-exprs will be evaluated and each resulting value will
+  replace in parallel the root value of its Var. Always restores
+  the original values, even if body throws."
+  [bindings & body]
+  (let [pairs     (partition 2 bindings)
+        names     (mapv first pairs)
+        new-vals  (mapv second pairs)
+        orig-syms (mapv (fn [_] (gensym "orig")) names)]
+    \`(let [~@(interleave orig-syms (map (fn [n] \`(var-get (var ~n))) names))]
+       (try
+         (do ~@(map (fn [n v] \`(alter-var-root (var ~n) (constantly ~v))) names new-vals)
+             ~@body)
+         (finally
+           ~@(map (fn [n o] \`(alter-var-root (var ~n) (constantly ~o))) names orig-syms))))))
 
 ;; ── Macros: conditionals and control flow ───────────────────────────────────
 

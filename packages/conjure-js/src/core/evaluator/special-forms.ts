@@ -13,7 +13,9 @@ import {
 import { define, extend, getNamespaceEnv, getRootEnv, internVar, lookup, lookupVar, makeEnv } from '../env'
 import { CljThrownSignal, EvaluationError } from '../errors'
 import {
+  cljDelay,
   cljKeyword,
+  cljLazySeq,
   cljMap,
   cljMultiArityFunction,
   cljMultiArityMacro,
@@ -70,6 +72,8 @@ export const specialFormKeywords = {
   binding: 'binding',
   'set!': 'set!',
   letfn: 'letfn',
+  delay: 'delay',
+  'lazy-seq': 'lazy-seq',
 } as const
 
 function keywordToDispatchFn(kw: CljKeyword): CljNativeFunction {
@@ -769,6 +773,24 @@ function evaluateSet(list: CljList, env: Env, ctx: EvaluationContext): CljValue 
   return newVal
 }
 
+function evaluateDelay(
+  list: CljList,
+  env: Env,
+  ctx: EvaluationContext
+): CljValue {
+  const body = list.value.slice(1)
+  return cljDelay(() => ctx.evaluateForms(body, env))
+}
+
+function evaluateLazySeqForm(
+  list: CljList,
+  env: Env,
+  ctx: EvaluationContext
+): CljValue {
+  const body = list.value.slice(1)
+  return cljLazySeq(() => ctx.evaluateForms(body, env))
+}
+
 type SpecialFormEvaluatorFn = (
   list: CljList,
   env: Env,
@@ -794,6 +816,8 @@ const specialFormEvaluatorEntries = {
   binding: evaluateBinding,
   'set!': evaluateSet,
   letfn: evaluateLetfn,
+  delay: evaluateDelay,
+  'lazy-seq': evaluateLazySeqForm,
 } as const satisfies Record<
   keyof typeof specialFormKeywords,
   SpecialFormEvaluatorFn

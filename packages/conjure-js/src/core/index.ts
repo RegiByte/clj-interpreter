@@ -28,6 +28,7 @@ export {
   cljMacro,
   cljMultiArityMacro,
   cljVar,
+  cljNamespace,
 } from './factories'
 
 // Assertions
@@ -47,6 +48,7 @@ export {
   isCollection,
   isEqual,
   isVar,
+  isNamespace,
 } from './assertions'
 
 // Env

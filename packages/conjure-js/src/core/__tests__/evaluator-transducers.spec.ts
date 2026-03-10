@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { cljBoolean, cljList, cljNil, cljNumber, cljVector } from '../factories'
-import { expectError, freshSession } from './evaluator-test-utils'
+import { expectError, freshSession, materialize } from './evaluator-test-utils'
 
 describe('reduced / unreduced / ensure-reduced', () => {
   it('(reduced 42) creates a reduced wrapper', () => {
@@ -256,7 +256,7 @@ describe('into with transducer', () => {
 describe('take-while transducer', () => {
   it('(take-while pos? [1 2 0 3]) stops at 0', () => {
     const s = freshSession()
-    expect(s.evaluate('(take-while pos? [1 2 0 3])')).toMatchObject(
+    expect(materialize(s.evaluate('(take-while pos? [1 2 0 3])'))).toMatchObject(
       cljList([cljNumber(1), cljNumber(2)])
     )
   })
@@ -268,7 +268,7 @@ describe('take-while transducer', () => {
 
   it('empty result when first element fails pred', () => {
     const s = freshSession()
-    expect(s.evaluate('(take-while pos? [-1 2 3])')).toMatchObject(
+    expect(materialize(s.evaluate('(take-while pos? [-1 2 3])'))).toMatchObject(
       cljList([])
     )
   })
@@ -293,14 +293,14 @@ describe('drop-last transducer', () => {
 describe('drop-while transducer', () => {
   it('(drop-while neg? [-1 -2 3 4]) skips negatives', () => {
     const s = freshSession()
-    expect(s.evaluate('(drop-while neg? [-1 -2 3 4])')).toMatchObject(
+    expect(materialize(s.evaluate('(drop-while neg? [-1 -2 3 4])'))).toMatchObject(
       cljList([cljNumber(3), cljNumber(4)])
     )
   })
 
   it('passes through everything once pred fails', () => {
     const s = freshSession()
-    expect(s.evaluate('(drop-while even? [2 4 5 6])')).toMatchObject(
+    expect(materialize(s.evaluate('(drop-while even? [2 4 5 6])'))).toMatchObject(
       cljList([cljNumber(5), cljNumber(6)])
     )
   })
@@ -318,7 +318,7 @@ describe('take-last transducer', () => {
 describe('map-indexed transducer', () => {
   it('(map-indexed vector [10 20 30]) adds index', () => {
     const s = freshSession()
-    expect(s.evaluate('(map-indexed vector [10 20 30])')).toMatchObject(
+    expect(materialize(s.evaluate('(map-indexed vector [10 20 30])'))).toMatchObject(
       cljList([
         cljVector([cljNumber(0), cljNumber(10)]),
         cljVector([cljNumber(1), cljNumber(20)]),

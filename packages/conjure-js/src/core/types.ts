@@ -18,6 +18,10 @@ export const valueKeywords = {
   regex: 'regex',
   var: 'var',
   set: 'set',
+  delay: 'delay',
+  lazySeq: 'lazy-seq',
+  cons: 'cons',
+  namespace: 'namespace',
 } as const
 export type ValueKeywords = (typeof valueKeywords)[keyof typeof valueKeywords]
 
@@ -31,6 +35,7 @@ export type CljList = { kind: 'list'; value: CljValue[]; meta?: CljMap }
 export type CljVector = { kind: 'vector'; value: CljValue[]; meta?: CljMap }
 export type CljMap = { kind: 'map'; entries: [CljValue, CljValue][]; meta?: CljMap }
 export type CljNamespace = {
+  kind: 'namespace'
   name: string
   vars: Map<string, CljVar>            // user defs from (def ...)
   aliases: Map<string, CljNamespace>   // :as namespace aliases
@@ -79,6 +84,27 @@ export type CljVolatile = { kind: 'volatile'; value: CljValue }
 export type CljRegex = { kind: 'regex'; pattern: string; flags: string }
 
 export type CljSet = { kind: 'set'; values: CljValue[] }
+
+export type CljDelay = {
+  kind: 'delay'
+  thunk: () => CljValue
+  realized: boolean
+  value?: CljValue
+}
+
+export type CljLazySeq = {
+  kind: 'lazy-seq'
+  thunk: (() => CljValue) | null
+  realized: boolean
+  value?: CljValue  // nil, list, cons, or another lazy-seq after realization
+}
+
+export type CljCons = {
+  kind: 'cons'
+  head: CljValue
+  tail: CljValue  // can be list, vector, lazy-seq, cons, or nil
+  meta?: CljMap
+}
 
 export type CljVar = {
   kind: 'var'
@@ -154,6 +180,10 @@ export type CljValue =
   | CljRegex
   | CljVar
   | CljSet
+  | CljDelay
+  | CljLazySeq
+  | CljCons
+  | CljNamespace
 
 /** Tokens */
 export const tokenKeywords = {

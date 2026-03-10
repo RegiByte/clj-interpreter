@@ -4,13 +4,11 @@ import { isAFunction } from '../assertions'
 import { EvaluationError } from '../errors'
 import {
   cljBoolean,
-  cljNativeFunction,
-  cljNativeFunctionWithContext,
   cljNil,
   cljNumber,
   cljString,
   cljVector,
-  withDoc,
+  v,
 } from '../factories'
 import { printString } from '../printer'
 import { valueToString } from '../transformations'
@@ -147,169 +145,156 @@ function doReplace(
 // ---------------------------------------------------------------------------
 
 export const stringFunctions: Record<string, CljValue> = {
-  'str-upper-case*': withDoc(
-    cljNativeFunction('str-upper-case*', function strUpperCaseImpl(sVal: CljValue) {
-      return cljString(assertStr(sVal, 'str-upper-case*').toUpperCase())
-    }),
+  'str-upper-case*': v.nativeFn('str-upper-case*', function strUpperCaseImpl(sVal: CljValue) {
+    return cljString(assertStr(sVal, 'str-upper-case*').toUpperCase())
+  }).doc(
     'Internal helper. Converts s to upper-case.',
     [['s']]
   ),
 
-  'str-lower-case*': withDoc(
-    cljNativeFunction('str-lower-case*', function strLowerCaseImpl(sVal: CljValue) {
-      return cljString(assertStr(sVal, 'str-lower-case*').toLowerCase())
-    }),
+  'str-lower-case*': v.nativeFn('str-lower-case*', function strLowerCaseImpl(sVal: CljValue) {
+    return cljString(assertStr(sVal, 'str-lower-case*').toLowerCase())
+  }).doc(
     'Internal helper. Converts s to lower-case.',
     [['s']]
   ),
 
-  'str-trim*': withDoc(
-    cljNativeFunction('str-trim*', function strTrimImpl(sVal: CljValue) {
-      return cljString(assertStr(sVal, 'str-trim*').trim())
-    }),
+  'str-trim*': v.nativeFn('str-trim*', function strTrimImpl(sVal: CljValue) {
+    return cljString(assertStr(sVal, 'str-trim*').trim())
+  }).doc(
     'Internal helper. Removes whitespace from both ends of s.',
     [['s']]
   ),
 
-  'str-triml*': withDoc(
-    cljNativeFunction('str-triml*', function strTrimlImpl(sVal: CljValue) {
-      return cljString(assertStr(sVal, 'str-triml*').trimStart())
-    }),
+  'str-triml*': v.nativeFn('str-triml*', function strTrimlImpl(sVal: CljValue) {
+    return cljString(assertStr(sVal, 'str-triml*').trimStart())
+  }).doc(
     'Internal helper. Removes whitespace from the left of s.',
     [['s']]
   ),
 
-  'str-trimr*': withDoc(
-    cljNativeFunction('str-trimr*', function strTrimrImpl(sVal: CljValue) {
-      return cljString(assertStr(sVal, 'str-trimr*').trimEnd())
-    }),
+  'str-trimr*': v.nativeFn('str-trimr*', function strTrimrImpl(sVal: CljValue) {
+    return cljString(assertStr(sVal, 'str-trimr*').trimEnd())
+  }).doc(
     'Internal helper. Removes whitespace from the right of s.',
     [['s']]
   ),
 
-  'str-reverse*': withDoc(
-    cljNativeFunction('str-reverse*', function strReverseImpl(sVal: CljValue) {
-      return cljString([...assertStr(sVal, 'str-reverse*')].reverse().join(''))
-    }),
+  'str-reverse*': v.nativeFn('str-reverse*', function strReverseImpl(sVal: CljValue) {
+    return cljString([...assertStr(sVal, 'str-reverse*')].reverse().join(''))
+  }).doc(
     'Internal helper. Returns s with its characters reversed (Unicode-safe).',
     [['s']]
   ),
 
-  'str-starts-with*': withDoc(
-    cljNativeFunction('str-starts-with*', function strStartsWithImpl(sVal: CljValue, substrVal: CljValue) {
-      const s = assertStr(sVal, 'str-starts-with*')
-      const substr = assertStrArg(substrVal, 'second', 'str-starts-with*')
-      return cljBoolean(s.startsWith(substr))
-    }),
+  'str-starts-with*': v.nativeFn('str-starts-with*', function strStartsWithImpl(sVal: CljValue, substrVal: CljValue) {
+    const s = assertStr(sVal, 'str-starts-with*')
+    const substr = assertStrArg(substrVal, 'second', 'str-starts-with*')
+    return cljBoolean(s.startsWith(substr))
+  }).doc(
     'Internal helper. Returns true if s starts with substr.',
     [['s', 'substr']]
   ),
 
-  'str-ends-with*': withDoc(
-    cljNativeFunction('str-ends-with*', function strEndsWithImpl(sVal: CljValue, substrVal: CljValue) {
-      const s = assertStr(sVal, 'str-ends-with*')
-      const substr = assertStrArg(substrVal, 'second', 'str-ends-with*')
-      return cljBoolean(s.endsWith(substr))
-    }),
+  'str-ends-with*': v.nativeFn('str-ends-with*', function strEndsWithImpl(sVal: CljValue, substrVal: CljValue) {
+    const s = assertStr(sVal, 'str-ends-with*')
+    const substr = assertStrArg(substrVal, 'second', 'str-ends-with*')
+    return cljBoolean(s.endsWith(substr))
+  }).doc(
     'Internal helper. Returns true if s ends with substr.',
     [['s', 'substr']]
   ),
 
-  'str-includes*': withDoc(
-    cljNativeFunction('str-includes*', function strIncludesImpl(sVal: CljValue, substrVal: CljValue) {
-      const s = assertStr(sVal, 'str-includes*')
-      const substr = assertStrArg(substrVal, 'second', 'str-includes*')
-      return cljBoolean(s.includes(substr))
-    }),
+  'str-includes*': v.nativeFn('str-includes*', function strIncludesImpl(sVal: CljValue, substrVal: CljValue) {
+    const s = assertStr(sVal, 'str-includes*')
+    const substr = assertStrArg(substrVal, 'second', 'str-includes*')
+    return cljBoolean(s.includes(substr))
+  }).doc(
     'Internal helper. Returns true if s contains substr.',
     [['s', 'substr']]
   ),
 
-  'str-index-of*': withDoc(
-    cljNativeFunction('str-index-of*', function strIndexOfImpl(sVal: CljValue, valVal: CljValue, fromVal?: CljValue) {
-      const s = assertStr(sVal, 'str-index-of*')
-      const needle = assertStrArg(valVal, 'second', 'str-index-of*')
-      let idx: number
-      if (fromVal !== undefined && fromVal.kind !== 'nil') {
-        if (fromVal.kind !== 'number') {
-          throw new EvaluationError(
-            `str-index-of* expects a number as third argument, got ${printString(fromVal)}`,
-            { fromVal }
-          )
-        }
-        idx = s.indexOf(needle, fromVal.value)
-      } else {
-        idx = s.indexOf(needle)
+  'str-index-of*': v.nativeFn('str-index-of*', function strIndexOfImpl(sVal: CljValue, valVal: CljValue, fromVal?: CljValue) {
+    const s = assertStr(sVal, 'str-index-of*')
+    const needle = assertStrArg(valVal, 'second', 'str-index-of*')
+    let idx: number
+    if (fromVal !== undefined && fromVal.kind !== 'nil') {
+      if (fromVal.kind !== 'number') {
+        throw new EvaluationError(
+          `str-index-of* expects a number as third argument, got ${printString(fromVal)}`,
+          { fromVal }
+        )
       }
-      return idx === -1 ? cljNil() : cljNumber(idx)
-    }),
+      idx = s.indexOf(needle, fromVal.value)
+    } else {
+      idx = s.indexOf(needle)
+    }
+    return idx === -1 ? cljNil() : cljNumber(idx)
+  }).doc(
     'Internal helper. Returns index of value in s, or nil if not found.',
     [['s', 'value'], ['s', 'value', 'from-index']]
   ),
 
-  'str-last-index-of*': withDoc(
-    cljNativeFunction(
-      'str-last-index-of*',
-      function strLastIndexOfImpl(sVal: CljValue, valVal: CljValue, fromVal?: CljValue) {
-        const s = assertStr(sVal, 'str-last-index-of*')
-        const needle = assertStrArg(valVal, 'second', 'str-last-index-of*')
-        let idx: number
-        if (fromVal !== undefined && fromVal.kind !== 'nil') {
-          if (fromVal.kind !== 'number') {
-            throw new EvaluationError(
-              `str-last-index-of* expects a number as third argument, got ${printString(fromVal)}`,
-              { fromVal }
-            )
-          }
-          idx = s.lastIndexOf(needle, fromVal.value)
-        } else {
-          idx = s.lastIndexOf(needle)
+  'str-last-index-of*': v.nativeFn(
+    'str-last-index-of*',
+    function strLastIndexOfImpl(sVal: CljValue, valVal: CljValue, fromVal?: CljValue) {
+      const s = assertStr(sVal, 'str-last-index-of*')
+      const needle = assertStrArg(valVal, 'second', 'str-last-index-of*')
+      let idx: number
+      if (fromVal !== undefined && fromVal.kind !== 'nil') {
+        if (fromVal.kind !== 'number') {
+          throw new EvaluationError(
+            `str-last-index-of* expects a number as third argument, got ${printString(fromVal)}`,
+            { fromVal }
+          )
         }
-        return idx === -1 ? cljNil() : cljNumber(idx)
+        idx = s.lastIndexOf(needle, fromVal.value)
+      } else {
+        idx = s.lastIndexOf(needle)
       }
-    ),
+      return idx === -1 ? cljNil() : cljNumber(idx)
+    }
+  ).doc(
     'Internal helper. Returns last index of value in s, or nil if not found.',
     [['s', 'value'], ['s', 'value', 'from-index']]
   ),
 
-  'str-replace*': withDoc(
-    cljNativeFunctionWithContext(
-      'str-replace*',
-      function strReplaceImpl(
-        ctx: EvaluationContext,
-        callEnv: Env,
-        sVal: CljValue,
-        matchVal: CljValue,
-        replVal: CljValue
-      ) {
-        return doReplace(ctx, callEnv, 'str-replace*', sVal, matchVal, replVal, true)
-      }
-    ),
+  'str-replace*': v.nativeFnCtx(
+    'str-replace*',
+    function strReplaceImpl(
+      ctx: EvaluationContext,
+      callEnv: Env,
+      sVal: CljValue,
+      matchVal: CljValue,
+      replVal: CljValue
+    ) {
+      return doReplace(ctx, callEnv, 'str-replace*', sVal, matchVal, replVal, true)
+    }
+  ).doc(
     'Internal helper. Replaces all occurrences of match with replacement in s.',
     [['s', 'match', 'replacement']]
   ),
 
-  'str-replace-first*': withDoc(
-    cljNativeFunctionWithContext(
-      'str-replace-first*',
-      function strReplaceFirstImpl(
-        ctx: EvaluationContext,
-        callEnv: Env,
-        sVal: CljValue,
-        matchVal: CljValue,
-        replVal: CljValue
-      ) {
-        return doReplace(
-          ctx,
-          callEnv,
-          'str-replace-first*',
-          sVal,
-          matchVal,
-          replVal,
-          false
-        )
-      }
-    ),
+  'str-replace-first*': v.nativeFnCtx(
+    'str-replace-first*',
+    function strReplaceFirstImpl(
+      ctx: EvaluationContext,
+      callEnv: Env,
+      sVal: CljValue,
+      matchVal: CljValue,
+      replVal: CljValue
+    ) {
+      return doReplace(
+        ctx,
+        callEnv,
+        'str-replace-first*',
+        sVal,
+        matchVal,
+        replVal,
+        false
+      )
+    }
+  ).doc(
     'Internal helper. Replaces the first occurrence of match with replacement in s.',
     [['s', 'match', 'replacement']]
   ),

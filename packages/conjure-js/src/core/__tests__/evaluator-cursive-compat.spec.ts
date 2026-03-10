@@ -72,32 +72,31 @@ describe('qualified macro calls', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Namespace introspection stubs
+// Namespace introspection
 //
-// *ns*, ns-name, all-ns, find-ns are used by Cursive's completions function.
-// They are stubs: namespaces are represented as symbols (their name string),
-// not as first-class namespace objects. Sufficient for IDE tooling probes.
+// *ns* holds a first-class CljNamespace value (kind: 'namespace').
+// ns-name, all-ns, find-ns, the-ns work with namespace objects.
 // ---------------------------------------------------------------------------
 
 describe('*ns*', () => {
-  it('is a symbol in the default user namespace', () => {
+  it('is a namespace object in the default user namespace', () => {
     const s = freshSession()
     const result = s.evaluate('*ns*')
-    expect(result).toMatchObject({ kind: 'symbol', name: 'user' })
+    expect(result).toMatchObject({ kind: 'namespace', name: 'user' })
   })
 
   it('updates when ns is switched via setNs', () => {
     const s = freshSession()
     s.setNs('my.app')
     const result = s.evaluate('*ns*')
-    expect(result).toMatchObject({ kind: 'symbol', name: 'my.app' })
+    expect(result).toMatchObject({ kind: 'namespace', name: 'my.app' })
   })
 
   it('updates when evaluate processes an ns declaration', () => {
     const s = freshSession()
     s.evaluate('(ns my.other.ns)')
     const result = s.evaluate('*ns*')
-    expect(result).toMatchObject({ kind: 'symbol', name: 'my.other.ns' })
+    expect(result).toMatchObject({ kind: 'namespace', name: 'my.other.ns' })
   })
 })
 
@@ -142,29 +141,28 @@ describe('all-ns', () => {
 
   it('includes clojure.core', () => {
     const s = freshSession()
-    // some returns the truthy pred result; = returns boolean true when matched
-    const result = s.evaluate("(some #(= % 'clojure.core) (all-ns))")
+    const result = s.evaluate("(some #(= (ns-name %) 'clojure.core) (all-ns))")
     expect(result).toMatchObject({ kind: 'boolean', value: true })
   })
 
   it('includes user namespace', () => {
     const s = freshSession()
-    const result = s.evaluate("(some #(= % 'user) (all-ns))")
+    const result = s.evaluate("(some #(= (ns-name %) 'user) (all-ns))")
     expect(result).toMatchObject({ kind: 'boolean', value: true })
   })
 
-  it('contains symbols', () => {
+  it('contains namespace objects', () => {
     const s = freshSession()
-    const result = s.evaluate('(every? symbol? (all-ns))')
+    const result = s.evaluate('(every? namespace? (all-ns))')
     expect(result).toMatchObject({ kind: 'boolean', value: true })
   })
 })
 
 describe('find-ns', () => {
-  it('returns the symbol when namespace exists', () => {
+  it('returns a namespace object when namespace exists', () => {
     const s = freshSession()
     const result = s.evaluate("(find-ns 'clojure.core)")
-    expect(result).toMatchObject({ kind: 'symbol', name: 'clojure.core' })
+    expect(result).toMatchObject({ kind: 'namespace', name: 'clojure.core' })
   })
 
   it('returns nil when namespace does not exist', () => {
@@ -185,7 +183,7 @@ describe('find-ns', () => {
     // Switch back to user so we can call find-ns from there
     s.setNs('user')
     const result = s.evaluate("(find-ns 'my.new.ns)")
-    expect(result).toMatchObject({ kind: 'symbol', name: 'my.new.ns' })
+    expect(result).toMatchObject({ kind: 'namespace', name: 'my.new.ns' })
   })
 })
 
@@ -211,7 +209,7 @@ describe('ns-aliases', () => {
     s.evaluate('(ns my.aliased (:require [clojure.string :as str]))')
     s.setNs('user')
     const result = s.evaluate("(get (ns-aliases 'my.aliased) 'str)")
-    expect(result).toMatchObject({ kind: 'symbol', name: 'clojure.string' })
+    expect(result).toMatchObject({ kind: 'namespace', name: 'clojure.string' })
   })
 
   it('returns empty map for unknown namespace', () => {
@@ -348,10 +346,10 @@ describe('ns-imports', () => {
 })
 
 describe('the-ns', () => {
-  it('returns the symbol for a known namespace', () => {
+  it('returns a namespace object for a known namespace', () => {
     const s = freshSession()
     const result = s.evaluate("(the-ns 'clojure.core)")
-    expect(result).toMatchObject({ kind: 'symbol', name: 'clojure.core' })
+    expect(result).toMatchObject({ kind: 'namespace', name: 'clojure.core' })
   })
 
   it('returns nil for unknown namespace', () => {

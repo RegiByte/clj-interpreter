@@ -34,6 +34,10 @@ export function evaluateWithContext(
       case valueKeywords.multiMethod:
       case valueKeywords.boolean:
       case valueKeywords.regex:
+      case valueKeywords.delay:
+      case valueKeywords.lazySeq:
+      case valueKeywords.cons:
+      case valueKeywords.namespace:
         return expr
       case valueKeywords.symbol: {
         const slashIdx = expr.name.indexOf('/')

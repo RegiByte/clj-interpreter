@@ -1,6 +1,7 @@
-import { isList, isSymbol, isVector } from '../assertions'
+import { isCons, isList, isLazySeq, isNil, isSymbol, isVector } from '../assertions'
 import { EvaluationError } from '../errors'
 import { cljList, cljMap, cljVector } from '../factories'
+import { toSeq } from '../transformations'
 import { makeGensym } from '../gensym'
 import {
   type CljValue,
@@ -40,13 +41,18 @@ export function evaluateQuasiquote(
           elem.value[0].name === 'unquote-splicing'
         ) {
           const toSplice = ctx.evaluate(elem.value[1], env)
-          if (!isList(toSplice) && !isVector(toSplice)) {
+          if (isList(toSplice) || isVector(toSplice)) {
+            elements.push(...toSplice.value)
+          } else if (isLazySeq(toSplice) || isCons(toSplice)) {
+            elements.push(...toSeq(toSplice))
+          } else if (isNil(toSplice)) {
+            // nil splices as empty — nothing to push
+          } else {
             throw new EvaluationError(
-              'Unquote-splicing must evaluate to a list or vector',
+              'Unquote-splicing must evaluate to a seqable',
               { elem, env }
             )
           }
-          elements.push(...toSplice.value)
           continue
         }
         // Otherwise, recursively evaluate the quasiquote

@@ -1,10 +1,29 @@
-import { isKeyword, isList, isSymbol, isVector } from './assertions'
+import { isKeyword, isList, isNamespace, isSymbol, isVector } from './assertions'
 import { loadCoreFunctions } from './core-env'
-import { define, internVar, lookup, lookupVar, makeEnv, makeNamespace, tryLookup } from './env'
+import {
+  define,
+  internVar,
+  lookup,
+  lookupVar,
+  makeEnv,
+  makeNamespace,
+  tryLookup,
+} from './env'
 import { valueToString } from './transformations'
 import { createEvaluationContext, RecurSignal } from './evaluator'
 import { CljThrownSignal, EvaluationError, ReaderError } from './errors'
-import { cljBoolean, cljKeyword, cljList, cljMap, cljNativeFunction, cljNativeFunctionWithContext, cljNil, cljSet, cljString, cljSymbol } from './factories'
+import {
+  cljBoolean,
+  cljKeyword,
+  cljList,
+  cljMap,
+  cljNativeFunction,
+  cljNativeFunctionWithContext,
+  cljNil,
+  cljSet,
+  cljString,
+  cljSymbol,
+} from './factories'
 import { formatErrorContext } from './positions'
 import { prettyPrintString, printString, withPrintContext } from './printer'
 import { readForms } from './reader'
@@ -27,7 +46,10 @@ export type Session = {
   setNs: (namespace: string) => void
   getNs: (namespace: string) => CljNamespace | null
   loadFile: (source: string, nsName?: string, filePath?: string) => string
-  evaluate: (source: string, opts?: { lineOffset?: number; colOffset?: number; file?: string }) => CljValue
+  evaluate: (
+    source: string,
+    opts?: { lineOffset?: number; colOffset?: number; file?: string }
+  ) => CljValue
   evaluateForms: (forms: CljValue[]) => CljValue
   addSourceRoot: (path: string) => void
   getCompletions: (prefix: string, nsName?: string) => string[]
@@ -107,7 +129,11 @@ function extractAliasMapFromTokens(tokens: Token[]): Map<string, string> {
 
 function findNsForm(forms: CljValue[]) {
   const nsForm = forms.find(
-    (f) => isList(f) && isSymbol(f.value[0]) && f.value[0].name === 'ns'
+    (f) =>
+      isList(f) &&
+      f.value.length > 0 &&
+      isSymbol(f.value[0]) &&
+      f.value[0].name === 'ns'
   )
   if (!nsForm || !isList(nsForm)) return null
   return nsForm
@@ -284,6 +310,7 @@ function cloneEnv(env: Env, memo: Map<Env, Env>): Env {
   }
   if (env.ns) {
     cloned.ns = {
+      kind: 'namespace',
       name: env.ns.name,
       vars: new Map([...env.ns.vars].map(([k, v]) => [k, { ...v }])),
       aliases: new Map(), // wired in cloneRegistry pass 2
@@ -393,7 +420,9 @@ function buildSessionApi(
       (_ctx, callEnv, form: CljValue, widthArg?: CljValue) => {
         if (form === undefined) return cljNil()
         const maxWidth =
-          widthArg !== undefined && widthArg.kind === 'number' ? widthArg.value : 80
+          widthArg !== undefined && widthArg.kind === 'number'
+            ? widthArg.value
+            : 80
         withPrintContext(readPrintCtx(callEnv), () => {
           emitFn(prettyPrintString(form, maxWidth) + '\n')
         })
@@ -415,7 +444,9 @@ function buildSessionApi(
   const reflectEnv = ensureNs('clojure.reflect')
   internVar(
     'parse-flags',
-    cljNativeFunction('parse-flags', (_flags: CljValue, _kind: CljValue) => cljSet([])),
+    cljNativeFunction('parse-flags', (_flags: CljValue, _kind: CljValue) =>
+      cljSet([])
+    ),
     reflectEnv
   )
   internVar(
@@ -425,7 +456,10 @@ function buildSessionApi(
   )
   internVar(
     'type-reflect',
-    cljNativeFunction('type-reflect', (_typeobj: CljValue, ..._opts: CljValue[]) => cljMap([])),
+    cljNativeFunction(
+      'type-reflect',
+      (_typeobj: CljValue, ..._opts: CljValue[]) => cljMap([])
+    ),
     reflectEnv
   )
 
@@ -437,30 +471,27 @@ function buildSessionApi(
     cljNativeFunction('completions', (..._args: CljValue[]) => cljNil()),
     cursiveEnv
   )
-  internVar(
-    '*compiler-options*',
-    cljMap([]),
-    coreEnv
-  )
+  internVar('*compiler-options*', cljMap([]), coreEnv)
 
-  // Namespace introspection stubs — clojure.core functions used by Cursive and
-  // other tooling. CljNamespace is not a CljValue (no { kind: 'namespace' } variant
-  // exists), so namespaces are represented as symbols here. This is sufficient for
-  // IDE probes but diverges from Clojure semantics where *ns* holds a namespace
-  // object. A proper namespace-as-value type is a future gap to address.
-  internVar('*ns*', cljSymbol(currentNs), coreEnv)
+  // *ns* holds the current namespace as a first-class CljNamespace value.
+  const initialNsObj = registry.get(currentNs)?.ns ?? makeNamespace(currentNs)
+  internVar('*ns*', initialNsObj, coreEnv)
   const nsVar = coreEnv.ns?.vars.get('*ns*')
   if (nsVar) nsVar.dynamic = true
 
   function syncNsVar(name: string) {
-    const v = coreEnv.ns?.vars.get('*ns*')
-    if (v) v.value = cljSymbol(name)
+    const nsVarInner = coreEnv.ns?.vars.get('*ns*')
+    if (nsVarInner) {
+      const nsObj = registry.get(name)?.ns
+      if (nsObj) nsVarInner.value = nsObj
+    }
   }
 
   internVar(
     'ns-name',
     cljNativeFunction('ns-name', (x: CljValue) => {
       if (x === undefined) return cljNil()
+      if (x.kind === 'namespace') return cljSymbol(x.name)
       if (x.kind === 'symbol') return x
       if (x.kind === 'string') return cljSymbol(x.value)
       return cljNil()
@@ -471,7 +502,7 @@ function buildSessionApi(
   internVar(
     'all-ns',
     cljNativeFunction('all-ns', () =>
-      cljList([...registry.keys()].map(cljSymbol))
+      cljList([...registry.values()].map(env => env.ns!).filter(Boolean))
     ),
     coreEnv
   )
@@ -480,18 +511,20 @@ function buildSessionApi(
     'find-ns',
     cljNativeFunction('find-ns', (sym: CljValue) => {
       if (sym === undefined || !isSymbol(sym)) return cljNil()
-      return registry.has(sym.name) ? sym : cljNil()
+      return registry.get(sym.name)?.ns ?? cljNil()
     }),
     coreEnv
   )
 
-  // Helper: resolve a namespace symbol to its CljNamespace, or null.
+  // Helper: resolve a namespace symbol (or namespace object) to its CljNamespace, or null.
   function resolveNsSym(sym: CljValue): CljNamespace | null {
-    if (sym === undefined || !isSymbol(sym)) return null
+    if (sym === undefined) return null
+    if (isNamespace(sym)) return sym
+    if (!isSymbol(sym)) return null
     return registry.get(sym.name)?.ns ?? null
   }
 
-  // ns-aliases: (ns-aliases ns-sym) → map of {alias-sym → ns-sym}
+  // ns-aliases: (ns-aliases ns-sym) → map of {alias-sym → namespace}
   internVar(
     'ns-aliases',
     cljNativeFunction('ns-aliases', (sym: CljValue) => {
@@ -499,14 +532,14 @@ function buildSessionApi(
       if (!ns) return cljMap([])
       const entries: [CljValue, CljValue][] = []
       ns.aliases.forEach((targetNs, alias) => {
-        entries.push([cljSymbol(alias), cljSymbol(targetNs.name)])
+        entries.push([cljSymbol(alias), targetNs])
       })
       return cljMap(entries)
     }),
     coreEnv
   )
 
-  // ns-interns: (ns-interns ns-sym) → map of {sym → var} for all vars defined in ns
+  // ns-interns: (ns-interns ns-sym) → map of {sym → var} for vars defined in ns (not referred)
   internVar(
     'ns-interns',
     cljNativeFunction('ns-interns', (sym: CljValue) => {
@@ -514,15 +547,14 @@ function buildSessionApi(
       if (!ns) return cljMap([])
       const entries: [CljValue, CljValue][] = []
       ns.vars.forEach((v, name) => {
-        entries.push([cljSymbol(name), v])
+        if (v.ns === ns.name) entries.push([cljSymbol(name), v])
       })
       return cljMap(entries)
     }),
     coreEnv
   )
 
-  // ns-publics: (ns-publics ns-sym) → map of {sym → var} for non-private vars.
-  // No :private metadata concept yet — identical to ns-interns for now.
+  // ns-publics: (ns-publics ns-sym) → map of {sym → var} for non-private interns.
   internVar(
     'ns-publics',
     cljNativeFunction('ns-publics', (sym: CljValue) => {
@@ -530,7 +562,7 @@ function buildSessionApi(
       if (!ns) return cljMap([])
       const entries: [CljValue, CljValue][] = []
       ns.vars.forEach((v, name) => {
-        entries.push([cljSymbol(name), v])
+        if (v.ns === ns.name) entries.push([cljSymbol(name), v])
       })
       return cljMap(entries)
     }),
@@ -538,11 +570,17 @@ function buildSessionApi(
   )
 
   // ns-refers: (ns-refers ns-sym) → map of {sym → var} for vars referred from other namespaces.
-  // :refer bindings are live aliases in the ns env's bindings, not tracked separately.
-  // Return an empty map — Cursive degrades gracefully.
   internVar(
     'ns-refers',
-    cljNativeFunction('ns-refers', (_sym: CljValue) => cljMap([])),
+    cljNativeFunction('ns-refers', (sym: CljValue) => {
+      const ns = resolveNsSym(sym)
+      if (!ns) return cljMap([])
+      const entries: [CljValue, CljValue][] = []
+      ns.vars.forEach((v, name) => {
+        if (v.ns !== ns.name) entries.push([cljSymbol(name), v])
+      })
+      return cljMap(entries)
+    }),
     coreEnv
   )
 
@@ -571,13 +609,14 @@ function buildSessionApi(
   )
 
   // the-ns: (the-ns sym) → coerce to namespace object.
-  // We represent namespaces as symbols, so this is identity for symbols.
-  // Returns nil for unknown namespaces.
+  // Returns a CljNamespace for known namespaces, nil otherwise.
   internVar(
     'the-ns',
     cljNativeFunction('the-ns', (sym: CljValue) => {
-      if (sym === undefined || !isSymbol(sym)) return cljNil()
-      return registry.has(sym.name) ? sym : cljNil()
+      if (sym === undefined) return cljNil()
+      if (isNamespace(sym)) return sym
+      if (!isSymbol(sym)) return cljNil()
+      return registry.get(sym.name)?.ns ?? cljNil()
     }),
     coreEnv
   )
@@ -587,7 +626,9 @@ function buildSessionApi(
   // e.g. (instance? clojure.lang.Var x); our var? predicate is the correct test.
   internVar(
     'instance?',
-    cljNativeFunction('instance?', (_cls: CljValue, _obj: CljValue) => cljBoolean(false)),
+    cljNativeFunction('instance?', (_cls: CljValue, _obj: CljValue) =>
+      cljBoolean(false)
+    ),
     coreEnv
   )
 
@@ -615,9 +656,28 @@ function buildSessionApi(
     cljNativeFunction('special-symbol?', (sym: CljValue) => {
       if (sym === undefined || !isSymbol(sym)) return cljBoolean(false)
       const specials = new Set([
-        'def', 'if', 'do', 'let', 'quote', 'var', 'fn', 'loop', 'recur',
-        'throw', 'try', 'catch', 'finally', 'ns', 'defmacro', 'binding',
-        'monitor-enter', 'monitor-exit', 'new', 'set!', '.', 'import',
+        'def',
+        'if',
+        'do',
+        'let',
+        'quote',
+        'var',
+        'fn',
+        'loop',
+        'recur',
+        'throw',
+        'try',
+        'catch',
+        'finally',
+        'ns',
+        'defmacro',
+        'binding',
+        'monitor-enter',
+        'monitor-exit',
+        'new',
+        'set!',
+        '.',
+        'import',
       ])
       return cljBoolean(specials.has(sym.name))
     }),
@@ -639,10 +699,30 @@ function buildSessionApi(
   // keyword sentinels so they resolve without error; instance? always returns
   // false, so no branch that checks (instance? Class x) will fire.
   for (const javaClass of [
-    'Class', 'Object', 'String', 'Number', 'Boolean', 'Integer', 'Long',
-    'Double', 'Float', 'Byte', 'Short', 'Character', 'Void',
-    'Math', 'System', 'Runtime', 'Thread', 'Throwable', 'Exception', 'Error',
-    'Iterable', 'Comparable', 'Runnable', 'Cloneable',
+    'Class',
+    'Object',
+    'String',
+    'Number',
+    'Boolean',
+    'Integer',
+    'Long',
+    'Double',
+    'Float',
+    'Byte',
+    'Short',
+    'Character',
+    'Void',
+    'Math',
+    'System',
+    'Runtime',
+    'Thread',
+    'Throwable',
+    'Exception',
+    'Error',
+    'Iterable',
+    'Comparable',
+    'Runnable',
+    'Cloneable',
   ]) {
     internVar(javaClass, cljKeyword(`:java.lang/${javaClass}`), coreEnv)
   }
@@ -744,7 +824,11 @@ function buildSessionApi(
     }
   }
 
-  function loadFile(source: string, nsName?: string, filePath?: string): string {
+  function loadFile(
+    source: string,
+    nsName?: string,
+    filePath?: string
+  ): string {
     const tokens = tokenize(source)
     const targetNs = extractNsNameFromTokens(tokens) ?? nsName ?? 'user'
     const aliasMap = extractAliasMapFromTokens(tokens)
@@ -776,11 +860,14 @@ function buildSessionApi(
     getNs,
     loadFile,
     addSourceRoot,
-    evaluate(source: string, opts?: { lineOffset?: number; colOffset?: number; file?: string }) {
+    evaluate(
+      source: string,
+      opts?: { lineOffset?: number; colOffset?: number; file?: string }
+    ) {
       ctx.currentSource = source
       ctx.currentFile = opts?.file
       ctx.currentLineOffset = opts?.lineOffset ?? 0
-      ctx.currentColOffset  = opts?.colOffset  ?? 0
+      ctx.currentColOffset = opts?.colOffset ?? 0
       try {
         const tokens = tokenize(source)
         // If source opens with an ns declaration, switch to that namespace
@@ -828,7 +915,7 @@ function buildSessionApi(
         ) {
           e.message += formatErrorContext(source, e.pos, {
             lineOffset: ctx.currentLineOffset,
-            colOffset:  ctx.currentColOffset,
+            colOffset: ctx.currentColOffset,
           })
         }
         throw e

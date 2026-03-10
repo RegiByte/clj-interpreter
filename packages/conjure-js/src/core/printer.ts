@@ -1,5 +1,63 @@
 import { EvaluationError } from './errors'
+import type { CljCons, CljLazySeq } from './types'
 import { valueKeywords, type CljMultiMethod, type CljValue } from './types'
+
+const LAZY_PRINT_CAP = 100
+
+/** Realize a lazy-seq (local copy to avoid circular dep with transformations). */
+function realizeLazy(ls: CljLazySeq): CljValue {
+  let current: CljValue = ls
+  while (current.kind === 'lazy-seq') {
+    const lazy = current as CljLazySeq
+    if (lazy.realized) { current = lazy.value!; continue }
+    if (lazy.thunk) {
+      lazy.value = lazy.thunk()
+      lazy.thunk = null
+      lazy.realized = true
+      current = lazy.value!
+    } else {
+      return { kind: 'nil', value: null }
+    }
+  }
+  return current
+}
+
+/** Walk a lazy/cons chain collecting up to `limit` elements for printing. */
+function collectSeqElements(value: CljValue, limit: number, depth: number): { items: string[]; truncated: boolean } {
+  const items: string[] = []
+  let current = value
+  while (items.length < limit) {
+    if (current.kind === 'nil') break
+    if (current.kind === 'lazy-seq') {
+      current = realizeLazy(current as CljLazySeq)
+      continue
+    }
+    if (current.kind === 'cons') {
+      const c = current as CljCons
+      items.push(printString(c.head, depth + 1))
+      current = c.tail
+      continue
+    }
+    if (current.kind === 'list') {
+      for (const v of current.value) {
+        if (items.length >= limit) break
+        items.push(printString(v, depth + 1))
+      }
+      break
+    }
+    if (current.kind === 'vector') {
+      for (const v of current.value) {
+        if (items.length >= limit) break
+        items.push(printString(v, depth + 1))
+      }
+      break
+    }
+    // Unknown tail — just print it
+    items.push(printString(current, depth + 1))
+    break
+  }
+  return { items, truncated: items.length >= limit }
+}
 
 // --- Print context (*print-length* / *print-level*) ---
 // Single-threaded JS: module-level state is safe.
@@ -27,7 +85,8 @@ export function printString(value: CljValue, _depth = 0): string {
   if (printLevel !== null && _depth >= printLevel) {
     if (
       value.kind === 'list' || value.kind === 'vector' ||
-      value.kind === 'map' || value.kind === 'set'
+      value.kind === 'map' || value.kind === 'set' ||
+      value.kind === 'cons' || value.kind === 'lazy-seq'
     ) return '#'
   }
   return printStringImpl(value, _depth)
@@ -126,6 +185,19 @@ function printStringImpl(value: CljValue, depth: number): string {
       const suffix = printLength !== null && value.values.length > printLength ? ' ...' : ''
       return `#{${items.map(v => printString(v, depth + 1)).join(' ')}${suffix}}`
     }
+    case valueKeywords.delay:
+      if (value.realized) return `#<Delay @${printString(value.value!, depth + 1)}>`
+      return '#<Delay pending>'
+    case valueKeywords.lazySeq:
+    case valueKeywords.cons: {
+      const { printLength } = _printCtx
+      const limit = printLength !== null ? printLength : LAZY_PRINT_CAP
+      const { items, truncated } = collectSeqElements(value, limit, depth)
+      const suffix = truncated ? ' ...' : ''
+      return `(${items.join(' ')}${suffix})`
+    }
+    case valueKeywords.namespace:
+      return `#namespace[${value.name}]`
     default:
       throw new EvaluationError(`unhandled value type: ${value.kind}`, {
         value,
@@ -186,6 +258,10 @@ function pp(value: CljValue, col: number, maxWidth: number): string {
       return ppMap(value.entries, col, maxWidth)
     case valueKeywords.set:
       return ppSet(value.values, col, maxWidth)
+    case valueKeywords.lazySeq:
+    case valueKeywords.cons:
+      // Flat representation is already computed above; no deeper pretty-print needed
+      return flat
     default:
       return flat
   }

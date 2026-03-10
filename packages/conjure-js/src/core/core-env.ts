@@ -12,6 +12,7 @@ import { regexFunctions } from './stdlib/regex'
 import { stringFunctions } from './stdlib/strings'
 import { transducerFunctions } from './stdlib/transducers'
 import { utilFunctions } from './stdlib/utils'
+import { lazyFunctions } from './stdlib/lazy'
 import { varFunctions } from './stdlib/vars'
 import { valueToString } from './transformations'
 import { type CljValue, type Env, type EvaluationContext } from './types'
@@ -29,6 +30,7 @@ const nativeFunctions = {
   ...stringFunctions,
   ...utilFunctions,
   ...varFunctions,
+  ...lazyFunctions,
 }
 
 export function loadCoreFunctions(env: Env, output?: (text: string) => void) {

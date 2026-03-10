@@ -1,7 +1,8 @@
 import { expect } from 'vitest'
-import { isCljValue, isEqual } from '../assertions'
+import { isCljValue, isCons, isEqual, isLazySeq, isNil } from '../assertions'
 import {
   cljBoolean,
+  cljList,
   cljMap,
   cljNil,
   cljNumber,
@@ -11,6 +12,22 @@ import {
 import { EvaluationError } from '../errors'
 import type { CljMap, CljValue } from '../types'
 import { createSession, createSessionFromSnapshot, snapshotSession } from '../session'
+import { toSeq } from '../transformations'
+
+/** Recursively convert lazy-seqs/cons to flat lists for test comparisons. */
+export function materialize(value: CljValue): CljValue {
+  if (isLazySeq(value) || isCons(value)) {
+    const items = toSeq(value)
+    return cljList(items.map(materialize))
+  }
+  if (value.kind === 'list') {
+    return cljList(value.value.map(materialize))
+  }
+  if (value.kind === 'vector') {
+    return cljVector(value.value.map(materialize))
+  }
+  return value
+}
 
 const _snapshot = snapshotSession(createSession())
 

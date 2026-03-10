@@ -2,12 +2,16 @@ import {
   valueKeywords,
   type CljAtom,
   type CljBoolean,
+  type CljCons,
+  type CljDelay,
   type CljFunction,
   type CljKeyword,
+  type CljLazySeq,
   type CljList,
   type CljMacro,
   type CljMap,
   type CljMultiMethod,
+  type CljNamespace,
   type CljNativeFunction,
   type CljNumber,
   type CljReduced,
@@ -71,15 +75,23 @@ export const isRegex = (value: CljValue): value is CljRegex =>
 export const isVar = (value: CljValue): value is CljVar => value.kind === 'var'
 export const isSet = (value: CljValue): value is CljSet =>
   value.kind === valueKeywords.set
+export const isDelay = (value: CljValue): value is CljDelay =>
+  value.kind === 'delay'
+export const isLazySeq = (value: CljValue): value is CljLazySeq =>
+  value.kind === 'lazy-seq'
+export const isCons = (value: CljValue): value is CljCons =>
+  value.kind === 'cons'
+export const isNamespace = (value: CljValue): value is CljNamespace =>
+  value.kind === 'namespace'
 export const isCollection = (
   value: CljValue
-): value is CljList | CljVector | CljMap | CljSet =>
-  isVector(value) || isMap(value) || isList(value) || isSet(value)
+): value is CljList | CljVector | CljMap | CljSet | CljCons =>
+  isVector(value) || isMap(value) || isList(value) || isSet(value) || isCons(value)
 
 export const isSeqable = (
   value: CljValue
-): value is CljList | CljVector | CljMap | CljSet | CljString =>
-  isCollection(value) || value.kind === 'string'
+): value is CljList | CljVector | CljMap | CljSet | CljString | CljLazySeq | CljCons =>
+  isCollection(value) || value.kind === 'string' || isLazySeq(value)
 
 export const isCljValue = (value: any): value is CljValue => {
   return (
@@ -88,6 +100,26 @@ export const isCljValue = (value: any): value is CljValue => {
     'kind' in value &&
     value.kind in valueKeywords
   )
+}
+
+/** Realize a lazy-seq for equality comparison (trampoline to handle chains). */
+function realizeLazySeqForEquality(ls: CljLazySeq): CljValue {
+  let current: CljValue = ls
+  while (current.kind === 'lazy-seq') {
+    const lazy = current as CljLazySeq
+    if (lazy.realized) {
+      current = lazy.value!
+    } else if (lazy.thunk) {
+      lazy.value = lazy.thunk()
+      lazy.thunk = null
+      lazy.realized = true
+      current = lazy.value!
+    } else {
+      // No thunk and not realized — treat as nil
+      return { kind: 'nil', value: null }
+    }
+  }
+  return current
 }
 
 const equalityHandlers = {
@@ -131,8 +163,18 @@ const equalityHandlers = {
   [valueKeywords.var]: (a: CljVar, b: CljVar) => a === b,
   [valueKeywords.set]: (a: CljSet, b: CljSet) => {
     if (a.values.length !== b.values.length) return false
-    return a.values.every(av => b.values.some(bv => isEqual(av, bv)))
+    return a.values.every((av) => b.values.some((bv) => isEqual(av, bv)))
   },
+  [valueKeywords.delay]: (a: CljDelay, b: CljDelay) => a === b,
+  [valueKeywords.lazySeq]: (a: CljLazySeq, b: CljLazySeq) => {
+    // Realize both and compare structurally
+    const aVal = realizeLazySeqForEquality(a)
+    const bVal = realizeLazySeqForEquality(b)
+    return isEqual(aVal, bVal)
+  },
+  [valueKeywords.cons]: (a: CljCons, b: CljCons) =>
+    isEqual(a.head, b.head) && isEqual(a.tail, b.tail),
+  [valueKeywords.namespace]: (a: CljNamespace, b: CljNamespace) => a === b,
 }
 
 export const isEqual = (a: CljValue, b: CljValue): boolean => {

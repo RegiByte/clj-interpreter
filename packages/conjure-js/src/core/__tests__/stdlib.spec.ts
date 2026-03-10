@@ -11,6 +11,7 @@ import {
 } from '../factories'
 import { printString } from '../printer'
 import { createSession, createSessionFromSnapshot, snapshotSession } from '../session'
+import { materialize } from './evaluator-test-utils'
 
 const _snapshot = snapshotSession(createSession())
 
@@ -166,14 +167,14 @@ describe('stdlib macros', () => {
     })
 
     it('threads as last arg of a list form', () => {
-      expect(session().evaluate('(->> [1 2 3] (map inc))')).toEqual(
+      expect(materialize(session().evaluate('(->> [1 2 3] (map inc))'))).toEqual(
         cljList([cljNumber(2), cljNumber(3), cljNumber(4)])
       )
     })
 
     it('threads through multiple list forms', () => {
       expect(
-        session().evaluate('(->> [1 2 3] (map inc) (filter (fn [x] (> x 3))))')
+        materialize(session().evaluate('(->> [1 2 3] (map inc) (filter (fn [x] (> x 3))))'))
       ).toEqual(cljList([cljNumber(4)]))
     })
 
@@ -377,7 +378,7 @@ describe('range', () => {
   })
 
   it('works with map — returns seq', () => {
-    expect(session().evaluate('(map inc (range 3))')).toEqual(
+    expect(materialize(session().evaluate('(map inc (range 3))'))).toEqual(
       cljList([cljNumber(1), cljNumber(2), cljNumber(3)])
     )
   })
@@ -394,7 +395,7 @@ describe('identity', () => {
   })
 
   it('works as a function value — returns seq', () => {
-    expect(session().evaluate("(map identity '(1 2 3))")).toEqual(
+    expect(materialize(session().evaluate("(map identity '(1 2 3))"))).toEqual(
       cljList([cljNumber(1), cljNumber(2), cljNumber(3)])
     )
   })
@@ -561,7 +562,7 @@ describe('partial', () => {
   })
 
   it('can be used with map — returns seq', () => {
-    expect(session().evaluate("(map (partial + 10) '(1 2 3))")).toEqual(
+    expect(materialize(session().evaluate("(map (partial + 10) '(1 2 3))"))).toEqual(
       cljList([cljNumber(11), cljNumber(12), cljNumber(13)])
     )
   })
@@ -601,24 +602,24 @@ describe('comp', () => {
 describe('map-indexed', () => {
   it('passes index and element to function — returns seq', () => {
     expect(
-      session().evaluate("(map-indexed (fn [i x] i) '(:a :b :c))")
+      materialize(session().evaluate("(map-indexed (fn [i x] i) '(:a :b :c))"))
     ).toEqual(cljList([cljNumber(0), cljNumber(1), cljNumber(2)]))
   })
 
   it('passes element correctly — returns seq', () => {
     expect(
-      session().evaluate("(map-indexed (fn [i x] x) '(:a :b :c))")
+      materialize(session().evaluate("(map-indexed (fn [i x] x) '(:a :b :c))"))
     ).toEqual(cljList([cljKeyword(':a'), cljKeyword(':b'), cljKeyword(':c')]))
   })
 
   it('returns a seq when given a vector input', () => {
-    expect(session().evaluate('(map-indexed (fn [i x] i) [:a :b :c])')).toEqual(
+    expect(materialize(session().evaluate('(map-indexed (fn [i x] i) [:a :b :c])'))).toEqual(
       cljList([cljNumber(0), cljNumber(1), cljNumber(2)])
     )
   })
 
   it('can build indexed pairs — returns seq of vectors', () => {
-    expect(session().evaluate("(map-indexed vector '(:a :b :c))")).toEqual(
+    expect(materialize(session().evaluate("(map-indexed vector '(:a :b :c))"))).toEqual(
       cljList([
         cljVector([cljNumber(0), cljKeyword(':a')]),
         cljVector([cljNumber(1), cljKeyword(':b')]),
@@ -628,7 +629,7 @@ describe('map-indexed', () => {
   })
 
   it('returns empty seq for empty collection', () => {
-    expect(session().evaluate("(map-indexed vector '())")).toEqual(
+    expect(materialize(session().evaluate("(map-indexed vector '())"))).toEqual(
       cljList([])
     )
   })
@@ -646,7 +647,7 @@ describe('constantly', () => {
   })
 
   it('works with map — returns seq', () => {
-    expect(session().evaluate("(map (constantly 0) '(1 2 3))")).toEqual(
+    expect(materialize(session().evaluate("(map (constantly 0) '(1 2 3))"))).toEqual(
       cljList([cljNumber(0), cljNumber(0), cljNumber(0)])
     )
   })
@@ -664,7 +665,7 @@ describe('complement', () => {
 
   it('works with even? to filter odd numbers — returns seq', () => {
     expect(
-      session().evaluate("(filter (complement even?) '(1 2 3 4 5))")
+      materialize(session().evaluate("(filter (complement even?) '(1 2 3 4 5))"))
     ).toEqual(cljList([cljNumber(1), cljNumber(3), cljNumber(5)]))
   })
 })

@@ -10,7 +10,7 @@ import {
   cljVector,
 } from '../factories'
 import { createSession } from '../session'
-import { expectError, freshSession, toCljValue } from './evaluator-test-utils'
+import { expectError, freshSession, materialize, toCljValue } from './evaluator-test-utils'
 describe('str', () => {
   it.each([
     ['(str)', ''],
@@ -96,10 +96,10 @@ describe('apply', () => {
 
   it('(apply map ...) returns a seq (list)', () => {
     const session = freshSession()
-    const result = session.evaluate(
+    const result = materialize(session.evaluate(
       `(def inc (fn [n] (+ n 1)))
        (apply map [inc [1 2 3 4 5]])`
-    )
+    ))
     expect(result).toMatchObject(
       cljList([cljNumber(2), cljNumber(3), cljNumber(4), cljNumber(5), cljNumber(6)])
     )
@@ -398,10 +398,10 @@ describe('comp', () => {
 
   it('comp with a keyword (IFn) — most common real-world use case', () => {
     const session = freshSession()
-    const result = session.evaluate(
+    const result = materialize(session.evaluate(
       `(def users [{:name "Alice" :role :admin} {:name "Bob" :role :user}])
        (filter (comp #(= % :admin) :role) users)`
-    )
+    ))
     expect(result).toMatchObject(
       cljList([cljMap([[cljKeyword(':name'), cljString('Alice')], [cljKeyword(':role'), cljKeyword(':admin')]])])
     )
@@ -433,7 +433,7 @@ describe('partial', () => {
     'should evaluate partial: %s → %s',
     (code, expected) => {
       const session = freshSession()
-      const result = session.evaluate(code)
+      const result = materialize(session.evaluate(code))
       expect(result).toMatchObject(toCljValue(expected as any))
     }
   )

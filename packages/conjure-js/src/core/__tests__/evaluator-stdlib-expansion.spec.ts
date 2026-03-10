@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { freshSession } from './evaluator-test-utils'
+import { freshSession, materialize } from './evaluator-test-utils'
 
 function ev(code: string) {
   const session = freshSession()
@@ -260,7 +260,7 @@ describe('partition / partition-by / reductions', () => {
   })
 
   it('partition-by', () => {
-    expect(ev('(partition-by odd? [1 1 2 2 3])')).toMatchObject({
+    expect(materialize(ev('(partition-by odd? [1 1 2 2 3])'))).toMatchObject({
       kind: 'list', value: [
         { kind: 'vector', value: [{ value: 1 }, { value: 1 }] },
         { kind: 'vector', value: [{ value: 2 }, { value: 2 }] },

@@ -20,7 +20,7 @@ export function derefValue(val: CljValue): CljValue {
 }
 
 export function makeNamespace(name: string): CljNamespace {
-  return { name, vars: new Map(), aliases: new Map(), readerAliases: new Map() }
+  return { kind: 'namespace', name, vars: new Map(), aliases: new Map(), readerAliases: new Map() }
 }
 
 export function makeEnv(outer?: Env): Env {
