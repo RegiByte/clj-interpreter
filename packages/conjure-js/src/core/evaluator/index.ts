@@ -39,6 +39,12 @@ export function createEvaluationContext(): EvaluationContext {
       applyMacroWithContext(macro, rawArgs, ctx),
     expandAll: (form: CljValue, env: Env) =>
       macroExpandAllWithContext(form, env, ctx),
+    resolveNs: (_name: string) => null as null,
+    // IO defaults — overwritten by buildSessionFacade with session-specific channels.
+    io: {
+      stdout: (text: string) => console.log(text),
+      stderr: (text: string) => console.error(text),
+    },
   }
   return ctx
 }

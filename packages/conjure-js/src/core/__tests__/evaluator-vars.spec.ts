@@ -6,6 +6,7 @@ import {
 } from '../session'
 import type { Session, SessionSnapshot } from '../session'
 import { printString } from '../printer'
+import { materialize } from './evaluator-test-utils'
 
 let snapshot: SessionSnapshot
 
@@ -227,7 +228,7 @@ describe('Native functions as Vars', () => {
 
   it('native function lookup still works normally after internVar', () => {
     const s = mkSession()
-    expect((s.evaluate('(map inc [1 2 3])') as any).value).toEqual([
+    expect((materialize(s.evaluate('(map inc [1 2 3])')) as any).value).toEqual([
       { kind: 'number', value: 2 },
       { kind: 'number', value: 3 },
       { kind: 'number', value: 4 },

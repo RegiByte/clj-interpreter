@@ -16,7 +16,7 @@ import { tryLookup } from '../core/env'
 import { inferSourceRoot } from './nrepl-utils'
 import { resolveSymbol as resolveSymbolShared, extractMeta as extractMetaShared } from './nrepl-symbol'
 import { VERSION } from './version'
-import { injectNodeHostFunctions } from '../host/node'
+import { makeNodeHostModule } from '../host/node-host-module'
 
 const CONJURE_VERSION = VERSION
 
@@ -59,7 +59,7 @@ function createManagedSession(
     sourceRoots,
   })
 
-  injectNodeHostFunctions(session)
+  session.runtime.installModules([makeNodeHostModule(session)])
 
   return {
     id,

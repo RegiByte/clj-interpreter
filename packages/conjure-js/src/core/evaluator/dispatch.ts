@@ -49,7 +49,7 @@ export function evaluateList(
   ctx: EvaluationContext
 ): CljValue {
   if (list.value.length === 0) {
-    throw new EvaluationError('Unexpected empty list', { list, env })
+    return list
   }
   const first = list.value[0]
 

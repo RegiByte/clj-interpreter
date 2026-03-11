@@ -3,11 +3,12 @@ import {
   cljKeyword,
   cljList,
   cljMap,
+  cljNil,
   cljNumber,
   cljString,
   cljVector,
 } from '../factories'
-import { expectError, freshSession, toCljValue } from './evaluator-test-utils'
+import { expectError, freshSession, materialize, toCljValue } from './evaluator-test-utils'
 describe('count', () => {
   it.each([
     ['(count [1 2 3])', 3],
@@ -16,6 +17,7 @@ describe('count', () => {
     ['(count [])', 0],
     ['(count {})', 0],
     ['(count "abc")', 3],
+    ['(count nil)', 0],
   ])(
     'should evaluate count core function: %s should be %s',
     (code, expected) => {
@@ -28,7 +30,6 @@ describe('count', () => {
   it.each([
     ['(count true)', 'count expects a countable value, got true'],
     ['(count 1)', 'count expects a countable value, got 1'],
-    ['(count nil)', 'count expects a countable value, got nil'],
     ['(def x 1) (count x)', 'count expects a countable value, got 1'],
   ])(
     'should throw on invalid count function arguments: %s should be %s',
@@ -446,16 +447,16 @@ describe('map', () => {
     ['(map (fn [n] (+ n 1)) nil)', cljList([])],
   ])(`should evaluate map: %s should be %s`, (code, expected) => {
     const session = freshSession()
-    const result = session.evaluate(code)
+    const result = materialize(session.evaluate(code))
     expect(result).toMatchObject(expected)
   })
 
   it.each([
     ['(map)', 'No matching arity for 0'],
-    ['(map "a" [1 2 3])', 'not callable'],
-    ['(map (fn [n] (+ n 1)) true)', 'transduce expects a collection'],
-    ['(map (fn [n] (+ n 1)) false)', 'transduce expects a collection'],
-    ['(map (fn [n] (+ n 1)) 0)', 'transduce expects a collection'],
+    ['(vec (map "a" [1 2 3]))', 'not callable'],
+    ['(vec (map (fn [n] (+ n 1)) true))', 'seq expects a collection'],
+    ['(vec (map (fn [n] (+ n 1)) false))', 'seq expects a collection'],
+    ['(vec (map (fn [n] (+ n 1)) 0))', 'seq expects a collection'],
   ])(
     'should throw on invalid map arguments: %s should throw "%s"',
     (code, expected) => {
@@ -542,16 +543,16 @@ describe('filter', () => {
     ['(filter (fn [n] (> n 2)) nil)', cljList([])],
   ])('should evaluate filter: %s should be %s', (code, expected) => {
     const session = freshSession()
-    const result = session.evaluate(code)
+    const result = materialize(session.evaluate(code))
     expect(result).toMatchObject(expected)
   })
 
   it.each([
     ['(filter)', 'No matching arity for 0'],
-    ['(filter "a" [1 2 3])', 'not callable'],
-    ['(filter (fn [n] (+ n 1)) true)', 'transduce expects a collection'],
-    ['(filter (fn [n] (+ n 1)) false)', 'transduce expects a collection'],
-    ['(filter (fn [n] (+ n 1)) 0)', 'transduce expects a collection'],
+    ['(vec (filter "a" [1 2 3]))', 'not callable'],
+    ['(vec (filter (fn [n] (+ n 1)) true))', 'seq expects a collection'],
+    ['(vec (filter (fn [n] (+ n 1)) false))', 'seq expects a collection'],
+    ['(vec (filter (fn [n] (+ n 1)) 0))', 'seq expects a collection'],
   ])(
     'should throw on invalid filter arguments: %s should throw "%s"',
     (code, expected) => {
@@ -667,16 +668,16 @@ describe('take and drop', () => {
     ["(drop 1 '(1 2 3))", [cljNumber(2), cljNumber(3)]],
   ])('should evaluate take / drop: %s → %s', (code, expected) => {
     const session = freshSession()
-    const result = session.evaluate(code)
+    const result = materialize(session.evaluate(code))
     expect(result).toMatchObject(
       cljList((expected as any[]).map(toCljValue))
     )
   })
 
   it.each([
-    // take/drop are now Clojure fns; non-number n causes dec error on first step
-    ['(take "a" [1 2 3])', 'dec expects a number'],
-    ['(drop "a" [1 2 3])', 'dec expects a number'],
+    // take/drop are now lazy Clojure fns; errors surface on realization
+    ['(vec (take "a" [1 2 3]))', 'expects a number'],
+    ['(vec (drop "a" [1 2 3]))', 'expects a number'],
   ])(
     'should throw on invalid take / drop arguments: %s → "%s"',
     (code, expected) => {
@@ -702,15 +703,19 @@ describe('concat', () => {
     ['(concat [] [])', []],
   ])('should evaluate concat: %s → %s', (code, expected) => {
     const session = freshSession()
-    const result = session.evaluate(code)
-    expect(result).toMatchObject(
-      cljList((expected as any[]).map(toCljValue))
-    )
+    const result = materialize(session.evaluate(code))
+    const expectedList = cljList((expected as any[]).map(toCljValue))
+    if ((expected as any[]).length === 0) {
+      // (concat) may return nil; materialized nil stays nil — both represent empty seq
+      expect(result.kind === 'nil' || (result.kind === 'list' && result.value.length === 0)).toBe(true)
+    } else {
+      expect(result).toMatchObject(expectedList)
+    }
   })
 
   it.each([
-    ['(concat 1 [2 3])', 'concat expects collections or strings, got 1'],
-    ['(concat [1 2] true)', 'concat expects collections or strings, got true'],
+    ['(vec (concat 1 [2 3]))', 'seq expects a collection'],
+    ['(vec (concat [1 2] true))', 'seq expects a collection'],
   ])(
     'should throw on invalid concat arguments: %s → "%s"',
     (code, expected) => {

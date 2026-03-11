@@ -42,3 +42,4 @@ packages/conjure-js/src/bin/version.ts
 
 .calva/
 .claude/
+CLAUDE.md

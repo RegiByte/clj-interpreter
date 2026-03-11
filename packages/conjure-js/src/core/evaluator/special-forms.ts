@@ -10,10 +10,12 @@ import {
   isTruthy,
   isVector,
 } from '../assertions'
-import { define, extend, getNamespaceEnv, getRootEnv, internVar, lookup, lookupVar, makeEnv } from '../env'
+import { define, extend, getNamespaceEnv, internVar, lookup, lookupVar, makeEnv } from '../env'
 import { CljThrownSignal, EvaluationError } from '../errors'
 import {
+  cljDelay,
   cljKeyword,
+  cljLazySeq,
   cljMap,
   cljMultiArityFunction,
   cljMultiArityMacro,
@@ -21,9 +23,13 @@ import {
   cljNativeFunction,
   cljNil,
   cljNumber,
+  cljPending,
   cljString,
   cljVar,
 } from '../factories'
+// --- ASYNC (experimental) ---
+import { createAsyncEvalCtx } from './async-evaluator'
+// --- END ASYNC ---
 import { getLineCol, getPos } from '../positions'
 import type {
   CljFunction,
@@ -70,6 +76,11 @@ export const specialFormKeywords = {
   binding: 'binding',
   'set!': 'set!',
   letfn: 'letfn',
+  delay: 'delay',
+  'lazy-seq': 'lazy-seq',
+  // --- ASYNC (experimental) ---
+  async: 'async',
+  // --- END ASYNC ---
 } as const
 
 function keywordToDispatchFn(kw: CljKeyword): CljNativeFunction {
@@ -635,7 +646,7 @@ function evaluateDefmethod(
 function evaluateVar(
   list: CljList,
   env: Env,
-  _ctx: EvaluationContext
+  ctx: EvaluationContext
 ): CljValue {
   const sym = list.value[1]
   if (!isSymbol(sym)) {
@@ -647,19 +658,12 @@ function evaluateVar(
     const alias = sym.name.slice(0, slashIdx)
     const localName = sym.name.slice(slashIdx + 1)
     const nsEnv = getNamespaceEnv(env)
-    // Try alias lookup (CljNamespace) first
-    const aliasCljNs = nsEnv.ns?.aliases.get(alias)
-    if (aliasCljNs) {
-      const v = aliasCljNs.vars.get(localName)
-      if (!v) throw new EvaluationError(`Var ${sym.name} not found`, { sym })
-      return v
-    }
-    // Fall back to full namespace Env chain (handles clojure.core/sym etc.)
-    const targetEnv = getRootEnv(env).resolveNs?.(alias) ?? null
-    if (!targetEnv) {
+    // Resolve alias: local :as alias first, then full namespace name
+    const targetNs = nsEnv.ns?.aliases.get(alias) ?? ctx.resolveNs(alias) ?? null
+    if (!targetNs) {
       throw new EvaluationError(`No such namespace: ${alias}`, { sym })
     }
-    const v = lookupVar(localName, targetEnv)
+    const v = targetNs.vars.get(localName)
     if (!v) throw new EvaluationError(`Var ${sym.name} not found`, { sym })
     return v
   }
@@ -769,6 +773,40 @@ function evaluateSet(list: CljList, env: Env, ctx: EvaluationContext): CljValue 
   return newVal
 }
 
+function evaluateDelay(
+  list: CljList,
+  env: Env,
+  ctx: EvaluationContext
+): CljValue {
+  const body = list.value.slice(1)
+  return cljDelay(() => ctx.evaluateForms(body, env))
+}
+
+function evaluateLazySeqForm(
+  list: CljList,
+  env: Env,
+  ctx: EvaluationContext
+): CljValue {
+  const body = list.value.slice(1)
+  return cljLazySeq(() => ctx.evaluateForms(body, env))
+}
+
+// --- ASYNC BLOCK HANDLER (experimental) ---
+// Gateway into the async sub-evaluator. See async-evaluator.ts.
+// To revert: remove this function, the `async` case below, and the import above.
+function evaluateAsyncBlock(
+  list: CljList,
+  env: Env,
+  ctx: EvaluationContext
+): CljValue {
+  const body = list.value.slice(1)
+  if (body.length === 0) return cljPending(Promise.resolve(cljNil()))
+  const asyncCtx = createAsyncEvalCtx(ctx)
+  const promise = asyncCtx.evaluateForms(body, env)
+  return cljPending(promise)
+}
+// --- END ASYNC BLOCK HANDLER ---
+
 type SpecialFormEvaluatorFn = (
   list: CljList,
   env: Env,
@@ -794,6 +832,11 @@ const specialFormEvaluatorEntries = {
   binding: evaluateBinding,
   'set!': evaluateSet,
   letfn: evaluateLetfn,
+  delay: evaluateDelay,
+  'lazy-seq': evaluateLazySeqForm,
+  // --- ASYNC (experimental) ---
+  async: evaluateAsyncBlock,
+  // --- END ASYNC ---
 } as const satisfies Record<
   keyof typeof specialFormKeywords,
   SpecialFormEvaluatorFn

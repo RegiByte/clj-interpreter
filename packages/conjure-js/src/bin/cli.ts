@@ -12,7 +12,7 @@ import { extractNsName } from '../vite-plugin-clj/namespace-utils'
 import { inferSourceRoot, discoverSourceRoots } from './nrepl-utils'
 import { startNreplServer } from './nrepl'
 import { VERSION } from './version'
-import { injectNodeHostFunctions } from '../host/node'
+import { makeNodeHostModule } from '../host/node-host-module'
 
 type CliIo = {
   writeLine: (text: string) => void
@@ -32,7 +32,7 @@ export function createCliSession(sourceRoots: string[], io: CliIo): Session {
     sourceRoots,
     readFile: (filePath) => readFileSync(filePath, 'utf8'),
   })
-  injectNodeHostFunctions(session)
+  session.runtime.installModules([makeNodeHostModule(session)])
   return session
 }
 

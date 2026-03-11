@@ -21,6 +21,12 @@ describe('evaluator spec', () => {
       expect(result).toMatchObject(cljNumber(1))
     })
 
+    it('should evaluate an empty list', () => {
+      const session = freshSession()
+      const result = session.evaluate('()')
+      expect(result).toMatchObject(cljList([]))
+    })
+
     it.each([
       ['1', cljNumber(1)],
       ['"hello"', cljString('hello')],

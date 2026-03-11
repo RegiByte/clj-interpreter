@@ -1,16 +1,64 @@
-import { isEqual, isKeyword, isList, isMap, isSymbol, isVector } from '../assertions'
+import { isCons, isEqual, isKeyword, isLazySeq, isList, isMap, isNil, isSymbol, isVector } from '../assertions'
 import { EvaluationError } from '../errors'
 import { cljKeyword, cljList, cljNil, cljString, cljSymbol } from '../factories'
+import { realizeLazySeq, consToArray } from '../transformations'
 import type { CljMap, CljValue, Env, EvaluationContext } from '../types'
 
 function toSeqSafe(value: CljValue): CljValue[] {
   if (value.kind === 'nil') return []
   if (isList(value)) return value.value
   if (isVector(value)) return value.value
+  if (isLazySeq(value)) {
+    const realized = realizeLazySeq(value)
+    return toSeqSafe(realized)
+  }
+  if (isCons(value)) return consToArray(value)
   throw new EvaluationError(
     `Cannot destructure ${value.kind} as a sequential collection`,
     { value }
   )
+}
+
+/** Return the first element of a seq-like value without full realization. */
+function seqFirst(value: CljValue): CljValue {
+  if (isNil(value)) return cljNil()
+  if (isLazySeq(value)) {
+    const realized = realizeLazySeq(value)
+    return isNil(realized) ? cljNil() : seqFirst(realized)
+  }
+  if (isCons(value)) return value.head
+  if (isList(value) || isVector(value)) return value.value.length > 0 ? value.value[0] : cljNil()
+  return cljNil()
+}
+
+/** Return the tail of a seq-like value without full realization. */
+function seqRest(value: CljValue): CljValue {
+  if (isNil(value)) return cljList([])
+  if (isLazySeq(value)) {
+    const realized = realizeLazySeq(value)
+    return isNil(realized) ? cljList([]) : seqRest(realized)
+  }
+  if (isCons(value)) return value.tail
+  if (isList(value)) return cljList(value.value.slice(1))
+  if (isVector(value)) return cljList(value.value.slice(1))
+  return cljList([])
+}
+
+/** Check if a seq-like value is empty without full realization. */
+function seqIsEmpty(value: CljValue): boolean {
+  if (isNil(value)) return true
+  if (isLazySeq(value)) {
+    const realized = realizeLazySeq(value)
+    return seqIsEmpty(realized)
+  }
+  if (isCons(value)) return false
+  if (isList(value) || isVector(value)) return value.value.length === 0
+  return true
+}
+
+/** Check if a value is lazy (lazy-seq or cons with lazy tail). */
+function isLazy(value: CljValue): boolean {
+  return isLazySeq(value) || isCons(value)
 }
 
 function findMapEntry(
@@ -60,28 +108,53 @@ function destructureVector(
     positionalCount = elems.length
   }
 
-  const seq = toSeqSafe(value)
-
-  // positional bindings
-  for (let i = 0; i < positionalCount; i++) {
-    pairs.push(...destructureBindings(elems[i], seq[i] ?? cljNil(), ctx, env))
-  }
-
-  // rest binding
-  if (restPattern !== null) {
-    const restArgs = seq.slice(positionalCount)
-    let restValue: CljValue
-    if (isMap(restPattern) && restArgs.length > 0) {
-      // kwargs-style: coerce flat key-value pairs into a map
-      const entries: [CljValue, CljValue][] = []
-      for (let i = 0; i < restArgs.length; i += 2) {
-        entries.push([restArgs[i], restArgs[i + 1] ?? cljNil()])
-      }
-      restValue = { kind: 'map', entries }
-    } else {
-      restValue = restArgs.length > 0 ? cljList(restArgs) : cljNil()
+  // For lazy seqs, walk with first/rest to avoid full realization.
+  // For eager collections, use flat array for efficiency.
+  if (isLazy(value)) {
+    let current: CljValue = value
+    for (let i = 0; i < positionalCount; i++) {
+      pairs.push(...destructureBindings(elems[i], seqFirst(current), ctx, env))
+      current = seqRest(current)
     }
-    pairs.push(...destructureBindings(restPattern, restValue, ctx, env))
+    if (restPattern !== null) {
+      // For kwargs-style map destructuring on rest, we must realize
+      if (isMap(restPattern) && !seqIsEmpty(current)) {
+        const restArgs = toSeqSafe(current)
+        const entries: [CljValue, CljValue][] = []
+        for (let i = 0; i < restArgs.length; i += 2) {
+          entries.push([restArgs[i], restArgs[i + 1] ?? cljNil()])
+        }
+        pairs.push(...destructureBindings(restPattern, { kind: 'map', entries }, ctx, env))
+      } else {
+        // Keep the rest as-is (still lazy) — wrap in list only if it's nil/empty
+        const restValue = seqIsEmpty(current) ? cljNil() : current
+        pairs.push(...destructureBindings(restPattern, restValue, ctx, env))
+      }
+    }
+  } else {
+    const seq = toSeqSafe(value)
+
+    // positional bindings
+    for (let i = 0; i < positionalCount; i++) {
+      pairs.push(...destructureBindings(elems[i], seq[i] ?? cljNil(), ctx, env))
+    }
+
+    // rest binding
+    if (restPattern !== null) {
+      const restArgs = seq.slice(positionalCount)
+      let restValue: CljValue
+      if (isMap(restPattern) && restArgs.length > 0) {
+        // kwargs-style: coerce flat key-value pairs into a map
+        const entries: [CljValue, CljValue][] = []
+        for (let i = 0; i < restArgs.length; i += 2) {
+          entries.push([restArgs[i], restArgs[i + 1] ?? cljNil()])
+        }
+        restValue = { kind: 'map', entries }
+      } else {
+        restValue = restArgs.length > 0 ? cljList(restArgs) : cljNil()
+      }
+      pairs.push(...destructureBindings(restPattern, restValue, ctx, env))
+    }
   }
 
   return pairs

@@ -1,5 +1,5 @@
 import { isList, isMap, isMacro, isSymbol, isVector } from '../assertions'
-import { getRootEnv, tryLookup } from '../env'
+import { derefValue, getNamespaceEnv, tryLookup } from '../env'
 import { cljList, cljMap, cljVector } from '../factories'
 import type { CljValue, Env, EvaluationContext } from '../types'
 
@@ -66,15 +66,19 @@ export function macroExpandAllWithContext(
   // Check whether the head resolves to a macro in the current env.
   // tryLookup returns undefined for unknown symbols (forward refs, fn params, etc.)
   // avoiding the try/catch exception path entirely.
-  // For qualified symbols like clojure.core/when-let, split on '/' and resolve
-  // through the namespace registry — mirrors the same pattern in evaluate.ts.
+  // For qualified symbols like clojure.core/when-let or aliased m/my-macro,
+  // resolve via local :as alias first, then full namespace name.
   let macroOrUnknown: CljValue | undefined
   const slashIdx = name.indexOf('/')
   if (slashIdx > 0 && slashIdx < name.length - 1) {
     const nsPrefix = name.slice(0, slashIdx)
     const localName = name.slice(slashIdx + 1)
-    const targetEnv = getRootEnv(env).resolveNs?.(nsPrefix) ?? null
-    if (targetEnv) macroOrUnknown = tryLookup(localName, targetEnv)
+    const nsEnv = getNamespaceEnv(env)
+    const targetNs = nsEnv.ns?.aliases.get(nsPrefix) ?? ctx.resolveNs(nsPrefix) ?? null
+    if (targetNs) {
+      const v = targetNs.vars.get(localName)
+      macroOrUnknown = v !== undefined ? derefValue(v) : undefined
+    }
   } else {
     macroOrUnknown = tryLookup(name, env)
   }

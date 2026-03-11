@@ -1,8 +1,8 @@
-import { isList, isMap, isSet, isVector } from './assertions'
+import { isCons, isLazySeq, isList, isMap, isNil, isSet, isVector } from './assertions'
 import { EvaluationError } from './errors'
 import { cljString, cljVector } from './factories'
 import { printString, getPrintContext } from './printer'
-import { type CljValue, valueKeywords } from './types'
+import { type CljCons, type CljDelay, type CljLazySeq, type CljValue, valueKeywords } from './types'
 
 export function valueToString(value: CljValue): string {
   switch (value.kind) {
@@ -66,11 +66,56 @@ export function valueToString(value: CljValue): string {
       const prefix = value.flags ? `(?${value.flags})` : ''
       return `${prefix}${value.pattern}`
     }
+    case valueKeywords.delay:
+      return value.realized ? `#<Delay @${valueToString(value.value!)}>` : '#<Delay pending>'
+    case valueKeywords.lazySeq: {
+      const realized = realizeLazySeq(value)
+      if (isNil(realized)) return '()'
+      return valueToString(realized)
+    }
+    case valueKeywords.cons: {
+      const items = consToArray(value)
+      const { printLength } = getPrintContext()
+      const visible = printLength !== null ? items.slice(0, printLength) : items
+      const suffix = printLength !== null && items.length > printLength ? ' ...' : ''
+      return `(${visible.map(valueToString).join(' ')}${suffix})`
+    }
+    case valueKeywords.namespace:
+      return `#namespace[${value.name}]`
     default:
       throw new EvaluationError(`unhandled value type: ${value.kind}`, {
         value,
       })
   }
+}
+
+/** Realize a delay: evaluate thunk once, cache result. */
+export function realizeDelay(d: CljDelay): CljValue {
+  if (d.realized) return d.value!
+  d.value = d.thunk()
+  d.realized = true
+  return d.value!
+}
+
+/** Realize a lazy-seq: evaluate thunk once, cache result. Trampolines through chained lazy-seqs. */
+export function realizeLazySeq(ls: CljLazySeq): CljValue {
+  let current: CljValue = ls
+  while (current.kind === 'lazy-seq') {
+    const lazy = current as CljLazySeq
+    if (lazy.realized) {
+      current = lazy.value!
+      continue
+    }
+    if (lazy.thunk) {
+      lazy.value = lazy.thunk()
+      lazy.thunk = null
+      lazy.realized = true
+      current = lazy.value!
+    } else {
+      return { kind: 'nil', value: null }
+    }
+  }
+  return current
 }
 
 export const toSeq = (collection: CljValue): CljValue[] => {
@@ -89,8 +134,46 @@ export const toSeq = (collection: CljValue): CljValue[] => {
   if (collection.kind === 'string') {
     return [...collection.value].map(cljString)
   }
+  if (isLazySeq(collection)) {
+    const realized = realizeLazySeq(collection)
+    if (isNil(realized)) return []
+    return toSeq(realized)
+  }
+  if (isCons(collection)) {
+    return consToArray(collection)
+  }
   throw new EvaluationError(
     `toSeq expects a collection or string, got ${printString(collection)}`,
     { collection }
   )
+}
+
+/** Walk a cons/lazy-seq chain into a flat array (trampoline, no recursion). */
+export function consToArray(c: CljCons): CljValue[] {
+  const result: CljValue[] = [c.head]
+  let tail: CljValue = c.tail
+  while (true) {
+    if (isNil(tail)) break
+    if (isCons(tail)) {
+      result.push(tail.head)
+      tail = tail.tail
+      continue
+    }
+    if (isLazySeq(tail)) {
+      tail = realizeLazySeq(tail)
+      continue
+    }
+    if (isList(tail)) {
+      result.push(...tail.value)
+      break
+    }
+    if (isVector(tail)) {
+      result.push(...tail.value)
+      break
+    }
+    // Other seqable types — fall through to toSeq
+    result.push(...toSeq(tail))
+    break
+  }
+  return result
 }

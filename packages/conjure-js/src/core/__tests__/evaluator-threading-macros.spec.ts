@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { freshSession } from './evaluator-test-utils'
+import { freshSession, materialize } from './evaluator-test-utils'
 
 describe('as->', () => {
   it('threads through multiple forms using named binding', () => {
@@ -62,7 +62,7 @@ describe('cond->', () => {
 describe('cond->>', () => {
   it('threads as last arg when test is true', () => {
     const s = freshSession()
-    const r = s.evaluate('(cond->> [1 2 3] true (map inc))')
+    const r = materialize(s.evaluate('(cond->> [1 2 3] true (map inc))'))
     expect(r.kind).toBe('list')
     expect((r as any).value.map((v: any) => v.value)).toEqual([2, 3, 4])
   })
@@ -111,7 +111,7 @@ describe('some->>', () => {
   it('threads as last arg when non-nil', () => {
     const s = freshSession()
     // [1 2 3] → map inc → [2 3 4] → filter even? → [2 4]
-    const r = s.evaluate('(some->> [1 2 3] (map inc) (filter even?))')
+    const r = materialize(s.evaluate('(some->> [1 2 3] (map inc) (filter even?))'))
     expect(r.kind).toBe('list')
     expect((r as any).value).toHaveLength(2)
   })

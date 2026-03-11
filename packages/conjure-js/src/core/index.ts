@@ -2,6 +2,21 @@
 export { createSession, snapshotSession, createSessionFromSnapshot } from './session'
 export type { Session, SessionSnapshot } from './session'
 
+// Runtime API (advanced embedding)
+export { createRuntime, restoreRuntime } from './runtime'
+export type { Runtime, RuntimeSnapshot, RuntimeOptions } from './runtime'
+
+// Module system
+export { resolveModuleOrder } from './module'
+export { makeCoreModule } from './core-module'
+export type {
+  RuntimeModule,
+  NamespaceDeclaration,
+  VarDeclaration,
+  VarMap,
+  ModuleContext,
+} from './module'
+
 // Conversions
 export { cljToJs, jsToClj, ConversionError } from './conversions'
 
@@ -28,6 +43,7 @@ export {
   cljMacro,
   cljMultiArityMacro,
   cljVar,
+  cljNamespace,
 } from './factories'
 
 // Assertions
@@ -47,6 +63,7 @@ export {
   isCollection,
   isEqual,
   isVar,
+  isNamespace,
 } from './assertions'
 
 // Env
@@ -80,4 +97,5 @@ export type {
   CljNamespace,
   Env,
   Arity,
+  IOContext,
 } from './types'
