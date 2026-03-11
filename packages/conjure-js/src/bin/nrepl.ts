@@ -26,6 +26,11 @@ const CONJURE_VERSION = VERSION
 
 type NreplMessage = Record<string, unknown>
 
+/** Minimal interface satisfied by MeshNode (structural — no import from the mesh experiment). */
+export type RemoteEvalNode = {
+  evalAt(targetId: string, source: string, timeoutMs?: number): Promise<{ value?: string; error?: string }>
+}
+
 type ManagedSession = {
   id: string
   session: Session
@@ -136,11 +141,12 @@ function handleDescribe(msg: NreplMessage, encoder: BEncoderStream) {
   })
 }
 
-function handleEval(
+async function handleEval(
   msg: NreplMessage,
   managed: ManagedSession,
-  encoder: BEncoderStream
-) {
+  encoder: BEncoderStream,
+  meshNode?: RemoteEvalNode
+): Promise<void> {
   const id = (msg['id'] as string) ?? ''
   const code = (msg['code'] as string) ?? ''
 
@@ -151,6 +157,42 @@ function handleEval(
   // them to the relative positions the reader computes from the snippet.
   const lineOffset = typeof msg['line']   === 'number' ? (msg['line']   as number) - 1 : 0
   const colOffset  = typeof msg['column'] === 'number' ? (msg['column'] as number) - 1 : 0
+
+  // Mesh routing: if mesh/*eval-target* is set and a meshNode is provided, route remotely.
+  // *eval-target* stores a CljString (set by set-target!) or CljNil (cleared).
+  if (meshNode) {
+    const meshNs = managed.session.getNs('mesh')
+    const evalTargetVar = meshNs?.vars.get('*eval-target*')
+    const targetVal = evalTargetVar?.value
+    if (targetVal?.kind === 'string' && targetVal.value) {
+      const targetId = targetVal.value
+      try {
+        const result = await meshNode.evalAt(targetId, code)
+        if (result.error) {
+          done(encoder, id, managed.id, {
+            ex: result.error,
+            err: result.error + '\n',
+            ns: managed.session.currentNs,
+            status: ['eval-error', 'done'],
+          })
+        } else {
+          done(encoder, id, managed.id, {
+            value: result.value ?? 'nil',
+            ns: managed.session.currentNs,
+          })
+        }
+      } catch (e) {
+        const msg2 = e instanceof Error ? e.message : String(e)
+        done(encoder, id, managed.id, {
+          ex: msg2,
+          err: msg2 + '\n',
+          ns: managed.session.currentNs,
+          status: ['eval-error', 'done'],
+        })
+      }
+      return
+    }
+  }
 
   try {
     const result = managed.session.evaluate(code, { lineOffset, colOffset })
@@ -388,7 +430,8 @@ function handleMessage(
   snapshot: SessionSnapshot,
   encoder: BEncoderStream,
   defaultSession: ManagedSession,
-  sourceRoots?: string[]
+  sourceRoots?: string[],
+  meshNode?: RemoteEvalNode
 ) {
   const op = msg['op'] as string
   const sessionId = msg['session'] as string | undefined
@@ -404,7 +447,15 @@ function handleMessage(
       handleDescribe(msg, encoder)
       break
     case 'eval':
-      handleEval(msg, managed, encoder)
+      void handleEval(msg, managed, encoder, meshNode).catch(e => {
+        const m = e instanceof Error ? e.message : String(e)
+        done(encoder, (msg['id'] as string) ?? '', managed.id, {
+          ex: m,
+          err: m + '\n',
+          ns: managed.session.currentNs,
+          status: ['eval-error', 'done'],
+        })
+      })
       break
     case 'load-file':
       handleLoadFile(msg, managed, encoder)
@@ -437,6 +488,14 @@ export type NreplServerOptions = {
   port?: number
   host?: string
   sourceRoots?: string[]
+  /** Pre-created session (with modules already installed). Will be snapshotted internally. */
+  session?: Session
+  /** Or pass a pre-taken snapshot directly. Takes precedence over `session`. */
+  snapshot?: SessionSnapshot
+  /** Optional mesh node for routing eval ops when mesh/*eval-target* is set. */
+  meshNode?: RemoteEvalNode
+  /** Write .nrepl-port to cwd on listen. Default: true. Set false for embedded/server use. */
+  writePortFile?: boolean
 }
 
 export function startNreplServer(options: NreplServerOptions = {}): net.Server {
@@ -444,12 +503,19 @@ export function startNreplServer(options: NreplServerOptions = {}): net.Server {
   const host = options.host ?? '127.0.0.1'
 
   // Build a warm snapshot once — all clones skip the core bootstrap.
-  // Source roots from config discovery are baked in so every cloned session inherits them.
-  const warmSession = createSession({
-    sourceRoots: options.sourceRoots,
-    readFile: (filePath) => readFileSync(filePath, 'utf8'),
-  })
-  const snapshot = snapshotSession(warmSession)
+  // Callers may provide a pre-created session (with extra modules installed) or snapshot.
+  const snapshot: SessionSnapshot =
+    options.snapshot ??
+    (options.session
+      ? snapshotSession(options.session)
+      : snapshotSession(
+          createSession({
+            sourceRoots: options.sourceRoots,
+            readFile: (filePath) => readFileSync(filePath, 'utf8'),
+          })
+        ))
+
+  const { meshNode } = options
 
   const server = net.createServer((socket) => {
     const encoder = new BEncoderStream()
@@ -466,7 +532,7 @@ export function startNreplServer(options: NreplServerOptions = {}): net.Server {
     sessions.set(defaultId, defaultSession)
 
     decoder.on('data', (msg: NreplMessage) => {
-      handleMessage(msg, sessions, snapshot, encoder, defaultSession, options.sourceRoots)
+      handleMessage(msg, sessions, snapshot, encoder, defaultSession, options.sourceRoots, meshNode)
     })
 
     socket.on('error', () => {
@@ -479,25 +545,30 @@ export function startNreplServer(options: NreplServerOptions = {}): net.Server {
   })
 
   const portFile = join(process.cwd(), '.nrepl-port')
-
-  server.listen(port, host, () => {
-    writeFileSync(portFile, String(port), 'utf8')
-    process.stdout.write(`Conjure nREPL server v${VERSION} started on port ${port}\n`)
-  })
+  const writePortFile = options.writePortFile ?? true
 
   const cleanup = () => {
     if (existsSync(portFile)) unlinkSync(portFile)
   }
-  server.on('close', cleanup)
-  process.on('exit', cleanup)
-  process.on('SIGINT', () => {
-    cleanup()
-    process.exit(0)
-  })
-  process.on('SIGTERM', () => {
-    cleanup()
-    process.exit(0)
-  })
+
+  if (writePortFile) {
+    server.listen(port, host, () => {
+      writeFileSync(portFile, String(port), 'utf8')
+      process.stdout.write(`Conjure nREPL server v${VERSION} started on port ${port}\n`)
+    })
+    server.on('close', cleanup)
+    process.on('exit', cleanup)
+    process.on('SIGINT', () => {
+      cleanup()
+      process.exit(0)
+    })
+    process.on('SIGTERM', () => {
+      cleanup()
+      process.exit(0)
+    })
+  } else {
+    server.listen(port, host)
+  }
 
   return server
 }

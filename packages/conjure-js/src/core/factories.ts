@@ -153,10 +153,15 @@ export const cljNamespace = (name: string): CljNamespace => ({
 })
 
 // --- ASYNC (experimental) ---
-export const cljPending = (promise: Promise<CljValue>): CljPending => ({
-  kind: 'pending',
-  promise,
-})
+export const cljPending = (promise: Promise<CljValue>): CljPending => {
+  const pending: CljPending = { kind: 'pending', promise }
+  // Track fulfillment so the printer can show #<Pending @val> when already settled.
+  promise.then(
+    (v) => { pending.resolved = true; pending.resolvedValue = v },
+    () => { /* rejection — no resolved state; printer shows #<Pending> */ }
+  )
+  return pending
+}
 // --- END ASYNC ---
 
 export const withDoc = <T extends CljNativeFunction | CljFunction>(

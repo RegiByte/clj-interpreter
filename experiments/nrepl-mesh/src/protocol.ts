@@ -1,38 +1,47 @@
 /**
- * nREPL Mesh — wire protocol constants and types.
+ * nREPL Mesh — broker-agnostic wire protocol types.
  *
- * Transport: Redis pub/sub for requests, Redis list + BLPOP for responses.
- *
- * Channels / keys:
- *   mesh:nodes            HSET  — node registry (id → NodeInfo JSON)
- *   mesh:req:{nodeId}     PUBSUB channel — incoming eval requests to that node
- *   mesh:reply:{reqId}    LIST  — single-item list, node pushes reply here
+ * Messages carry all routing information as opaque strings so the broker
+ * implementation can interpret them however it needs to (Redis list key,
+ * AMQP reply queue, Postgres LISTEN channel, etc.).
  */
 
-export const NODES_KEY = 'mesh:nodes'
-export const reqChannel = (nodeId: string) => `mesh:req:${nodeId}`
-export const replyListKey = (reqId: string) => `mesh:reply:${reqId}`
+// ---------------------------------------------------------------------------
+// Requests
+// ---------------------------------------------------------------------------
 
-/** How long (seconds) a reply list key lives before expiring. */
-export const REPLY_TTL_SEC = 30
-
-export type NodeInfo = {
+export type EvalRequest = {
+  type: 'eval'
+  /** Correlation ID — echoed back in the reply. */
   id: string
-  startedAt: number
+  /** Raw Clojure source string to evaluate. */
+  source: string
+  /** Opaque broker-specific address where the reply should be sent. */
+  replyTo: string
+  /** Optional namespace hint. */
+  ns?: string
 }
 
-export type MeshRequest = {
-  reqId: string
-  /** Raw Clojure/EDN source string to evaluate. */
-  form: string
-  /** Redis list key where the node should push the response. */
-  replyKey: string
-}
+// Union grows as new message types are added (e.g. 'ping', 'introspect').
+export type MeshMessage = EvalRequest
 
-export type MeshResponse = {
-  reqId: string
-  /** printString of the result value, if evaluation succeeded. */
-  result?: string
-  /** Error message string, if evaluation failed. */
+// ---------------------------------------------------------------------------
+// Replies
+// ---------------------------------------------------------------------------
+
+export type EvalReply = {
+  type: 'eval-reply'
+  /** Echoed correlation ID. */
+  id: string
+  /** printString(result), present on success. */
+  value?: string
+  /** Error message, present on failure. */
   error?: string
+  /** Captured stdout, if any. */
+  stdout?: string
+  /** Captured stderr, if any. */
+  stderr?: string
 }
+
+// Union grows alongside MeshMessage.
+export type MeshReply = EvalReply

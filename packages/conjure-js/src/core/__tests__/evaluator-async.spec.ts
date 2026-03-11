@@ -859,3 +859,44 @@ describe('evaluateAsync — session boundary', () => {
     expect(result.kind).toBe('nil')
   })
 })
+
+describe('(all ...) — fan-out async combinator', () => {
+  test('resolves with vector of all results', async () => {
+    const session = freshSession()
+    const result = await session.evaluateAsync('(async @(all [(promise-of 1) (promise-of 2) (promise-of 3)]))')
+    expect(result).toEqual(cljVector([cljNumber(1), cljNumber(2), cljNumber(3)]))
+  })
+
+  test('empty vector resolves to empty vector', async () => {
+    const session = freshSession()
+    const result = await session.evaluateAsync('(async @(all []))')
+    expect(result).toEqual(cljVector([]))
+  })
+
+  test('nil input resolves to empty vector', async () => {
+    const session = freshSession()
+    const result = await session.evaluateAsync('(async @(all nil))')
+    expect(result).toEqual(cljVector([]))
+  })
+
+  test('non-pending items treated as already resolved', async () => {
+    const session = freshSession()
+    const result = await session.evaluateAsync('(async @(all [1 2 (promise-of 3)]))')
+    expect(result).toEqual(cljVector([cljNumber(1), cljNumber(2), cljNumber(3)]))
+  })
+
+  test('one rejection causes the whole result to reject', async () => {
+    const session = freshSession()
+    await expect(
+      session.evaluateAsync('(async @(all [(promise-of 1) (then (promise-of 2) (fn [_] (throw :boom)))]))')
+    ).rejects.toThrow()
+  })
+
+  test('fan-out: map + all pattern', async () => {
+    const session = freshSession()
+    const result = await session.evaluateAsync(
+      '(async @(all (map (fn [n] (promise-of (* n n))) [1 2 3 4])))'
+    )
+    expect(result).toEqual(cljVector([cljNumber(1), cljNumber(4), cljNumber(9), cljNumber(16)]))
+  })
+})

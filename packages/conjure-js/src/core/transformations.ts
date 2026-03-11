@@ -82,6 +82,10 @@ export function valueToString(value: CljValue): string {
     }
     case valueKeywords.namespace:
       return `#namespace[${value.name}]`
+    case 'pending':
+      if (value.resolved && value.resolvedValue !== undefined)
+        return `#<Pending @${valueToString(value.resolvedValue)}>`
+      return '#<Pending>'
     default:
       throw new EvaluationError(`unhandled value type: ${value.kind}`, {
         value,

@@ -6,6 +6,8 @@
   "scripts": {
     "serve": "bun src/server.ts",
     "client": "bun src/client.ts",
+    "nrepl-server": "bun src/nrepl-server.ts",
+    "nrepl-local": "bun src/nrepl-local.ts",
     "test": "vitest run"
   },
   "dependencies": {

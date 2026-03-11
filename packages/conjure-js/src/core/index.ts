@@ -40,10 +40,14 @@ export {
   cljFunction,
   cljMultiArityFunction,
   cljNativeFunction,
+  cljNativeFunctionWithContext,
   cljMacro,
   cljMultiArityMacro,
   cljVar,
   cljNamespace,
+  cljPending,
+  // fluent builder — use v.nativeFn / v.nativeFnCtx for module authoring
+  v,
 } from './factories'
 
 // Assertions
@@ -75,8 +79,23 @@ export { valueToString } from './transformations'
 // Printer
 export { printString } from './printer'
 
-// Tokenizer (public for tooling consumers)
+// Tokenizer + Reader (public for tooling consumers and EDN parsing)
 export { tokenize } from './tokenizer'
+export { readForms } from './reader'
+
+// readString — parse a single EDN source string to a CljValue.
+// Equivalent to Clojure's read-string. Useful for deserialising results
+// returned by remote nodes over the mesh wire.
+import { tokenize as _tokenize } from './tokenizer'
+import { readForms as _readForms } from './reader'
+import type { CljValue as _CljValue } from './types'
+
+export function readString(source: string): _CljValue {
+  const tokens = _tokenize(source)
+  const forms = _readForms(tokens)
+  if (forms.length === 0) throw new Error('readString: empty input')
+  return forms[0]
+}
 
 // Types
 export type {
@@ -95,7 +114,9 @@ export type {
   CljMacro,
   CljVar,
   CljNamespace,
+  CljPending,
   Env,
   Arity,
   IOContext,
+  EvaluationContext,
 } from './types'

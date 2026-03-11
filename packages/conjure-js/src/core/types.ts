@@ -187,6 +187,9 @@ export type CljNativeFunction = {
 export type CljPending = {
   kind: 'pending'
   promise: Promise<CljValue>
+  /** Set to true once the promise settles (fulfilled only). */
+  resolved?: boolean
+  resolvedValue?: CljValue
 }
 // --- END ASYNC ---
 

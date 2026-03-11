@@ -1,19 +1,20 @@
+import { builtInNamespaceSources } from '../clojure/generated/builtin-namespace-registry'
 import { CljThrownSignal, EvaluationError, ReaderError } from './errors'
 import { createEvaluationContext, RecurSignal } from './evaluator'
+import { cljNil } from './factories'
+import type { RuntimeModule } from './module'
+import { formatErrorContext } from './positions'
 import { printString } from './printer'
 import { readForms } from './reader'
-import { tokenize } from './tokenizer'
+import type { Runtime, RuntimeSnapshot } from './runtime'
 import {
   createRuntime,
   extractAliasMapFromTokens,
   extractNsNameFromTokens,
   restoreRuntime,
 } from './runtime'
-import type { Runtime, RuntimeSnapshot } from './runtime'
-import { formatErrorContext } from './positions'
-import { cljNil } from './factories'
+import { tokenize } from './tokenizer'
 import type { CljNamespace, CljValue, Env } from './types'
-import { builtInNamespaceSources } from '../clojure/generated/builtin-namespace-registry'
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -27,6 +28,7 @@ type SessionOptions = {
   entries?: string[]
   sourceRoots?: string[]
   readFile?: (filePath: string) => string
+  modules?: RuntimeModule[]
 }
 
 export type Session = {
@@ -237,6 +239,7 @@ function buildSessionFacade(
 // ---------------------------------------------------------------------------
 
 export function createSession(options?: SessionOptions): Session {
+  const modules = options?.modules ?? []
   const runtime = createRuntime({
     sourceRoots: options?.sourceRoots,
     readFile: options?.readFile,
@@ -250,6 +253,10 @@ export function createSession(options?: SessionOptions): Session {
     throw new Error('Missing built-in clojure.core source in registry')
   }
   session.loadFile(coreLoader(), 'clojure.core')
+
+  if (modules.length > 0) {
+    session.runtime.installModules(modules)
+  }
 
   for (const source of options?.entries ?? []) {
     session.loadFile(source)

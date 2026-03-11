@@ -6,20 +6,25 @@
  *   bun src/client.ts <target-node-id> # enter a REPL targeting that node
  *
  * REPL commands:
- *   :nodes    — refresh and print the node list
- *   :target <id> — switch to a different target node
- *   :quit     — exit
- *   <form>    — evaluate at the current target node
+ *   :nodes          — refresh and print the node list
+ *   :target <id>    — switch to a different target node
+ *   :quit           — exit
+ *   <form>          — evaluate at the current target node
  */
 
 import { createInterface } from 'node:readline'
+import { createSession } from 'conjure-js'
+import { createRedisBroker } from './brokers/redis.js'
 import { MeshNode } from './mesh-node.js'
 
 const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379'
 
+const session = createSession()
+const broker = createRedisBroker({ url: REDIS_URL })
 const client = new MeshNode({
-  id: `client-${process.pid}`,
-  redisUrl: REDIS_URL,
+  nodeId: `client-${process.pid}`,
+  session,
+  broker,
 })
 
 const rl = createInterface({ input: process.stdin, output: process.stdout })
@@ -34,6 +39,7 @@ function prompt(target: string): void {
 
     if (trimmed === ':quit') {
       await client.stop()
+      await broker.close()
       rl.close()
       process.exit(0)
     }
@@ -53,11 +59,11 @@ function prompt(target: string): void {
     }
 
     try {
-      const { result, error } = await client.evalAt(target, trimmed)
+      const { value, error } = await client.evalAt(target, trimmed)
       if (error) {
         console.log(`Error: ${error}`)
       } else {
-        console.log(`=> ${result}`)
+        console.log(`=> ${value}`)
       }
     } catch (e) {
       console.log(`Error: ${e instanceof Error ? e.message : String(e)}`)
@@ -75,9 +81,10 @@ async function printNodes(): Promise<void> {
   }
   console.log('\nNodes:')
   for (const n of nodes) {
-    const ageSec = Math.floor((Date.now() - n.startedAt) / 1000)
-    const marker = n.id === client.id ? ' (you)' : ''
-    console.log(`  ${n.id}${marker}  — started ${ageSec}s ago`)
+    const ageSec = Math.floor((Date.now() - n.lastSeen) / 1000)
+    const marker = n.id === client.nodeId ? ' (you)' : ''
+    const caps = n?.capabilities?.length > 0 ? `  [${n.capabilities.join(', ')}]` : ''
+    console.log(`  ${n.id}${marker}${caps}  — seen ${ageSec}s ago`)
   }
   console.log()
 }
@@ -92,6 +99,7 @@ async function main(): Promise<void> {
     await printNodes()
     console.log('Usage: bun src/client.ts <target-node-id>')
     await client.stop()
+    await broker.close()
     rl.close()
     return
   }

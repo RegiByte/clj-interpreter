@@ -200,6 +200,8 @@ function printStringImpl(value: CljValue, depth: number): string {
       return `#namespace[${value.name}]`
     // --- ASYNC (experimental) ---
     case 'pending':
+      if (value.resolved && value.resolvedValue !== undefined)
+        return `#<Pending @${printString(value.resolvedValue, depth + 1)}>`
       return '#<Pending>'
     // --- END ASYNC ---
     default:

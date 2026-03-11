@@ -4,10 +4,11 @@
  * To revert: delete this file and remove the import from core-module.ts.
  */
 
-import { v, cljPending, cljBoolean } from '../factories'
+import { v, cljPending, cljBoolean, cljVector } from '../factories'
 import { CljThrownSignal, EvaluationError } from '../errors'
 import { isCallable } from '../assertions'
 import { printString } from '../printer'
+import { toSeq } from '../transformations'
 import type { EvaluationContext, CljValue, Env } from '../types'
 
 export const asyncFunctions: Record<string, CljValue> = {
@@ -75,4 +76,15 @@ export const asyncFunctions: Record<string, CljValue> = {
   'promise-of': v.nativeFn('promise-of', (val: CljValue) => {
     return cljPending(Promise.resolve(val))
   }).doc('Wraps val in an immediately-resolving pending value. Useful for testing async composition.', [['val']]),
+
+  // (all pendings) → CljPending of a vector of all resolved values.
+  // Accepts any seqable (vector, list, lazy-seq, cons, nil); non-pending items resolve immediately.
+  // If any input rejects, the result pending rejects with that error.
+  all: v.nativeFn('all', (val: CljValue) => {
+    const items: CljValue[] = val.kind === 'nil' ? [] : toSeq(val)
+    const promises = items.map(item =>
+      item.kind === 'pending' ? item.promise : Promise.resolve(item)
+    )
+    return cljPending(Promise.all(promises).then(results => cljVector(results)))
+  }).doc('Returns a pending that resolves with a vector of all results when every input resolves.', [['pendings']]),
 }

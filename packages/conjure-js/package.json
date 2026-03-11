@@ -12,6 +12,7 @@
   "license": "MIT",
   "exports": {
     ".": "./src/core/index.ts",
+    "./nrepl": "./src/bin/nrepl.ts",
     "./vite-plugin": {
       "bun": "./src/vite-plugin-clj/index.ts",
       "default": "./dist-vite-plugin/index.mjs"

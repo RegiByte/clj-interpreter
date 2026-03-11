@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { readForms } from '../reader'
+import { readString } from '../index'
 import {
   cljBoolean,
   cljKeyword,
@@ -551,5 +552,68 @@ describe('reader', () => {
         ]),
       ])
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// readString
+// ---------------------------------------------------------------------------
+
+describe('readString', () => {
+  it('reads a number', () => {
+    expect(readString('42')).toEqual(cljNumber(42))
+  })
+
+  it('reads a negative number', () => {
+    expect(readString('-7')).toEqual(cljNumber(-7))
+  })
+
+  it('reads a string', () => {
+    expect(readString('"hello"')).toEqual(cljString('hello'))
+  })
+
+  it('reads a keyword', () => {
+    expect(readString(':done')).toEqual(cljKeyword(':done'))
+  })
+
+  it('reads nil', () => {
+    expect(readString('nil')).toEqual(cljNil())
+  })
+
+  it('reads true / false', () => {
+    expect(readString('true')).toEqual(cljBoolean(true))
+    expect(readString('false')).toEqual(cljBoolean(false))
+  })
+
+  it('reads a vector', () => {
+    expect(readString('[1 2 3]')).toEqual(cljVector([cljNumber(1), cljNumber(2), cljNumber(3)]))
+  })
+
+  it('reads a map', () => {
+    expect(readString('{:a 1}')).toEqual(
+      cljMap([[cljKeyword(':a'), cljNumber(1)]])
+    )
+  })
+
+  it('reads a list', () => {
+    expect(readString('(+ 1 2)')).toEqual(
+      cljList([cljSymbol('+'), cljNumber(1), cljNumber(2)])
+    )
+  })
+
+  it('returns only the first form when source contains multiple', () => {
+    expect(readString('1 2 3')).toEqual(cljNumber(1))
+  })
+
+  it('throws on empty input', () => {
+    expect(() => readString('')).toThrow('readString: empty input')
+  })
+
+  it('round-trips with printString for non-string values', () => {
+    const { printString } = require('../printer')
+    const cases = ['42', ':keyword', 'nil', 'true', '[1 2 3]', '{:a 1}']
+    for (const src of cases) {
+      expect(printString(readString(src))).toBe(src)
+    }
   })
 })

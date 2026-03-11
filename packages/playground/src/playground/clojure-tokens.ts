@@ -21,13 +21,20 @@ export function registerClojureLanguage(monaco: typeof Monaco): void {
         rule[0] instanceof RegExp &&
         rule[1] === 'comment' &&
         rule[0].source === '\\(comment\\b'
-      ),
+      )
   )
 
   monaco.languages.setMonarchTokensProvider('clojure', {
     ...base,
     specialForms: [...(base.specialForms ?? []), 'async'],
-    coreSymbols: [...(base.coreSymbols ?? []), 'then', 'catch*', 'pending?', 'promise-of'],
+    coreSymbols: [
+      ...(base.coreSymbols ?? []),
+      'then',
+      'catch*',
+      'pending?',
+      'promise-of',
+      'all',
+    ],
     tokenizer: {
       ...base.tokenizer,
       whitespace: filteredWhitespace,
