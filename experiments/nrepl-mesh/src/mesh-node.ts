@@ -19,7 +19,33 @@
 
 import { type Session, printString } from 'conjure-js'
 import type { MeshBroker, NodeInfo, Unsubscribe } from './broker.js'
-import type { EvalReply, EvalRequest } from './protocol.js'
+import type { EvalReply, EvalRequest, MeshStreamChunk } from './protocol.js'
+
+/**
+ * Mutable output redirect installed around each eval.
+ *
+ * The session is created with output/stderr handlers that call
+ * `currentOut` / `currentErr`. Before each eval, MeshNode installs
+ * per-eval handlers that fire-and-forget stream chunks to the requester.
+ * After the eval (and after all chunks are flushed), the handlers are cleared.
+ *
+ * Usage in server scripts:
+ *   let currentOut: ((t: string) => void) | null = null
+ *   let currentErr: ((t: string) => void) | null = null
+ *   const outputRedirect: OutputRedirect = {
+ *     install: (out, err) => { currentOut = out; currentErr = err },
+ *     uninstall: () => { currentOut = null; currentErr = null },
+ *   }
+ *   const session = createSession({
+ *     output: (t) => { currentOut?.(t) },
+ *     stderr: (t) => { currentErr?.(t) },
+ *   })
+ *   new MeshNode({ ..., outputRedirect })
+ */
+export type OutputRedirect = {
+  install(out: (text: string) => void, err: (text: string) => void): void
+  uninstall(): void
+}
 
 export type MeshNodeOptions = {
   nodeId: string
@@ -30,6 +56,12 @@ export type MeshNodeOptions = {
   capabilities?: string[]
   /** How often to re-register with the broker in milliseconds. Default: 7000. */
   heartbeatIntervalMs?: number
+  /**
+   * When provided, stdout/stderr from each eval is streamed back to the
+   * requester in real-time as chunks, before the terminal eval-reply.
+   * See OutputRedirect for the wiring pattern.
+   */
+  outputRedirect?: OutputRedirect
 }
 
 export type EvalResult = {
@@ -43,6 +75,7 @@ export class MeshNode {
   private readonly broker: MeshBroker
   private readonly capabilities: string[]
   private readonly heartbeatIntervalMs: number
+  private readonly outputRedirect?: OutputRedirect
   private unsubscribe?: Unsubscribe
   private heartbeatInterval?: ReturnType<typeof setInterval>
   private running = false
@@ -53,6 +86,7 @@ export class MeshNode {
     this.broker = opts.broker
     this.capabilities = opts.capabilities ?? []
     this.heartbeatIntervalMs = opts.heartbeatIntervalMs ?? 7_000
+    this.outputRedirect = opts.outputRedirect
   }
 
   async start(): Promise<void> {
@@ -76,27 +110,52 @@ export class MeshNode {
   }
 
   private async handleEval(req: EvalRequest): Promise<void> {
+    // Collect fire-and-forget sendChunk promises so we can flush them before
+    // the terminal reply. This guarantees the requester's streamReply loop
+    // always sees every chunk before the eval-reply sentinel.
+    const pendingChunks: Promise<void>[] = []
+
+    if (this.outputRedirect) {
+      this.outputRedirect.install(
+        (text) => { pendingChunks.push(this.broker.sendChunk(req.replyTo, { type: 'out', text })) },
+        (text) => { pendingChunks.push(this.broker.sendChunk(req.replyTo, { type: 'err', text })) }
+      )
+    }
+
     let reply: EvalReply
     try {
       const result = await this.session.evaluateAsync(req.source)
+      // Flush all output chunks to Redis before the terminal reply so ordering
+      // is guaranteed: requester sees chunks first, then eval-reply.
+      if (pendingChunks.length > 0) await Promise.all(pendingChunks)
       reply = { type: 'eval-reply', id: req.id, value: printString(result) }
     } catch (e) {
-      reply = {
-        type: 'eval-reply',
-        id: req.id,
-        error: e instanceof Error ? e.message : String(e),
-      }
+      if (pendingChunks.length > 0) await Promise.all(pendingChunks)
+      reply = { type: 'eval-reply', id: req.id, error: e instanceof Error ? e.message : String(e) }
+    } finally {
+      this.outputRedirect?.uninstall()
     }
     await this.broker.reply(req.replyTo, reply)
   }
 
-  async evalAt(targetId: string, source: string, timeoutMs = 10_000): Promise<EvalResult> {
+  async evalAt(
+    targetId: string,
+    source: string,
+    timeoutMs = 10_000,
+    onChunk?: (chunk: MeshStreamChunk) => void
+  ): Promise<EvalResult> {
+    // Pre-flight: fail fast instead of timing out for unknown/dead nodes.
+    const nodes = await this.broker.discover()
+    if (!nodes.some((n) => n.id === targetId)) {
+      const known = nodes.map((n) => n.id).join(', ') || '(none)'
+      throw new Error(`Node "${targetId}" is not registered in the mesh. Known nodes: ${known}`)
+    }
+
     const id = crypto.randomUUID()
     const replyTo = this.broker.allocReplyAddr(id)
 
-    // Start waiting BEFORE sending — a fast node may reply before we BLPOP.
-    // awaitReply implementations must be safe when data is already present.
-    const replyPromise = this.broker.awaitReply(replyTo, timeoutMs)
+    // Start streaming BEFORE sending — a fast node may reply before we BLPOP.
+    const replyPromise = this.broker.streamReply(replyTo, onChunk ?? (() => {}), timeoutMs)
     await this.broker.send(targetId, { type: 'eval', id, source, replyTo })
 
     const reply = await replyPromise

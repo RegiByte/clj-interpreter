@@ -22,7 +22,7 @@
 
 import Redis from 'ioredis'
 import type { MeshBroker, NodeInfo, Unsubscribe } from '../broker.js'
-import type { MeshMessage, MeshReply } from '../protocol.js'
+import type { MeshMessage, MeshReply, MeshStreamChunk } from '../protocol.js'
 
 const NODES_KEY = 'mesh:nodes'
 const REPLY_TTL_SEC = 30
@@ -69,22 +69,42 @@ export class RedisBroker implements MeshBroker {
     }
   }
 
+  async sendChunk(replyAddr: string, chunk: MeshStreamChunk): Promise<void> {
+    await this.pub.lpush(replyAddr, JSON.stringify(chunk))
+    await this.pub.expire(replyAddr, REPLY_TTL_SEC)
+  }
+
   async reply(replyAddr: string, reply: MeshReply): Promise<void> {
     await this.pub.lpush(replyAddr, JSON.stringify(reply))
     await this.pub.expire(replyAddr, REPLY_TTL_SEC)
   }
 
-  async awaitReply(replyAddr: string, timeoutMs: number): Promise<MeshReply | null> {
+  async streamReply(
+    replyAddr: string,
+    onChunk: (chunk: MeshStreamChunk) => void,
+    timeoutMs: number
+  ): Promise<MeshReply | null> {
     // A dedicated connection is required: BLPOP blocks the connection.
     const blocker = new Redis(this.url)
+    const deadline = Date.now() + timeoutMs
     try {
-      const timeoutSec = Math.max(1, Math.ceil(timeoutMs / 1000))
-      const res = await blocker.blpop(replyAddr, timeoutSec)
-      if (!res) return null
-      return JSON.parse(res[1]) as MeshReply
+      while (true) {
+        const remaining = deadline - Date.now()
+        if (remaining <= 0) return null
+        const timeoutSec = Math.max(1, Math.ceil(remaining / 1000))
+        const res = await blocker.blpop(replyAddr, timeoutSec)
+        if (!res) return null
+        const msg = JSON.parse(res[1]) as MeshReply | MeshStreamChunk
+        if (msg.type === 'eval-reply') return msg as MeshReply
+        onChunk(msg as MeshStreamChunk)
+      }
     } finally {
       blocker.disconnect()
     }
+  }
+
+  async awaitReply(replyAddr: string, timeoutMs: number): Promise<MeshReply | null> {
+    return this.streamReply(replyAddr, () => {}, timeoutMs)
   }
 
   allocReplyAddr(correlationId: string): string {

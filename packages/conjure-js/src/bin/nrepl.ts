@@ -26,9 +26,17 @@ const CONJURE_VERSION = VERSION
 
 type NreplMessage = Record<string, unknown>
 
+/** Streaming output chunk forwarded from a remote eval. */
+type RemoteStreamChunk = { type: 'out'; text: string } | { type: 'err'; text: string }
+
 /** Minimal interface satisfied by MeshNode (structural — no import from the mesh experiment). */
 export type RemoteEvalNode = {
-  evalAt(targetId: string, source: string, timeoutMs?: number): Promise<{ value?: string; error?: string }>
+  evalAt(
+    targetId: string,
+    source: string,
+    timeoutMs?: number,
+    onChunk?: (chunk: RemoteStreamChunk) => void
+  ): Promise<{ value?: string; error?: string }>
 }
 
 type ManagedSession = {
@@ -167,7 +175,12 @@ async function handleEval(
     if (targetVal?.kind === 'string' && targetVal.value) {
       const targetId = targetVal.value
       try {
-        const result = await meshNode.evalAt(targetId, code)
+        const result = await meshNode.evalAt(targetId, code, undefined, (chunk) => {
+          // Stream each chunk back to the editor immediately as it arrives —
+          // no buffering, works for million-line outputs and long-running evals.
+          if (chunk.type === 'out') send(encoder, { id, session: managed.id, out: chunk.text })
+          else send(encoder, { id, session: managed.id, err: chunk.text })
+        })
         if (result.error) {
           done(encoder, id, managed.id, {
             ex: result.error,

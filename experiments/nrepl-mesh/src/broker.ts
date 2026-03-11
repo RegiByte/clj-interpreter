@@ -11,7 +11,7 @@
  * meaning of `replyAddr` strings. Everything above that is protocol-agnostic.
  */
 
-import type { MeshMessage, MeshReply } from './protocol.js'
+import type { MeshMessage, MeshReply, MeshStreamChunk } from './protocol.js'
 
 // ---------------------------------------------------------------------------
 // Node registry
@@ -46,19 +46,38 @@ export interface MeshBroker {
   subscribe(nodeId: string, handler: (msg: MeshMessage) => void): Promise<Unsubscribe>
 
   /**
-   * Deliver a reply to the opaque address produced by allocReplyAddr().
-   * The broker may attach a TTL so stale replies self-clean.
+   * Push a streaming output chunk to the reply address.
+   * Called by the evaluating node for each println/print during evaluation.
+   * Fire-and-forget from the caller's perspective; the broker must preserve
+   * FIFO order within the reply address.
+   */
+  sendChunk(replyAddr: string, chunk: MeshStreamChunk): Promise<void>
+
+  /**
+   * Deliver the terminal reply to the opaque address produced by allocReplyAddr().
+   * The broker may attach a TTL so stale keys self-clean.
    */
   reply(replyAddr: string, reply: MeshReply): Promise<void>
 
   /**
-   * Block until a reply arrives at `replyAddr` or `timeoutMs` elapses.
-   * Returns null on timeout.
+   * Read from `replyAddr` in a loop, calling `onChunk` for each streaming
+   * output chunk, until the terminal EvalReply arrives or `timeoutMs` elapses.
+   * Returns the terminal reply, or null on timeout.
    *
-   * IMPORTANT: callers must start awaitReply BEFORE calling send() to avoid
+   * IMPORTANT: callers must start streamReply BEFORE calling send() to avoid
    * the race where a fast node replies before the caller starts listening.
    * Brokers must handle this safely (e.g. BLPOP on a pre-populated list
    * returns immediately).
+   */
+  streamReply(
+    replyAddr: string,
+    onChunk: (chunk: MeshStreamChunk) => void,
+    timeoutMs: number
+  ): Promise<MeshReply | null>
+
+  /**
+   * Convenience wrapper around streamReply that discards chunks.
+   * Kept for backward compatibility.
    */
   awaitReply(replyAddr: string, timeoutMs: number): Promise<MeshReply | null>
 

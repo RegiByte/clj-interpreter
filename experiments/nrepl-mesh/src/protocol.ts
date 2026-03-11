@@ -26,7 +26,17 @@ export type EvalRequest = {
 export type MeshMessage = EvalRequest
 
 // ---------------------------------------------------------------------------
-// Replies
+// Streaming chunks — sent in real-time from the evaluating node back to the
+// requester during evaluation, before the terminal EvalReply arrives.
+// ---------------------------------------------------------------------------
+
+export type OutChunk = { type: 'out'; text: string }
+export type ErrChunk = { type: 'err'; text: string }
+/** A single streaming output frame — stdout or stderr. */
+export type MeshStreamChunk = OutChunk | ErrChunk
+
+// ---------------------------------------------------------------------------
+// Replies — the terminal message that ends a streaming eval session.
 // ---------------------------------------------------------------------------
 
 export type EvalReply = {
@@ -37,10 +47,6 @@ export type EvalReply = {
   value?: string
   /** Error message, present on failure. */
   error?: string
-  /** Captured stdout, if any. */
-  stdout?: string
-  /** Captured stderr, if any. */
-  stderr?: string
 }
 
 // Union grows alongside MeshMessage.

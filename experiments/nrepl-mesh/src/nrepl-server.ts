@@ -28,14 +28,36 @@ const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379'
 const NREPL_PORT = Number(process.env.NREPL_PORT ?? 7888)
 const NREPL_HOST = process.env.NREPL_HOST ?? '0.0.0.0'
 
+function maskRedisUrl(url: string): string {
+  try {
+    const parsed = new URL(url)
+    if (parsed.password) parsed.password = '***'
+    return parsed.toString()
+  } catch {
+    return url
+  }
+}
+
 const broker = createRedisBroker({ url: REDIS_URL })
-const session = createSession({ readFile: (p) => readFileSync(p, 'utf8') })
-const meshNode = new MeshNode({ nodeId, session, broker })
+
+// Mutable per-eval output targets — MeshNode installs/uninstalls them around each eval.
+let currentOut: ((t: string) => void) | null = null
+let currentErr: ((t: string) => void) | null = null
+const outputRedirect = {
+  install: (out: (t: string) => void, err: (t: string) => void) => { currentOut = out; currentErr = err },
+  uninstall: () => { currentOut = null; currentErr = null },
+}
+const session = createSession({
+  output: (t) => { currentOut?.(t) },
+  stderr: (t) => { currentErr?.(t) },
+  readFile: (p) => readFileSync(p, 'utf8'),
+})
+const meshNode = new MeshNode({ nodeId, session, broker, outputRedirect })
 session.runtime.installModules([makeMeshModule(meshNode)])
 
 async function main(): Promise<void> {
   await meshNode.start()
-  console.log(`[mesh]  Node "${nodeId}" started — broker: ${REDIS_URL}`)
+  console.log(`[mesh]  Node "${nodeId}" started — broker: ${maskRedisUrl(REDIS_URL)}`)
 
   startNreplServer({
     session,
