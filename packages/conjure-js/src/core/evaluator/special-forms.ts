@@ -23,9 +23,13 @@ import {
   cljNativeFunction,
   cljNil,
   cljNumber,
+  cljPending,
   cljString,
   cljVar,
 } from '../factories'
+// --- ASYNC (experimental) ---
+import { createAsyncEvalCtx } from './async-evaluator'
+// --- END ASYNC ---
 import { getLineCol, getPos } from '../positions'
 import type {
   CljFunction,
@@ -74,6 +78,9 @@ export const specialFormKeywords = {
   letfn: 'letfn',
   delay: 'delay',
   'lazy-seq': 'lazy-seq',
+  // --- ASYNC (experimental) ---
+  async: 'async',
+  // --- END ASYNC ---
 } as const
 
 function keywordToDispatchFn(kw: CljKeyword): CljNativeFunction {
@@ -784,6 +791,22 @@ function evaluateLazySeqForm(
   return cljLazySeq(() => ctx.evaluateForms(body, env))
 }
 
+// --- ASYNC BLOCK HANDLER (experimental) ---
+// Gateway into the async sub-evaluator. See async-evaluator.ts.
+// To revert: remove this function, the `async` case below, and the import above.
+function evaluateAsyncBlock(
+  list: CljList,
+  env: Env,
+  ctx: EvaluationContext
+): CljValue {
+  const body = list.value.slice(1)
+  if (body.length === 0) return cljPending(Promise.resolve(cljNil()))
+  const asyncCtx = createAsyncEvalCtx(ctx)
+  const promise = asyncCtx.evaluateForms(body, env)
+  return cljPending(promise)
+}
+// --- END ASYNC BLOCK HANDLER ---
+
 type SpecialFormEvaluatorFn = (
   list: CljList,
   env: Env,
@@ -811,6 +834,9 @@ const specialFormEvaluatorEntries = {
   letfn: evaluateLetfn,
   delay: evaluateDelay,
   'lazy-seq': evaluateLazySeqForm,
+  // --- ASYNC (experimental) ---
+  async: evaluateAsyncBlock,
+  // --- END ASYNC ---
 } as const satisfies Record<
   keyof typeof specialFormKeywords,
   SpecialFormEvaluatorFn

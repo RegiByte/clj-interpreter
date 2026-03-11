@@ -41,6 +41,14 @@ export const atomFunctions: Record<string, CljValue> = {
     if (isVolatile(value)) return value.value
     if (isReduced(value)) return value.value
     if (isDelay(value)) return realizeDelay(value)
+    // --- ASYNC (experimental) ---
+    if (value.kind === 'pending') {
+      throw EvaluationError.atArg(
+        '@ on a pending value requires an (async ...) context. Use (async @x) or compose with then/catch.',
+        { value }, 0
+      )
+    }
+    // --- END ASYNC ---
     throw EvaluationError.atArg(`deref expects an atom, volatile, reduced, or delay value, got ${value.kind}`, { value }, 0)
   }).doc(
     'Returns the wrapped value from an atom, volatile, reduced, or delay value.',

@@ -22,6 +22,9 @@ import { transducerFunctions } from './stdlib/transducers'
 import { utilFunctions } from './stdlib/utils'
 import { lazyFunctions } from './stdlib/lazy'
 import { varFunctions } from './stdlib/vars'
+// --- ASYNC (experimental) ---
+import { asyncFunctions } from './stdlib/async-fns'
+// --- END ASYNC ---
 
 // ---------------------------------------------------------------------------
 // Native function registry — installed as the initial clojure.core binding
@@ -80,6 +83,9 @@ const nativeFunctions = {
   ...utilFunctions,
   ...varFunctions,
   ...lazyFunctions,
+  // --- ASYNC (experimental) ---
+  ...asyncFunctions,
+  // --- END ASYNC ---
 }
 
 function readPrintCtx(callEnv: Env) {

@@ -16,6 +16,7 @@ import type {
   CljNativeFunction,
   CljNil,
   CljNumber,
+  CljPending,
   CljReduced,
   CljRegex,
   CljSet,
@@ -150,6 +151,13 @@ export const cljNamespace = (name: string): CljNamespace => ({
   aliases: new Map(),
   readerAliases: new Map(),
 })
+
+// --- ASYNC (experimental) ---
+export const cljPending = (promise: Promise<CljValue>): CljPending => ({
+  kind: 'pending',
+  promise,
+})
+// --- END ASYNC ---
 
 export const withDoc = <T extends CljNativeFunction | CljFunction>(
   fn: T,

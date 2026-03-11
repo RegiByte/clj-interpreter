@@ -183,6 +183,13 @@ export type CljNativeFunction = {
   meta?: CljMap
 }
 
+// --- ASYNC (experimental, see evaluator/async-evaluator.ts) ---
+export type CljPending = {
+  kind: 'pending'
+  promise: Promise<CljValue>
+}
+// --- END ASYNC ---
+
 export type CljValue =
   | CljNumber
   | CljString
@@ -207,6 +214,7 @@ export type CljValue =
   | CljLazySeq
   | CljCons
   | CljNamespace
+  | CljPending
 
 /** Tokens */
 export const tokenKeywords = {

@@ -198,6 +198,10 @@ function printStringImpl(value: CljValue, depth: number): string {
     }
     case valueKeywords.namespace:
       return `#namespace[${value.name}]`
+    // --- ASYNC (experimental) ---
+    case 'pending':
+      return '#<Pending>'
+    // --- END ASYNC ---
     default:
       throw new EvaluationError(`unhandled value type: ${value.kind}`, {
         value,

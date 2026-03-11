@@ -42,6 +42,10 @@ export type Session = {
     source: string,
     opts?: { lineOffset?: number; colOffset?: number; file?: string }
   ) => CljValue
+  evaluateAsync: (
+    source: string,
+    opts?: { lineOffset?: number; colOffset?: number; file?: string }
+  ) => Promise<CljValue>
   evaluateForms: (forms: CljValue[]) => CljValue
   addSourceRoot: (path: string) => void
   getCompletions: (prefix: string, nsName?: string) => string[]
@@ -164,6 +168,25 @@ function buildSessionFacade(
       } finally {
         ctx.currentSource = undefined
         ctx.currentFile = undefined
+      }
+    },
+
+    async evaluateAsync(
+      source: string,
+      opts?: { lineOffset?: number; colOffset?: number; file?: string }
+    ): Promise<CljValue> {
+      const result = session.evaluate(source, opts)
+      if (result.kind !== 'pending') return result
+      try {
+        return await result.promise
+      } catch (e) {
+        if (e instanceof CljThrownSignal) {
+          throw new EvaluationError(
+            `Unhandled throw: ${printString(e.value)}`,
+            { thrownValue: e.value }
+          )
+        }
+        throw e
       }
     },
 
