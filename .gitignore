@@ -37,6 +37,8 @@ conjure
 
 # nREPL port file (written at server start, deleted on exit)
 .nrepl-port
+# Local env config (copy .env.example → .env)
+.env
 # Generated version file
 packages/conjure-js/src/bin/version.ts
 

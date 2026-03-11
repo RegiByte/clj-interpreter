@@ -13,12 +13,17 @@
     (then (fn [nodes]
             (doseq [node nodes]
               (println node)))))
-              
 
 
-(mesh/set-target! :node-a70988e0)
+
+(mesh/set-target! nil)
 
 (println (+ 1 2))
+
+(+ 1 2 3)
+
+(spit "test.txt" "hello")
+(slurp "test.txt")
 
 
 m/*eval-target*

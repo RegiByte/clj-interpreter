@@ -5,6 +5,7 @@ import { BDecoderStream, BEncoderStream } from './bencode'
 import {
   createSession,
   createSessionFromSnapshot,
+  cljNil,
   printString,
   snapshotSession,
   type CljValue,
@@ -14,7 +15,10 @@ import {
 import { withPrintContext } from '../core/printer'
 import { tryLookup } from '../core/env'
 import { inferSourceRoot } from './nrepl-utils'
-import { resolveSymbol as resolveSymbolShared, extractMeta as extractMetaShared } from './nrepl-symbol'
+import {
+  resolveSymbol as resolveSymbolShared,
+  extractMeta as extractMetaShared,
+} from './nrepl-symbol'
 import { VERSION } from './version'
 import { makeNodeHostModule } from '../host/node-host-module'
 
@@ -27,7 +31,9 @@ const CONJURE_VERSION = VERSION
 type NreplMessage = Record<string, unknown>
 
 /** Streaming output chunk forwarded from a remote eval. */
-type RemoteStreamChunk = { type: 'out'; text: string } | { type: 'err'; text: string }
+type RemoteStreamChunk =
+  | { type: 'out'; text: string }
+  | { type: 'err'; text: string }
 
 /** Minimal interface satisfied by MeshNode (structural — no import from the mesh experiment). */
 export type RemoteEvalNode = {
@@ -163,8 +169,10 @@ async function handleEval(
   // Calva sends 1-based :line and :column for the start of the evaluated form
   // in the original file. Convert to 0-based offsets so evaluateDef can add
   // them to the relative positions the reader computes from the snippet.
-  const lineOffset = typeof msg['line']   === 'number' ? (msg['line']   as number) - 1 : 0
-  const colOffset  = typeof msg['column'] === 'number' ? (msg['column'] as number) - 1 : 0
+  const lineOffset =
+    typeof msg['line'] === 'number' ? (msg['line'] as number) - 1 : 0
+  const colOffset =
+    typeof msg['column'] === 'number' ? (msg['column'] as number) - 1 : 0
 
   // Mesh routing: if mesh/*eval-target* is set and a meshNode is provided, route remotely.
   // *eval-target* stores a CljString (set by set-target!) or CljNil (cleared).
@@ -175,12 +183,18 @@ async function handleEval(
     if (targetVal?.kind === 'string' && targetVal.value) {
       const targetId = targetVal.value
       try {
-        const result = await meshNode.evalAt(targetId, code, undefined, (chunk) => {
-          // Stream each chunk back to the editor immediately as it arrives —
-          // no buffering, works for million-line outputs and long-running evals.
-          if (chunk.type === 'out') send(encoder, { id, session: managed.id, out: chunk.text })
-          else send(encoder, { id, session: managed.id, err: chunk.text })
-        })
+        const result = await meshNode.evalAt(
+          targetId,
+          code,
+          undefined,
+          (chunk) => {
+            // Stream each chunk back to the editor immediately as it arrives —
+            // no buffering, works for million-line outputs and long-running evals.
+            if (chunk.type === 'out')
+              send(encoder, { id, session: managed.id, out: chunk.text })
+            else send(encoder, { id, session: managed.id, err: chunk.text })
+          }
+        )
         if (result.error) {
           done(encoder, id, managed.id, {
             ex: result.error,
@@ -196,12 +210,31 @@ async function handleEval(
         }
       } catch (e) {
         const msg2 = e instanceof Error ? e.message : String(e)
-        done(encoder, id, managed.id, {
-          ex: msg2,
-          err: msg2 + '\n',
-          ns: managed.session.currentNs,
-          status: ['eval-error', 'done'],
-        })
+        const isUnreachable =
+          msg2.includes('not registered') || msg2.includes('Timeout')
+        if (isUnreachable) {
+          // Clear *eval-target* so the user isn't stuck on subsequent evals.
+          // Do NOT fall through to local eval — the code was intended for the
+          // remote node; running it locally could be dangerous or wrong.
+          const meshNsClear = managed.session.getNs('mesh')
+          const evalTargetVarClear = meshNsClear?.vars.get('*eval-target*')
+          if (evalTargetVarClear) evalTargetVarClear.value = cljNil()
+
+          const errMsg = `Node '${targetId}' unreachable — *eval-target* cleared. Eval dropped. Re-send to try on this node or try another node.\n`
+          done(encoder, id, managed.id, {
+            ex: errMsg,
+            err: errMsg,
+            ns: managed.session.currentNs,
+            status: ['eval-error', 'done'],
+          })
+        } else {
+          done(encoder, id, managed.id, {
+            ex: msg2,
+            err: msg2 + '\n',
+            ns: managed.session.currentNs,
+            status: ['eval-error', 'done'],
+          })
+        }
       }
       return
     }
@@ -211,7 +244,10 @@ async function handleEval(
     // evaluateAsync awaits any CljPending result before returning, so async
     // forms, mesh/set-target!, mesh/list-nodes, etc. all resolve correctly
     // before the nREPL response is sent. Sync evals are unaffected.
-    const result = await managed.session.evaluateAsync(code, { lineOffset, colOffset })
+    const result = await managed.session.evaluateAsync(code, {
+      lineOffset,
+      colOffset,
+    })
     const nsEnv = managed.session.registry.get(managed.session.currentNs)
     const printLen = nsEnv ? tryLookup('*print-length*', nsEnv) : undefined
     const printLvl = nsEnv ? tryLookup('*print-level*', nsEnv) : undefined
@@ -262,7 +298,11 @@ function handleLoadFile(
 
     const nsHint =
       fileName.replace(/\.clj$/, '').replace(/\//g, '.') || undefined
-    const loadedNs = managed.session.loadFile(source, nsHint, filePath || undefined)
+    const loadedNs = managed.session.loadFile(
+      source,
+      nsHint,
+      filePath || undefined
+    )
 
     // Track the file path for this namespace so info/lookup can return :file
     // for go-to-definition support.
@@ -327,7 +367,10 @@ function resolveSymbol(
   return resolveSymbolShared(sym, managed.session, contextNs)
 }
 
-function extractMeta(resolved: { value: CljValue; varObj?: import('./nrepl-symbol').ResolvedSymbol['varObj'] }) {
+function extractMeta(resolved: {
+  value: CljValue
+  varObj?: import('./nrepl-symbol').ResolvedSymbol['varObj']
+}) {
   return extractMetaShared(resolved.value, resolved.varObj?.meta)
 }
 
@@ -372,9 +415,9 @@ function handleInfo(
   const varMetaEntries = resolved.varObj?.meta?.entries ?? []
   for (const [k, v] of varMetaEntries) {
     if (k.kind !== 'keyword') continue
-    if (k.name === ':line'   && v.kind === 'number') varLine   = v.value
+    if (k.name === ':line' && v.kind === 'number') varLine = v.value
     if (k.name === ':column' && v.kind === 'number') varColumn = v.value
-    if (k.name === ':file'   && v.kind === 'string') varFile   = v.value
+    if (k.name === ':file' && v.kind === 'string') varFile = v.value
   }
 
   done(encoder, id, managed.id, {
@@ -383,8 +426,8 @@ function handleInfo(
     doc: meta.doc,
     'arglists-str': meta.arglistsStr,
     type: meta.type,
-    ...(varFile ?? file ? { file: varFile ?? file } : {}),
-    ...(varLine   !== undefined ? { line: varLine }     : {}),
+    ...((varFile ?? file) ? { file: varFile ?? file } : {}),
+    ...(varLine !== undefined ? { line: varLine } : {}),
     ...(varColumn !== undefined ? { column: varColumn } : {}),
   })
 }
@@ -463,7 +506,7 @@ function handleMessage(
       handleDescribe(msg, encoder)
       break
     case 'eval':
-      void handleEval(msg, managed, encoder, meshNode).catch(e => {
+      void handleEval(msg, managed, encoder, meshNode).catch((e) => {
         const m = e instanceof Error ? e.message : String(e)
         done(encoder, (msg['id'] as string) ?? '', managed.id, {
           ex: m,
@@ -544,11 +587,24 @@ export function startNreplServer(options: NreplServerOptions = {}): net.Server {
 
     // A default session for session-less messages (e.g. Calva's initial eval)
     const defaultId = makeSessionId()
-    const defaultSession = createManagedSession(defaultId, snapshot, encoder, options.sourceRoots)
+    const defaultSession = createManagedSession(
+      defaultId,
+      snapshot,
+      encoder,
+      options.sourceRoots
+    )
     sessions.set(defaultId, defaultSession)
 
     decoder.on('data', (msg: NreplMessage) => {
-      handleMessage(msg, sessions, snapshot, encoder, defaultSession, options.sourceRoots, meshNode)
+      handleMessage(
+        msg,
+        sessions,
+        snapshot,
+        encoder,
+        defaultSession,
+        options.sourceRoots,
+        meshNode
+      )
     })
 
     socket.on('error', () => {
@@ -570,7 +626,9 @@ export function startNreplServer(options: NreplServerOptions = {}): net.Server {
   if (writePortFile) {
     server.listen(port, host, () => {
       writeFileSync(portFile, String(port), 'utf8')
-      process.stdout.write(`Conjure nREPL server v${VERSION} started on port ${port}\n`)
+      process.stdout.write(
+        `Conjure nREPL server v${VERSION} started on port ${port}\n`
+      )
     })
     server.on('close', cleanup)
     process.on('exit', cleanup)
