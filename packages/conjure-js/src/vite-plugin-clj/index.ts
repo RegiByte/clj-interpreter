@@ -1,18 +1,29 @@
 import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs'
 import { resolve, relative, join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { createRequire } from 'node:module'
 import type { Plugin, ResolvedConfig, ViteDevServer } from 'vite'
 import { createSession } from '../core/session'
 import type { Session } from '../core/session'
-import { nsToPath, pathToNs } from './namespace-utils'
+import { nsToPath, pathToNs, extractStringRequires } from './namespace-utils'
 import { generateModuleCode, generateDts, safeJsIdentifier } from './codegen'
 import type { CodegenContext } from './codegen'
-import { startBrowserNreplRelay } from './nrepl-relay'
+import { startBrowserNreplRelay } from '../nrepl/relay'
 
 interface CljPluginOptions {
   sourceRoots?: string[]
   nreplPort?: number
+  /**
+   * Path to a user-defined session factory (relative to project root).
+   * When set, the virtual session module becomes a proxy: it imports your factory
+   * and calls it with the auto-built ImportMap so you control hostBindings, output, etc.
+   *
+   * The factory must be the default export with signature: (importMap: ImportMap) => Session
+   *
+   * Example: entrypoint: 'src/conjure.ts'
+   */
+  entrypoint?: string
 }
 
 // Resolve the conjure-js core index path regardless of whether this plugin
@@ -42,6 +53,12 @@ export function cljPlugin(options?: CljPluginOptions): Plugin {
   let codegenCtx: CodegenContext
   let generatorScriptPath: string
   let serveMode = false
+  // Collected during configResolved: original CLJ source string → resolved path/package name.
+  // Original string = what the CLJ runtime passes to importModule(s).
+  // Resolved = what Vite should actually import (absolute path for relative, unchanged for pkgs).
+  let stringRequires: Array<{ original: string; resolved: string }> = []
+  // Resolved absolute path to the user-defined session entrypoint (Mode 2), or null (Mode 1).
+  let entrypointPath: string | null = null
 
   function writeFileIfChanged(path: string, content: string) {
     try {
@@ -88,7 +105,7 @@ export function cljPlugin(options?: CljPluginOptions): Plugin {
           const source = readFileSync(filePath, 'utf-8')
           const nsNameFromPath = pathToNs(relative(projectRoot, filePath), sourceRoots)
           const dts = generateDts(codegenCtx, nsNameFromPath, source)
-          writeFileIfChanged(filePath + '.d.ts', dts)
+          if (dts) writeFileIfChanged(filePath + '.d.ts', dts)
         } catch {
           continue
         }
@@ -97,14 +114,45 @@ export function cljPlugin(options?: CljPluginOptions): Plugin {
   }
 
   function initServerSession() {
+    // Use a require resolver anchored to the project root so that the server session
+    // can import npm packages from the consuming project's node_modules (e.g. date-fns),
+    // not just from the plugin's own node_modules.
+    const projectRequire = createRequire(resolve(projectRoot, 'package.json'))
+
     serverSession = createSession({
       sourceRoots,
       readFile: (filePath: string) =>
         readFileSync(resolve(projectRoot, filePath), 'utf-8'),
       output: () => {},
+      // Node dynamic import — used only during server-side code generation (DTS inference).
+      // In the browser bundle, importModule is a synchronous import map lookup instead.
+      importModule: async (s: string) => {
+        if (!s.startsWith('.') && !s.startsWith('/')) {
+          // Package import: resolve from project root context so the consuming project's
+          // node_modules are searched instead of (or in addition to) the plugin's.
+          try {
+            const resolved = projectRequire.resolve(s)
+            return import(pathToFileURL(resolved).href)
+          } catch {
+            try {
+              return await import(s)
+            } catch {
+              // Package not importable in Node context (browser-only) — return stub
+              // so that namespace loading succeeds and codegen can infer exported vars.
+              return {}
+            }
+          }
+        }
+        // Local/absolute path: may be a browser-only file (e.g. local .ts with DOM deps).
+        // Return a stub so the CLJ namespace still loads for server-side var inference.
+        try {
+          return await import(s)
+        } catch {
+          return {}
+        }
+      },
     })
     codegenCtx = {
-      session: serverSession,
       sourceRoots,
       coreIndexPath,
       virtualSessionId: VIRTUAL_SESSION_ID,
@@ -121,6 +169,32 @@ export function cljPlugin(options?: CljPluginOptions): Plugin {
         return null
       },
     }
+  }
+
+  function scanStringRequires() {
+    // original string (what CLJ runtime passes to importModule) → resolved path/pkg
+    const seen = new Map<string, string>()
+    for (const root of sourceRoots) {
+      const rootPath = resolve(projectRoot, root)
+      for (const filePath of collectCljFiles(rootPath)) {
+        try {
+          const source = readFileSync(filePath, 'utf-8')
+          // Call twice: without filePath to get original CLJ source strings,
+          // with filePath to get resolved absolute paths for relative specifiers.
+          const originals = extractStringRequires(source)
+          const resolved = extractStringRequires(source, filePath)
+          for (let i = 0; i < originals.length; i++) {
+            seen.set(originals[i], resolved[i])
+          }
+        } catch {
+          continue
+        }
+      }
+    }
+    stringRequires = [...seen.entries()].map(([original, resolved]) => ({
+      original,
+      resolved,
+    }))
   }
 
   function regenerateBuiltInNamespaceSources() {
@@ -142,6 +216,23 @@ export function cljPlugin(options?: CljPluginOptions): Plugin {
     }
   }
 
+  /**
+   * Generate the static import table lines for the virtual session module.
+   * Each specifier gets a unique variable name. Returns { importLines, mapEntries }.
+   */
+  function buildImportTable(): { importLines: string[]; mapEntries: string[] } {
+    const importLines: string[] = []
+    const mapEntries: string[] = []
+    stringRequires.forEach(({ original, resolved }, i) => {
+      const varName = `_imp_${i}`
+      // Import statement uses the resolved path (absolute for local files, pkg name for packages).
+      // Map key uses the original CLJ source string — this is what importModule(s) receives at runtime.
+      importLines.push(`import * as ${varName} from ${JSON.stringify(resolved)};`)
+      mapEntries.push(`  ${JSON.stringify(original)}: ${varName},`)
+    })
+    return { importLines, mapEntries }
+  }
+
   return {
     name: 'vite-plugin-clj',
 
@@ -152,6 +243,22 @@ export function cljPlugin(options?: CljPluginOptions): Plugin {
       regenerateBuiltInNamespaceSources()
       coreIndexPath = resolveCoreIndexPath()
       initServerSession()
+
+      // Detect Mode 2: explicit user entrypoint
+      if (options?.entrypoint) {
+        const ep = resolve(projectRoot, options.entrypoint)
+        try {
+          statSync(ep)
+          entrypointPath = ep
+        } catch {
+          // Configured entrypoint doesn't exist — fall through to Mode 1 with a warning
+          console.warn(
+            `[vite-plugin-clj] entrypoint not found: ${options.entrypoint} — falling back to auto-generated session`
+          )
+        }
+      }
+
+      scanStringRequires()
       eagerlyGenerateDts()
     },
 
@@ -176,30 +283,63 @@ export function cljPlugin(options?: CljPluginOptions): Plugin {
 
     load(id: string) {
       if (id === RESOLVED_VIRTUAL_SESSION_ID) {
-        const lines = [
+        const { importLines, mapEntries } = buildImportTable()
+
+        // All static imports must be at the top of the module (ESM hoist semantics)
+        const lines: string[] = [
           `import { createSession, printString } from ${JSON.stringify(coreIndexPath)};`,
+          ...importLines,
+          ...(entrypointPath
+            ? [`import __conjureFactory from ${JSON.stringify(entrypointPath)};`]
+            : []),
+          ``,
+          `const __importMap = {`,
+          ...mapEntries,
+          `};`,
           ``,
           `let _session = null;`,
           `let _outputLines = [];`,
-          `export function getSession() {`,
-          `  if (!_session) {`,
-          `    _session = createSession({ output: (text) => { _outputLines.push(text); console.log(text.replace(/\\n$/, '')); } });`,
-          `  }`,
-          `  return _session;`,
-          `}`,
         ]
+
+        if (entrypointPath) {
+          // Mode 2: user-defined factory receives the import map and an output capture callback.
+          // The capture callback pushes text to _outputLines so that output is forwarded to
+          // Calva (and any other nREPL client) via the conjure:eval-result 'out' field.
+          lines.push(
+            `export function getSession() {`,
+            `  if (!_session) {`,
+            `    const _outputCapture = (text) => { _outputLines.push(text); };`,
+            `    _session = __conjureFactory(__importMap, _outputCapture);`,
+            `  }`,
+            `  return _session;`,
+            `}`,
+          )
+        } else {
+          // Mode 1: auto-generate session with import map wired in
+          lines.push(
+            `export function getSession() {`,
+            `  if (!_session) {`,
+            `    _session = createSession({`,
+            `      importModule: (s) => __importMap[s],`,
+            `      output: (text) => { _outputLines.push(text); console.log(text.replace(/\\n$/, '')); },`,
+            `    });`,
+            `  }`,
+            `  return _session;`,
+            `}`,
+          )
+        }
 
         if (serveMode) {
           lines.push(
             ``,
             `// Browser nREPL relay — active only in Vite dev server`,
             `if (import.meta.hot) {`,
-            `  import.meta.hot.on('conjure:eval', ({ id, code, ns }) => {`,
+            `  import.meta.hot.on('conjure:eval', async ({ id, code, ns }) => {`,
             `    const session = getSession();`,
             `    _outputLines = [];`,
             `    try {`,
             `      if (ns && ns !== session.currentNs) session.setNs(ns);`,
-            `      const result = session.evaluate(code);`,
+            `      const result = await session.evaluateAsync(code);`,
             `      const out = _outputLines.join('');`,
             `      import.meta.hot.send('conjure:eval-result', { id, value: printString(result), ns: session.currentNs, ...(out ? { out } : {}) });`,
             `    } catch (err) {`,
@@ -209,11 +349,11 @@ export function cljPlugin(options?: CljPluginOptions): Plugin {
             `    }`,
             `  });`,
             ``,
-            `  import.meta.hot.on('conjure:load-file', ({ id, source, nsHint, filePath }) => {`,
+            `  import.meta.hot.on('conjure:load-file', async ({ id, source, nsHint, filePath }) => {`,
             `    const session = getSession();`,
             `    _outputLines = [];`,
             `    try {`,
-            `      const loadedNs = session.loadFile(source, nsHint, filePath || undefined);`,
+            `      const loadedNs = await session.loadFileAsync(source, nsHint, filePath || undefined);`,
             `      if (loadedNs) session.setNs(loadedNs);`,
             `      const out = _outputLines.join('');`,
             `      import.meta.hot.send('conjure:load-file-result', { id, value: 'nil', ns: session.currentNs, ...(out ? { out } : {}) });`,
@@ -233,9 +373,9 @@ export function cljPlugin(options?: CljPluginOptions): Plugin {
       if (id.endsWith('.clj') && !id.includes('?')) {
         const source = readFileSync(id, 'utf-8')
         const nsNameFromPath = pathToNs(relative(projectRoot, id), sourceRoots)
-        const code = generateModuleCode(codegenCtx, nsNameFromPath, source)
+        const code = generateModuleCode(codegenCtx, nsNameFromPath, source, id)
         const dts = generateDts(codegenCtx, nsNameFromPath, source)
-        writeFileIfChanged(id + '.d.ts', dts)
+        if (dts) writeFileIfChanged(id + '.d.ts', dts)
         return code
       }
     },
@@ -250,7 +390,7 @@ export function cljPlugin(options?: CljPluginOptions): Plugin {
         const source = await read()
         try {
           const nsNameFromPath = pathToNs(relative(projectRoot, file), sourceRoots)
-          serverSession.loadFile(source, nsNameFromPath)
+          await serverSession.loadFileAsync(source, nsNameFromPath)
           const dts = generateDts(codegenCtx, nsNameFromPath, source)
           writeFileIfChanged(file + '.d.ts', dts)
         } catch {

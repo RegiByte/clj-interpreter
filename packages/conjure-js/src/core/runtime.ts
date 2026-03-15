@@ -482,6 +482,18 @@ function buildRuntime(
   )
 
   internVar(
+    'in-ns',
+    v.nativeFnCtx('in-ns', (ctx, _callEnv, sym: CljValue) => {
+      if (!sym || !isSymbol(sym)) {
+        throw new EvaluationError('in-ns expects a symbol', { sym })
+      }
+      if (ctx.setCurrentNs) ctx.setCurrentNs(sym.name)
+      return registry.get(sym.name)?.ns ?? v.nil()
+    }),
+    coreEnv
+  )
+
+  internVar(
     'ns-aliases',
     v.nativeFn('ns-aliases', (sym: CljValue) => {
       const ns = resolveNsSym(sym)

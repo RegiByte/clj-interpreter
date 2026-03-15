@@ -1,11 +1,10 @@
 /**
  * Node/Bun JS Interop Experiment
  *
- * Demonstrates conjure-js + native ESM dynamic imports.
- * No bundler — just Bun (or Node with --experimental-strip-types).
+ * Experimenting with conjure-js + native ESM dynamic imports.
+ * No bundler — just Bun
  *
  *   bun run main.ts
- *   node --experimental-strip-types main.ts
  *
  * Key design under test:
  *   importModule: (s) => import(s)

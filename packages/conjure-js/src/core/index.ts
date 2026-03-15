@@ -23,11 +23,11 @@ export type {
 
 // Conversions
 export { cljToJs, jsToClj, ConversionError } from './conversions'
+export type { FunctionApplier } from './conversions'
 
 // Evaluator
 export {
   applyFunction,
-  applyMacro,
   evaluateWithMeasurements,
 } from './evaluator'
 
@@ -104,6 +104,9 @@ export function readString(source: string): _CljValue {
   if (forms.length === 0) throw new Error('readString: empty input')
   return forms[0]
 }
+
+// JS interop — import map type for user-defined session entrypoints
+export type ImportMap = Record<string, unknown>
 
 // Types
 export type {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   extractNsName,
   extractNsRequires,
+  extractStringRequires,
   nsToPath,
   pathToNs,
 } from '../namespace-utils'
@@ -112,6 +113,86 @@ describe('extractNsRequires', () => {
   (:require [ns.a :as a])
   (:require [ns.b :as b]))`
     expect(extractNsRequires(source)).toEqual(['ns.a', 'ns.b'])
+  })
+})
+
+describe('extractStringRequires', () => {
+  it('returns empty array when no ns form', () => {
+    expect(extractStringRequires('(def x 1)')).toEqual([])
+  })
+
+  it('returns empty array when ns has only symbol requires', () => {
+    expect(
+      extractStringRequires('(ns my.app (:require [my.utils :as u]))')
+    ).toEqual([])
+  })
+
+  it('extracts a single string require', () => {
+    expect(
+      extractStringRequires('(ns my.app (:require ["react" :as React]))')
+    ).toEqual(['react'])
+  })
+
+  it('extracts multiple string requires', () => {
+    expect(
+      extractStringRequires(
+        '(ns my.app (:require ["react" :as React] ["date-fns" :as d]))'
+      )
+    ).toEqual(['react', 'date-fns'])
+  })
+
+  it('mixes symbol and string requires — only returns string ones', () => {
+    expect(
+      extractStringRequires(
+        '(ns my.app (:require [my.utils :as u] ["react" :as React] [other.ns] ["lodash" :as _]))'
+      )
+    ).toEqual(['react', 'lodash'])
+  })
+
+  it('deduplicates repeated specifiers', () => {
+    expect(
+      extractStringRequires(
+        '(ns my.app (:require ["react" :as React] ["react" :as R2]))'
+      )
+    ).toEqual(['react'])
+  })
+
+  it('resolves relative specifiers when filePath is provided', () => {
+    const result = extractStringRequires(
+      '(ns my.app (:require ["./utils" :as u]))',
+      '/project/src/app/core.clj'
+    )
+    expect(result).toEqual(['/project/src/app/utils'])
+  })
+
+  it('resolves parent-relative specifiers when filePath is provided', () => {
+    const result = extractStringRequires(
+      '(ns my.app (:require ["../shared/helpers" :as h]))',
+      '/project/src/app/core.clj'
+    )
+    expect(result).toEqual(['/project/src/shared/helpers'])
+  })
+
+  it('leaves relative specifiers as-is when filePath is not provided', () => {
+    expect(
+      extractStringRequires('(ns my.app (:require ["./utils" :as u]))')
+    ).toEqual(['./utils'])
+  })
+
+  it('leaves package specifiers unchanged even when filePath provided', () => {
+    expect(
+      extractStringRequires(
+        '(ns my.app (:require ["react" :as React] ["date-fns/format" :as fmt]))',
+        '/project/src/app/core.clj'
+      )
+    ).toEqual(['react', 'date-fns/format'])
+  })
+
+  it('handles multiple :require clauses', () => {
+    const source = `(ns my.app
+  (:require ["react" :as React])
+  (:require ["date-fns" :as d]))`
+    expect(extractStringRequires(source)).toEqual(['react', 'date-fns'])
   })
 })
 

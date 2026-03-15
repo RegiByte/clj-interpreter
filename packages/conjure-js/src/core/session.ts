@@ -1,10 +1,11 @@
 import { builtInNamespaceSources } from '../clojure/generated/builtin-namespace-registry'
 import { CljThrownSignal, EvaluationError, ReaderError } from './errors'
 import { createEvaluationContext, RecurSignal } from './evaluator'
-import { internVar } from './env'
+import { internVar, makeEnv } from './env'
 import { v } from './factories'
 import { jsToClj } from './evaluator/js-interop'
 import type { RuntimeModule } from './module'
+import { cljToJs as _cljToJs } from './conversions'
 import { formatErrorContext } from './positions'
 import { printString } from './printer'
 import { readForms } from './reader'
@@ -70,6 +71,19 @@ export type Session = {
     opts?: { lineOffset?: number; colOffset?: number; file?: string }
   ) => Promise<CljValue>
   evaluateForms: (forms: CljValue[]) => CljValue
+  /**
+   * Call a CljFunction or CljNativeFunction using this session's evaluation context.
+   * Unlike the bare `applyFunction` export from `core/index`, this resolves namespaces
+   * through the session's runtime registry — required for any CLJ code that references
+   * qualified symbols like `js/Math` or `:require`-d aliases.
+   */
+  applyFunction: (fn: CljValue, args: CljValue[]) => CljValue
+  /**
+   * Convert a CljValue to a plain JS value using this session's evaluation context.
+   * CLJ functions are wrapped as JS callbacks that invoke via session.applyFunction,
+   * ensuring namespace resolution works for js/Math and other runtime namespaces.
+   */
+  cljToJs: (value: CljValue) => unknown
   addSourceRoot: (path: string) => void
   getCompletions: (prefix: string, nsName?: string) => string[]
 }
@@ -99,6 +113,11 @@ function buildSessionFacade(
     stderr: options?.stderr ?? ((text) => console.error(text)),
   }
   ctx.importModule = options?.importModule
+  ctx.setCurrentNs = (name: string) => {
+    runtime.ensureNamespace(name)
+    currentNs = name
+    runtime.syncNsVar(name)
+  }
 
   const session: Session = {
     get runtime() {
@@ -279,6 +298,14 @@ function buildSessionFacade(
         ctx.currentSource = undefined
         ctx.currentFile = undefined
       }
+    },
+
+    applyFunction(fn: CljValue, args: CljValue[]): CljValue {
+      return ctx.applyCallable(fn, args, makeEnv())
+    },
+
+    cljToJs(value: CljValue): unknown {
+      return _cljToJs(value, { applyFunction: (fn, args) => ctx.applyCallable(fn, args, makeEnv()) })
     },
 
     evaluateForms(forms: CljValue[]): CljValue {

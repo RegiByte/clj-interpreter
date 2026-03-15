@@ -1,3 +1,4 @@
+import { resolve, dirname } from 'node:path'
 import { isKeyword, isList, isSymbol, isVector } from '../core/assertions'
 import { readForms } from '../core/reader'
 import { tokenize } from '../core/tokenizer'
@@ -61,6 +62,44 @@ export function extractNsRequires(source: string): string[] {
     }
   }
   return requires
+}
+
+/**
+ * Parse Clojure source and extract all string module specifiers from (:require ...) clauses.
+ * These are the JS/npm imports written as string literals: (:require ["react" :as React]).
+ * Returns an array of resolved specifier strings (deduplicated).
+ *
+ * If filePath is provided, relative specifiers (starting with ./ or ../) are resolved
+ * to absolute paths using the file's directory. Package specifiers are returned as-is.
+ */
+export function extractStringRequires(source: string, filePath?: string): string[] {
+  const forms = readForms(tokenize(source))
+  const nsForm = forms.find(
+    (f) => isList(f) && isSymbol(f.value[0]) && f.value[0].name === 'ns'
+  )
+  if (!nsForm || !isList(nsForm)) return []
+
+  const specifiers: string[] = []
+  for (let i = 2; i < nsForm.value.length; i++) {
+    const clause = nsForm.value[i]
+    if (
+      isList(clause) &&
+      isKeyword(clause.value[0]) &&
+      clause.value[0].name === ':require'
+    ) {
+      for (let j = 1; j < clause.value.length; j++) {
+        const spec = clause.value[j]
+        const first = isVector(spec) && spec.value.length > 0 ? spec.value[0] : null
+        if (!first || first.kind !== 'string') continue
+        let specifier = first.value
+        if (filePath && (specifier.startsWith('./') || specifier.startsWith('../'))) {
+          specifier = resolve(dirname(filePath), specifier)
+        }
+        specifiers.push(specifier)
+      }
+    }
+  }
+  return [...new Set(specifiers)]
 }
 
 /**

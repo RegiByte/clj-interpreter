@@ -14,7 +14,7 @@ import {
   type SessionSnapshot,
 } from '../core'
 import { withPrintContext } from '../core/printer'
-import { tryLookup } from '../core/env'
+import { derefValue } from '../core/env'
 import { inferSourceRoot } from './nrepl-utils'
 import {
   resolveSymbol as resolveSymbolShared,
@@ -288,9 +288,15 @@ async function handleEval(
       lineOffset,
       colOffset,
     })
-    const nsEnv = managed.session.registry.get(managed.session.currentNs)
-    const printLen = nsEnv ? tryLookup('*print-length*', nsEnv) : undefined
-    const printLvl = nsEnv ? tryLookup('*print-level*', nsEnv) : undefined
+    // Resolve *print-length* / *print-level* via the registry (same rationale
+    // as emitToOut in core-module.ts: session.getNs goes through the runtime
+    // registry so we always get the session's own freshly-cloned var, not a
+    // stale one from a snapshot closure env).
+    const coreNs = managed.session.getNs('clojure.core')
+    const lenVar = coreNs?.vars.get('*print-length*')
+    const lvlVar = coreNs?.vars.get('*print-level*')
+    const printLen = lenVar ? derefValue(lenVar) : undefined
+    const printLvl = lvlVar ? derefValue(lvlVar) : undefined
     const resultStr = withPrintContext(
       {
         printLength: printLen?.kind === 'number' ? printLen.value : null,

@@ -175,6 +175,11 @@ export type EvaluationContext = {
    * Wired from SessionOptions.importModule in buildSessionFacade.
    */
   importModule?: (specifier: string) => unknown | Promise<unknown>
+  /**
+   * Switches the session's current namespace. Wired by buildSessionFacade.
+   * Called by `in-ns` at runtime. Without this hook, `in-ns` is a no-op.
+   */
+  setCurrentNs?: (name: string) => void
 }
 
 export type CljNativeFunction = {

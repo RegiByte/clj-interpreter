@@ -95,3 +95,20 @@ describe('*err* / warn / with-err-str', () => {
     expect(out).toEqual([])
   })
 })
+
+describe('*print-length* dynamic binding', () => {
+  it('binding *print-length* truncates pr output', () => {
+    expect(session().evaluate('(binding [*print-length* 3] (pr-str [1 2 3 4 5]))')).toEqual(
+      cljString('[1 2 3 ...]')
+    )
+  })
+
+  it('*print-length* binding inside a function body is respected', () => {
+    // This test exercises the snapshot env aliasing fix: the function is defined
+    // after bootstrap and its body closes over the session's env. Without the fix,
+    // tryLookup(callEnv) would traverse the stale snapshot env and miss the binding.
+    const s = session()
+    s.evaluate('(defn bounded-print [coll] (binding [*print-length* 2] (pr-str coll)))')
+    expect(s.evaluate('(bounded-print [1 2 3 4])')).toEqual(cljString('[1 2 ...]'))
+  })
+})

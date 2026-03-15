@@ -51,6 +51,7 @@ export function createEvaluationContext(): EvaluationContext {
 
 /** Public API, this is the only place where we create a new evaluation context
  * All inner evaluations will use the same context
+ * @deprecated use session.applyFunction instead
  */
 export function applyFunction(
   fn: CljFunction | CljNativeFunction,
@@ -58,15 +59,6 @@ export function applyFunction(
   callEnv: Env = makeEnv()
 ): CljValue {
   return createEvaluationContext().applyFunction(fn, args, callEnv)
-}
-export function applyMacro(macro: CljMacro, rawArgs: CljValue[]): CljValue {
-  return createEvaluationContext().applyMacro(macro, rawArgs)
-}
-export function evaluate(expr: CljValue, env: Env): CljValue {
-  return createEvaluationContext().evaluate(expr, env)
-}
-export function evaluateForms(forms: CljValue[], env: Env): CljValue {
-  return createEvaluationContext().evaluateForms(forms, env)
 }
 
 export function evaluateWithMeasurements(

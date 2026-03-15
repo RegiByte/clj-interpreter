@@ -59,6 +59,23 @@ export function applyFunctionWithContext(
   )
 }
 
+export function applyMacroWithContext(
+  macro: CljMacro,
+  rawArgs: CljValue[],
+  ctx: EvaluationContext
+): CljValue {
+  const arity = resolveArity(macro.arities, rawArgs.length)
+  const localEnv = bindParams(
+    arity.params,
+    arity.restParam,
+    rawArgs,
+    macro.env,
+    ctx,
+    macro.env
+  )
+  return ctx.evaluateForms(arity.body, localEnv)
+}
+
 /**
  * Invokes any IFn value — functions, native functions, keywords, and maps.
  * Used by comp, partial, and any other HOF that needs to call an arbitrary
@@ -95,7 +112,10 @@ export function applyCallableWithContext(
   }
   if (is.map(fn)) {
     if (args.length === 0) {
-      throw new EvaluationError('Map used as function requires at least one argument', { fn, args })
+      throw new EvaluationError(
+        'Map used as function requires at least one argument',
+        { fn, args }
+      )
     }
     const key = args[0]
     const defaultVal = args.length > 1 ? args[1] : cljNil()
@@ -106,21 +126,4 @@ export function applyCallableWithContext(
     fn,
     args,
   })
-}
-
-export function applyMacroWithContext(
-  macro: CljMacro,
-  rawArgs: CljValue[],
-  ctx: EvaluationContext
-): CljValue {
-  const arity = resolveArity(macro.arities, rawArgs.length)
-  const localEnv = bindParams(
-    arity.params,
-    arity.restParam,
-    rawArgs,
-    macro.env,
-    ctx,
-    macro.env
-  )
-  return ctx.evaluateForms(arity.body, localEnv)
 }
