@@ -4,13 +4,15 @@ import type {
   VarMap,
   ModuleContext,
 } from './module'
-import { prettyPrintString, printString, withPrintContext } from './printer'
-import { derefValue, tryLookup } from './env'
+import { buildPrintContext, prettyPrintString, printString, withPrintContext } from './printer'
+import { derefValue } from './env'
 import { valueToString } from './transformations'
 import type { CljMap, CljValue, Env, EvaluationContext } from './types'
 import { arithmeticFunctions } from './stdlib/arithmetic'
 import { atomFunctions } from './stdlib/atoms'
-import { collectionFunctions } from './stdlib/collections'
+import { mapsSetsFunctions } from './stdlib/maps-sets'
+import { seqFunctions } from './stdlib/seq'
+import { vectorFunctions } from './stdlib/vectors'
 import { errorFunctions } from './stdlib/errors'
 import { hofFunctions } from './stdlib/hof'
 import { metaFunctions } from './stdlib/meta'
@@ -24,6 +26,9 @@ import { varFunctions } from './stdlib/vars'
 // --- ASYNC (experimental) ---
 import { asyncFunctions } from './stdlib/async-fns'
 import { v } from './factories'
+import { is } from './assertions'
+import { EvaluationError } from './errors'
+import { cljToJs as cljToJsDeep, jsToClj as jsToCljDeep, type FunctionApplier } from './conversions'
 // --- END ASYNC ---
 
 // ---------------------------------------------------------------------------
@@ -72,7 +77,9 @@ import { v } from './factories'
 const nativeFunctions = {
   ...arithmeticFunctions,
   ...atomFunctions,
-  ...collectionFunctions,
+  ...seqFunctions,
+  ...vectorFunctions,
+  ...mapsSetsFunctions,
   ...errorFunctions,
   ...predicateFunctions,
   ...hofFunctions,
@@ -88,14 +95,6 @@ const nativeFunctions = {
   // --- END ASYNC ---
 }
 
-function readPrintCtx(callEnv: Env) {
-  const len = tryLookup('*print-length*', callEnv)
-  const level = tryLookup('*print-level*', callEnv)
-  return {
-    printLength: len?.kind === 'number' ? len.value : null,
-    printLevel: level?.kind === 'number' ? level.value : null,
-  }
-}
 
 /**
  * Emit text to the current output channel.
@@ -164,7 +163,7 @@ export function makeCoreModule(): RuntimeModule {
             value: v.nativeFnCtx(
               'println',
               (ctx, callEnv, ...args: CljValue[]) => {
-                withPrintContext(readPrintCtx(callEnv), () => {
+                withPrintContext(buildPrintContext(ctx), () => {
                   emitToOut(
                     ctx,
                     callEnv,
@@ -179,7 +178,7 @@ export function makeCoreModule(): RuntimeModule {
             value: v.nativeFnCtx(
               'print',
               (ctx, callEnv, ...args: CljValue[]) => {
-                withPrintContext(readPrintCtx(callEnv), () => {
+                withPrintContext(buildPrintContext(ctx), () => {
                   emitToOut(ctx, callEnv, args.map(valueToString).join(' '))
                 })
                 return v.nil()
@@ -194,7 +193,7 @@ export function makeCoreModule(): RuntimeModule {
           })
           map.set('pr', {
             value: v.nativeFnCtx('pr', (ctx, callEnv, ...args: CljValue[]) => {
-              withPrintContext(readPrintCtx(callEnv), () => {
+              withPrintContext(buildPrintContext(ctx), () => {
                 emitToOut(
                   ctx,
                   callEnv,
@@ -206,7 +205,7 @@ export function makeCoreModule(): RuntimeModule {
           })
           map.set('prn', {
             value: v.nativeFnCtx('prn', (ctx, callEnv, ...args: CljValue[]) => {
-              withPrintContext(readPrintCtx(callEnv), () => {
+              withPrintContext(buildPrintContext(ctx), () => {
                 emitToOut(
                   ctx,
                   callEnv,
@@ -223,7 +222,7 @@ export function makeCoreModule(): RuntimeModule {
                 if (form === undefined) return v.nil()
                 const maxWidth =
                   widthArg?.kind === 'number' ? widthArg.value : 80
-                withPrintContext(readPrintCtx(callEnv), () => {
+                withPrintContext(buildPrintContext(ctx), () => {
                   emitToOut(
                     ctx,
                     callEnv,
@@ -238,7 +237,7 @@ export function makeCoreModule(): RuntimeModule {
             value: v.nativeFnCtx(
               'warn',
               (ctx, callEnv, ...args: CljValue[]) => {
-                withPrintContext(readPrintCtx(callEnv), () => {
+                withPrintContext(buildPrintContext(ctx), () => {
                   emitToErr(
                     ctx,
                     callEnv,
@@ -262,6 +261,39 @@ export function makeCoreModule(): RuntimeModule {
 
           // Compatibility var for IDE tooling
           map.set('*compiler-options*', { value: v.map([]) })
+
+          // JS interop — deep conversion functions
+          map.set('clj->js', {
+            value: v.nativeFnCtx('clj->js', (ctx: EvaluationContext, callEnv: Env, val: CljValue) => {
+              if (is.jsValue(val)) return val
+              const applier: FunctionApplier = {
+                applyFunction: (fn, args) => ctx.applyCallable(fn, args, callEnv),
+              }
+              return v.jsValue(cljToJsDeep(val, applier))
+            }),
+          })
+
+          map.set('js->clj', {
+            value: v.nativeFn('js->clj', (val: CljValue, opts?: CljValue) => {
+              if (val.kind === 'nil') return val
+              if (!is.jsValue(val)) {
+                throw new EvaluationError(
+                  `js->clj expects a js-value, got ${val.kind}`,
+                  { val }
+                )
+              }
+              const keywordizeKeys = (() => {
+                if (!opts || opts.kind !== 'map') return false
+                for (const [k, flag] of opts.entries) {
+                  if (k.kind === 'keyword' && k.name === ':keywordize-keys') {
+                    return flag.kind !== 'boolean' || flag.value !== false
+                  }
+                }
+                return false
+              })()
+              return jsToCljDeep(val.value, { keywordizeKeys })
+            }),
+          })
 
           return map
         },

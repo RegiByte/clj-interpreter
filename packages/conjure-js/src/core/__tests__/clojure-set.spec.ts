@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { freshSession } from './evaluator-test-utils'
+import { freshSession } from '../evaluator/__tests__/evaluator-test-utils'
 
 function s() {
   const session = freshSession()

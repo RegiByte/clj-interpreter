@@ -1,21 +1,57 @@
 /**
  * Async sub-evaluator for (async ...) blocks.
  *
- * EXPERIMENTAL — gated behind the (async ...) special form in special-forms.ts.
- * To revert: delete this file, remove the `async` case + import in special-forms.ts,
- * remove CljPending from types.ts, remove cljPending from factories.ts,
- * remove the pending case from printer.ts, delete async-fns.ts.
+ * ## Architecture invariant
  *
- * Design: .regibyte/sessions/87-async-pending-design-and-plan.md
+ * The SYNC evaluator (evaluate.ts / special-forms.ts / apply.ts) is the
+ * canonical path. This file is a thin async wrapper — it handles only the
+ * forms that can contain sub-expressions that must be awaited (CljPending
+ * values unwrapped via @). Everything else delegates to asyncCtx.syncCtx.
+ *
+ * Design rule: never add `await` to the sync evaluator. Even trivial forms
+ * like (+ 1 2) must remain zero-overhead synchronous. The async path pays
+ * the Promise overhead only for code inside (async ...) blocks.
+ *
+ * ## What needs an async handler vs. what delegates to sync
+ *
+ * Forms with their own async handler (can contain @ sub-expressions):
+ *   - `if`, `do`, `let/let*`, `loop`, `recur`, `try`, `set!`
+ *
+ * Forms that are safe to delegate to syncCtx.evaluate:
+ *   - `quote`, `var`, `fn/fn*`, `ns` — no sub-expression evaluation at the
+ *     creation site; fn bodies are evaluated async only when the fn is called.
+ *   - `defmacro`, `defmulti`, `defmethod`, `letfn`, `delay`, `lazy-seq`,
+ *     `quasiquote` — create thunks or install definitions; content is
+ *     evaluated lazily or later.
+ *   - `binding` — V1 limitation: async-computed binding values are not
+ *     supported. Bind the var before the async block and use set! if needed.
+ *   - `.`, `js/new` — JS interop is sync; args are NOT awaited before the
+ *     call (V1 limitation: deref @ pending values explicitly before the form).
+ *   - `async` — nested async blocks create a new CljPending via the sync path.
+ *   - `def` — throws with a helpful message; define vars outside async blocks.
+ *
+ * ## Revert instructions
+ *
+ * To remove the async feature: delete this file, remove the `async` case and
+ * its import in special-forms.ts, remove CljPending from types.ts, remove
+ * cljPending from factories.ts, remove the pending case from printer.ts,
+ * and delete async-fns.ts from stdlib.
+ *
+ * Design session: .regibyte/sessions/87-async-pending-design-and-plan.md
  */
 
 import { is } from '../assertions'
 import { extend } from '../env'
 import { CljThrownSignal, EvaluationError } from '../errors'
 import { cljNil } from '../factories'
-import type { CljValue, Env, EvaluationContext } from '../types'
+import type { CljList, CljValue, Env, EvaluationContext } from '../types'
 import { bindParams, RecurSignal, resolveArity } from './arity'
 import { destructureBindings } from './destructure'
+import {
+  matchesDiscriminator,
+  parseTryStructure,
+  validateBindingVector,
+} from './form-parsers'
 
 // ---- AsyncEvalCtx ----
 // A parallel evaluation context where all dispatch methods are async.
@@ -125,6 +161,10 @@ async function evaluateFormsAsync(
 
 // ---- List evaluation ----
 
+// Must mirror specialFormKeywords in special-forms.ts.
+// If a new special form is added to the sync dispatcher and omitted here,
+// (async ...) blocks will silently treat it as a function call at runtime.
+// Add new forms here and delegate to syncCtx if no async-aware handling needed.
 const ASYNC_SPECIAL_FORMS = new Set([
   'quote',
   'def',
@@ -149,6 +189,10 @@ const ASYNC_SPECIAL_FORMS = new Set([
   'lazy-seq',
   'ns',
   'async',
+  // JS interop — delegate to sync; args inside (async ...) are not awaited
+  // before the interop call (V1 limitation: use @ explicitly before the form).
+  '.',
+  'js/new',
 ])
 
 async function evaluateListAsync(
@@ -294,15 +338,7 @@ async function evaluateLetAsync(
   asyncCtx: AsyncEvalCtx
 ): Promise<CljValue> {
   const bindings = list.value[1]
-  if (!is.vector(bindings)) {
-    throw new EvaluationError('let bindings must be a vector', { list, env })
-  }
-  if (bindings.value.length % 2 !== 0) {
-    throw new EvaluationError(
-      'let bindings must have an even number of forms',
-      { list, env }
-    )
-  }
+  validateBindingVector(bindings, 'let', env)
 
   let currentEnv = env
   const pairs = bindings.value
@@ -332,15 +368,7 @@ async function evaluateLoopAsync(
   asyncCtx: AsyncEvalCtx
 ): Promise<CljValue> {
   const loopBindings = list.value[1]
-  if (!is.vector(loopBindings)) {
-    throw new EvaluationError('loop bindings must be a vector', { list, env })
-  }
-  if (loopBindings.value.length % 2 !== 0) {
-    throw new EvaluationError(
-      'loop bindings must have an even number of forms',
-      { list, env }
-    )
-  }
+  validateBindingVector(loopBindings, 'loop', env)
 
   const loopBody = list.value.slice(2)
 
@@ -422,38 +450,13 @@ async function evaluateTryAsync(
   env: Env,
   asyncCtx: AsyncEvalCtx
 ): Promise<CljValue> {
-  const forms = list.value.slice(1)
-  const bodyForms: CljValue[] = []
-  const catchClauses: Array<{
-    discriminator: CljValue
-    binding: string
-    body: CljValue[]
-  }> = []
-  let finallyForms: CljValue[] | null = null
-
-  for (let i = 0; i < forms.length; i++) {
-    const form = forms[i]
-    if (
-      form.kind === 'list' &&
-      form.value.length > 0 &&
-      form.value[0].kind === 'symbol'
-    ) {
-      const head = form.value[0].name
-      if (head === 'catch') {
-        catchClauses.push({
-          discriminator: form.value[1],
-          binding: (form.value[2] as { name: string }).name,
-          body: form.value.slice(3),
-        })
-        continue
-      }
-      if (head === 'finally') {
-        finallyForms = form.value.slice(1)
-        continue
-      }
-    }
-    bodyForms.push(form)
-  }
+  // parseTryStructure validates catch/finally structure (binding symbol, ordering).
+  // matchesDiscriminator uses asyncCtx.syncCtx — discriminator evaluation is always
+  // synchronous (keyword checks, predicate calls on already-resolved values).
+  const { bodyForms, catchClauses, finallyForms } = parseTryStructure(
+    list as CljList,
+    env
+  )
 
   let result: CljValue = cljNil()
   let pendingThrow: unknown = null
@@ -486,11 +489,19 @@ async function evaluateTryAsync(
 
     let handled = false
     for (const clause of catchClauses) {
-      // Simple catch-all: match everything (V1 — no type discrimination)
-      const catchEnv = extend([clause.binding], [thrownValue], env)
-      result = await evaluateFormsAsync(clause.body, catchEnv, asyncCtx)
-      handled = true
-      break
+      if (
+        matchesDiscriminator(
+          clause.discriminator,
+          thrownValue,
+          env,
+          asyncCtx.syncCtx
+        )
+      ) {
+        const catchEnv = extend([clause.binding], [thrownValue], env)
+        result = await evaluateFormsAsync(clause.body, catchEnv, asyncCtx)
+        handled = true
+        break
+      }
     }
 
     if (!handled) {

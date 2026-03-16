@@ -1,5 +1,4 @@
 import { isCljValue } from './assertions'
-import { applyFunction } from './evaluator'
 import { v } from './factories'
 import type { CljValue } from './types'
 
@@ -12,9 +11,25 @@ export class ConversionError extends Error {
   }
 }
 
+export type FunctionApplier = {
+  applyFunction: (fn: CljValue, args: CljValue[]) => CljValue
+}
+
 const richKeyKinds = new Set(['list', 'vector', 'map'])
 
-export function cljToJs(value: CljValue): unknown {
+// Used inside jsToClj's function wrapper when converting CLJ args back to JS.
+// CLJ args passed to JS-wrapped functions are almost always data values, so
+// no applier is needed. If a CLJ function is encountered here, we throw a clear
+// error — use session.cljToJs() for function-bearing values.
+const _throwingApplier: FunctionApplier = {
+  applyFunction: () => {
+    throw new ConversionError(
+      'Cannot convert a CLJ function to JS in this context — use session.cljToJs() instead.'
+    )
+  },
+}
+
+export function cljToJs(value: CljValue, applier: FunctionApplier): unknown {
   switch (value.kind) {
     case 'number':
       return value.value
@@ -30,18 +45,18 @@ export function cljToJs(value: CljValue): unknown {
       return value.name
     case 'list':
     case 'vector':
-      return value.value.map(cljToJs)
+      return value.value.map((item) => cljToJs(item, applier))
     case 'map': {
       const obj: Record<string, unknown> = {}
-      for (const [k, v] of value.entries) {
+      for (const [k, val] of value.entries) {
         if (richKeyKinds.has(k.kind)) {
           throw new ConversionError(
             `Rich key types (${k.kind}) are not supported in JS object conversion. Restructure your map to use string, keyword, or number keys.`,
-            { key: k, value: v }
+            { key: k, value: val }
           )
         }
-        const jsKey = String(cljToJs(k))
-        obj[jsKey] = cljToJs(v)
+        const jsKey = String(cljToJs(k, applier))
+        obj[jsKey] = cljToJs(val, applier)
       }
       return obj
     }
@@ -49,9 +64,9 @@ export function cljToJs(value: CljValue): unknown {
     case 'native-function': {
       const fn = value
       return (...jsArgs: unknown[]) => {
-        const cljArgs = jsArgs.map(jsToClj)
-        const result = applyFunction(fn, cljArgs)
-        return cljToJs(result)
+        const cljArgs = jsArgs.map((a) => jsToClj(a))
+        const result = applier.applyFunction(fn, cljArgs)
+        return cljToJs(result, applier)
       }
     }
     case 'macro':
@@ -62,8 +77,16 @@ export function cljToJs(value: CljValue): unknown {
   }
 }
 
-export function jsToClj(value: unknown): CljValue {
-  if (value === null || value === undefined) return v.nil()
+export interface JsToCljOpts {
+  /** When true, plain object keys become keywords. Default: true. */
+  keywordizeKeys?: boolean
+}
+
+export function jsToClj(value: unknown, opts: JsToCljOpts = {}): CljValue {
+  const { keywordizeKeys = true } = opts
+
+  if (value === null) return v.nil()
+  if (value === undefined) return v.jsValue(undefined)
   if (isCljValue(value)) return value
 
   switch (typeof value) {
@@ -76,18 +99,21 @@ export function jsToClj(value: unknown): CljValue {
     case 'function': {
       const jsFn = value as (...args: unknown[]) => unknown
       return v.nativeFn('js-fn', (...cljArgs: CljValue[]) => {
-        const jsArgs = cljArgs.map(cljToJs)
+        const jsArgs = cljArgs.map((a) => cljToJs(a, _throwingApplier))
         const result = jsFn(...jsArgs)
-        return jsToClj(result)
+        return jsToClj(result, opts)
       })
     }
     case 'object': {
       if (Array.isArray(value)) {
-        return v.vector(value.map(jsToClj))
+        return v.vector(value.map((item) => jsToClj(item, opts)))
       }
       const entries: [CljValue, CljValue][] = Object.entries(
         value as Record<string, unknown>
-      ).map(([k, value]) => [v.keyword(`:${k}`), jsToClj(value)])
+      ).map(([k, val]) => [
+        keywordizeKeys ? v.keyword(`:${k}`) : v.string(k),
+        jsToClj(val, opts),
+      ])
       return v.map(entries)
     }
     default:

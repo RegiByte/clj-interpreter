@@ -3,7 +3,6 @@ import { describe, expect, it, beforeEach } from 'vitest'
 import { cljPlugin, safeJsIdentifier, generateModuleCode, generateDts } from '../index'
 import type { CodegenContext } from '../codegen'
 import type { Plugin, ResolvedConfig } from 'vite'
-import { createSession } from '../../core/session'
 
 const projectRoot = resolve(__dirname, '../../..')
 
@@ -30,7 +29,6 @@ function makePlugin(sourceRoots?: string[]) {
 
 function makeCodegenCtx(overrides?: Partial<CodegenContext>): CodegenContext {
   return {
-    session: createSession(),
     sourceRoots: ['src'],
     coreIndexPath: '/project/src/core/index.ts',
     virtualSessionId: 'virtual:clj-session',
@@ -155,7 +153,13 @@ describe('cljPlugin', () => {
       const code = load('\0virtual:clj-session', {})
       expect(code).toContain('import { createSession, printString }')
       expect(code).toContain('export function getSession()')
-      expect(code).toContain('createSession({ output:')
+      expect(code).toContain('importModule: (s) => __importMap[s]')
+    })
+
+    it('generates an empty import map when no string requires present', () => {
+      const load = getHookHandler(plugin.load, 'load')
+      const code = load('\0virtual:clj-session', {})
+      expect(code).toContain('const __importMap = {')
     })
 
     it('returns undefined for non-clj files', () => {
@@ -179,8 +183,8 @@ describe('generateModuleCode', () => {
     expect(code).toContain('export function helper(...args)')
     expect(code).toContain('__ns.vars.get("helper")')
     expect(code).toContain('args.map(jsToClj)')
-    expect(code).toContain('applyFunction(fn, cljArgs)')
-    expect(code).toContain('cljToJs(result)')
+    expect(code).toContain('__session.applyFunction(fn, cljArgs)')
+    expect(code).toContain('cljToJs(result, __session)')
   })
 
   it('generates const exports for non-function values', () => {
@@ -189,6 +193,7 @@ describe('generateModuleCode', () => {
     const code = generateModuleCode(ctx, 'test.vals', source)
 
     expect(code).toContain('export const greeting = cljToJs(')
+    expect(code).toContain(', __session)')
     expect(code).toContain('"greeting"')
     expect(code).toContain('export const my_count = cljToJs(')
     expect(code).toContain('"my-count"')
@@ -204,13 +209,21 @@ describe('generateModuleCode', () => {
     expect(code).toContain('export const x')
   })
 
+  it('excludes private vars from exports', () => {
+    const ctx = makeCodegenCtx()
+    const source = '(ns test.priv)\n(defn- helper [x] x)\n(defn pub [x] (helper x))'
+    const code = generateModuleCode(ctx, 'test.priv', source)
+
+    expect(code).not.toContain('export function helper')
+    expect(code).not.toContain('export const helper')
+    expect(code).toContain('export function pub(')
+  })
+
   it('generates dependency imports for require clauses', () => {
     const depPath = '/project/src/dep.clj'
     const ctx = makeCodegenCtx({
       resolveDepPath: (depNs) => (depNs === 'dep' ? depPath : null),
     })
-
-    ctx.session.loadFile('(ns dep)\n(def y 99)')
 
     const source = '(ns test.deps (:require [dep :as d]))\n(def x d/y)'
     const code = generateModuleCode(ctx, 'test.deps', source)
@@ -243,17 +256,27 @@ describe('generateModuleCode', () => {
     const code = generateModuleCode(ctx, 'test.core', source)
 
     expect(code).toContain(
-      'import { cljToJs, jsToClj, applyFunction } from "/project/src/core/index.ts"'
+      'import { cljToJs, jsToClj } from "/project/src/core/index.ts"'
     )
   })
 
-  it('embeds source as JSON-escaped string for loadFile call', () => {
+  it('emits sync loadFile call when no string requires', () => {
     const ctx = makeCodegenCtx()
     const source = '(ns test.embed)\n(def msg "hello\\nworld")'
     const code = generateModuleCode(ctx, 'test.embed', source)
 
     expect(code).toContain('__session.loadFile(')
+    expect(code).not.toContain('loadFileAsync')
     expect(code).toContain('"test.embed"')
+  })
+
+  it('emits await loadFileAsync call when string requires are present', () => {
+    const ctx = makeCodegenCtx()
+    const source = '(ns test.async-load (:require ["some-pkg" :as pkg]))\n(def x 1)'
+    const code = generateModuleCode(ctx, 'test.async-load', source)
+
+    expect(code).toContain('await __session.loadFileAsync(')
+    expect(code).not.toContain('__session.loadFile(')
   })
 
   it('uses ns name from source over path-derived name', () => {
@@ -277,11 +300,20 @@ describe('generateModuleCode', () => {
     const ctx = makeCodegenCtx({
       resolveDepPath: () => null,
     })
-    ctx.session.loadFile('(ns dep)\n(def y 99)')
     const source = '(ns test.nodep (:require [dep :as d]))\n(def x d/y)'
     const code = generateModuleCode(ctx, 'test.nodep', source)
 
     expect(code).not.toContain('import "')
+  })
+
+  it('emits minimal module (no exports) for namespace with only macros', () => {
+    const ctx = makeCodegenCtx()
+    const source = '(ns test.macros-only)\n(defmacro my-when [test & body] nil)'
+    const code = generateModuleCode(ctx, 'test.macros-only', source)
+
+    expect(code).not.toContain('export function')
+    expect(code).not.toContain('export const')
+    expect(code).toContain('import.meta.hot')
   })
 })
 
@@ -379,9 +411,9 @@ describe('generateDts', () => {
     )
   })
 
-  it('returns empty string when namespace fails to load', () => {
+  it('returns empty string when source has no top-level definitions', () => {
     const ctx = makeCodegenCtx()
-    const dts = generateDts(ctx, 'nonexistent.ns', '(invalid clojure source !!!)')
+    const dts = generateDts(ctx, 'empty.ns', '(ns empty.ns)')
 
     expect(dts).toBe('')
   })

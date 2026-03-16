@@ -14,7 +14,7 @@ import {
   type SessionSnapshot,
 } from '../core'
 import { withPrintContext } from '../core/printer'
-import { tryLookup } from '../core/env'
+import { derefValue } from '../core/env'
 import { inferSourceRoot } from './nrepl-utils'
 import {
   resolveSymbol as resolveSymbolShared,
@@ -70,7 +70,8 @@ function createManagedSession(
   snapshot: SessionSnapshot,
   encoder: BEncoderStream,
   sourceRoots?: string[],
-  onOutput?: (text: string) => void
+  onOutput?: (text: string) => void,
+  importModule?: (specifier: string) => unknown | Promise<unknown>
 ): ManagedSession {
   let currentMsgId = ''
 
@@ -81,6 +82,7 @@ function createManagedSession(
     },
     readFile: (filePath) => readFileSync(filePath, 'utf8'),
     sourceRoots,
+    importModule,
   })
 
   session.runtime.installModules([makeNodeHostModule(session)])
@@ -131,11 +133,12 @@ function handleClone(
   snapshot: SessionSnapshot,
   encoder: BEncoderStream,
   sourceRoots?: string[],
-  onOutput?: (text: string) => void
+  onOutput?: (text: string) => void,
+  importModule?: (specifier: string) => unknown | Promise<unknown>
 ) {
   const id = (msg['id'] as string) ?? ''
   const newId = makeSessionId()
-  const managed = createManagedSession(newId, snapshot, encoder, sourceRoots, onOutput)
+  const managed = createManagedSession(newId, snapshot, encoder, sourceRoots, onOutput, importModule)
   sessions.set(newId, managed)
   done(encoder, id, undefined, { 'new-session': newId })
 }
@@ -285,9 +288,15 @@ async function handleEval(
       lineOffset,
       colOffset,
     })
-    const nsEnv = managed.session.registry.get(managed.session.currentNs)
-    const printLen = nsEnv ? tryLookup('*print-length*', nsEnv) : undefined
-    const printLvl = nsEnv ? tryLookup('*print-level*', nsEnv) : undefined
+    // Resolve *print-length* / *print-level* via the registry (same rationale
+    // as emitToOut in core-module.ts: session.getNs goes through the runtime
+    // registry so we always get the session's own freshly-cloned var, not a
+    // stale one from a snapshot closure env).
+    const coreNs = managed.session.getNs('clojure.core')
+    const lenVar = coreNs?.vars.get('*print-length*')
+    const lvlVar = coreNs?.vars.get('*print-level*')
+    const printLen = lenVar ? derefValue(lenVar) : undefined
+    const printLvl = lvlVar ? derefValue(lvlVar) : undefined
     const resultStr = withPrintContext(
       {
         printLength: printLen?.kind === 'number' ? printLen.value : null,
@@ -310,11 +319,11 @@ async function handleEval(
   }
 }
 
-function handleLoadFile(
+async function handleLoadFile(
   msg: NreplMessage,
   managed: ManagedSession,
   encoder: BEncoderStream
-) {
+): Promise<void> {
   const id = (msg['id'] as string) ?? ''
   const source = (msg['file'] as string) ?? ''
   const fileName = (msg['file-name'] as string) ?? ''
@@ -335,7 +344,10 @@ function handleLoadFile(
 
     const nsHint =
       fileName.replace(/\.clj$/, '').replace(/\//g, '.') || undefined
-    const loadedNs = managed.session.loadFile(
+
+    // loadFileAsync handles both sync and string (:require ["pkg" :as X]) forms.
+    // It falls back to the sync path internally if no async requires are present.
+    const loadedNs = await managed.session.loadFileAsync(
       source,
       nsHint,
       filePath || undefined
@@ -528,7 +540,8 @@ function handleMessage(
   defaultSession: ManagedSession,
   sourceRoots?: string[],
   meshNode?: RemoteEvalNode,
-  onOutput?: (text: string) => void
+  onOutput?: (text: string) => void,
+  importModule?: (specifier: string) => unknown | Promise<unknown>
 ) {
   const op = msg['op'] as string
   const sessionId = msg['session'] as string | undefined
@@ -538,7 +551,7 @@ function handleMessage(
 
   switch (op) {
     case 'clone':
-      handleClone(msg, sessions, snapshot, encoder, sourceRoots, onOutput)
+      handleClone(msg, sessions, snapshot, encoder, sourceRoots, onOutput, importModule)
       break
     case 'describe':
       handleDescribe(msg, encoder)
@@ -555,7 +568,15 @@ function handleMessage(
       })
       break
     case 'load-file':
-      handleLoadFile(msg, managed, encoder)
+      void handleLoadFile(msg, managed, encoder).catch((e) => {
+        const m = e instanceof Error ? e.message : String(e)
+        done(encoder, (msg['id'] as string) ?? '', managed.id, {
+          ex: m,
+          err: m + '\n',
+          ns: managed.session.currentNs,
+          status: ['eval-error', 'done'],
+        })
+      })
       break
     case 'complete':
       handleComplete(msg, managed, encoder)
@@ -599,6 +620,12 @@ export type NreplServerOptions = {
    * Example: onOutput: (t) => process.stdout.write(t)
    */
   onOutput?: (text: string) => void
+  /**
+   * Called when (:require ["specifier" :as Alias]) is encountered in an eval.
+   * Forwarded to every managed session cloned from the snapshot.
+   * Example: importModule: (s) => import(s)
+   */
+  importModule?: (specifier: string) => unknown | Promise<unknown>
 }
 
 export function startNreplServer(options: NreplServerOptions = {}): net.Server {
@@ -618,7 +645,7 @@ export function startNreplServer(options: NreplServerOptions = {}): net.Server {
           })
         ))
 
-  const { meshNode, onOutput } = options
+  const { meshNode, onOutput, importModule } = options
 
   const server = net.createServer((socket) => {
     const encoder = new BEncoderStream()
@@ -636,7 +663,8 @@ export function startNreplServer(options: NreplServerOptions = {}): net.Server {
       snapshot,
       encoder,
       options.sourceRoots,
-      onOutput
+      onOutput,
+      importModule
     )
     sessions.set(defaultId, defaultSession)
 
@@ -649,7 +677,8 @@ export function startNreplServer(options: NreplServerOptions = {}): net.Server {
         defaultSession,
         options.sourceRoots,
         meshNode,
-        onOutput
+        onOutput,
+        importModule
       )
     })
 

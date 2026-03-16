@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { readForms } from '../reader'
-import { readString } from '../index'
+import { printString, readString } from '../index'
 import {
   cljBoolean,
   cljKeyword,
@@ -469,7 +469,9 @@ describe('reader', () => {
 
     it('expands ::foo inside a map', () => {
       const result = readForms(tokenize('{::foo 1}'), 'user')
-      expect(result).toEqual([cljMap([[cljKeyword(':user/foo'), cljNumber(1)]])])
+      expect(result).toEqual([
+        cljMap([[cljKeyword(':user/foo'), cljNumber(1)]]),
+      ])
     })
 
     it('throws ReaderError for ::alias/foo when no alias map is provided', () => {
@@ -478,9 +480,9 @@ describe('reader', () => {
 
     it('throws ReaderError for ::alias/foo when alias is not in the map', () => {
       const aliases = new Map([['other', 'some.ns']])
-      expect(() => readForms(tokenize('::unknown/foo'), 'user', aliases)).toThrow(
-        ReaderError
-      )
+      expect(() =>
+        readForms(tokenize('::unknown/foo'), 'user', aliases)
+      ).toThrow(ReaderError)
     })
 
     it('expands ::alias/foo to :full.ns/foo when alias map is provided', () => {
@@ -518,9 +520,7 @@ describe('reader', () => {
   describe('deref reader macro (@)', () => {
     it('@a expands to (deref a)', () => {
       const result = readForms(tokenize('@a'))
-      expect(result).toEqual([
-        cljList([cljSymbol('deref'), cljSymbol('a')]),
-      ])
+      expect(result).toEqual([cljList([cljSymbol('deref'), cljSymbol('a')])])
     })
 
     it('@@a expands to (deref (deref a)) — chained deref', () => {
@@ -586,7 +586,9 @@ describe('readString', () => {
   })
 
   it('reads a vector', () => {
-    expect(readString('[1 2 3]')).toEqual(cljVector([cljNumber(1), cljNumber(2), cljNumber(3)]))
+    expect(readString('[1 2 3]')).toEqual(
+      cljVector([cljNumber(1), cljNumber(2), cljNumber(3)])
+    )
   })
 
   it('reads a map', () => {
@@ -610,7 +612,6 @@ describe('readString', () => {
   })
 
   it('round-trips with printString for non-string values', () => {
-    const { printString } = require('../printer')
     const cases = ['42', ':keyword', 'nil', 'true', '[1 2 3]', '{:a 1}']
     for (const src of cases) {
       expect(printString(readString(src))).toBe(src)

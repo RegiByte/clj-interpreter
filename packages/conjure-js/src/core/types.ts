@@ -22,6 +22,7 @@ export const valueKeywords = {
   lazySeq: 'lazy-seq',
   cons: 'cons',
   namespace: 'namespace',
+  jsValue: 'js-value',
 } as const
 export type ValueKeywords = (typeof valueKeywords)[keyof typeof valueKeywords]
 
@@ -168,6 +169,17 @@ export type EvaluationContext = {
   currentFile?: string
   currentLineOffset?: number
   currentColOffset?: number
+  /**
+   * Optional module loader for string `:require` specs.
+   * Called by processNsRequiresAsync when it encounters ["specifier" :as Alias].
+   * Wired from SessionOptions.importModule in buildSessionFacade.
+   */
+  importModule?: (specifier: string) => unknown | Promise<unknown>
+  /**
+   * Switches the session's current namespace. Wired by buildSessionFacade.
+   * Called by `in-ns` at runtime. Without this hook, `in-ns` is a no-op.
+   */
+  setCurrentNs?: (name: string) => void
 }
 
 export type CljNativeFunction = {
@@ -182,6 +194,8 @@ export type CljNativeFunction = {
   ) => CljValue
   meta?: CljMap
 }
+
+export type CljJsValue = { kind: 'js-value'; value: unknown }
 
 // --- ASYNC (experimental, see evaluator/async-evaluator.ts) ---
 export type CljPending = {
@@ -218,6 +232,7 @@ export type CljValue =
   | CljCons
   | CljNamespace
   | CljPending
+  | CljJsValue
 
 /** Tokens */
 export const tokenKeywords = {

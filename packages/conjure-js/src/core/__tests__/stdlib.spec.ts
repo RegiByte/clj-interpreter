@@ -11,7 +11,7 @@ import {
 } from '../factories'
 import { printString } from '../printer'
 import { createSession, createSessionFromSnapshot, snapshotSession } from '../session'
-import { materialize } from './evaluator-test-utils'
+import { materialize } from '../evaluator/__tests__/evaluator-test-utils'
 
 const _snapshot = snapshotSession(createSession())
 

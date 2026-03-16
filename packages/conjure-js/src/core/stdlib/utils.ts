@@ -5,7 +5,7 @@ import { tryLookup } from '../env'
 import { EvaluationError } from '../errors'
 import { v } from '../factories'
 import { makeGensym } from '../gensym'
-import { joinLines, prettyPrintString, printString } from '../printer'
+import { buildPrintContext, joinLines, prettyPrintString, printString, withPrintContext } from '../printer'
 import { readForms } from '../reader'
 import { tokenize } from '../tokenizer'
 import { valueToString } from '../transformations'
@@ -320,8 +320,10 @@ export const utilFunctions: Record<string, CljValue> = {
     .doc('Returns a string describing the current Clojure version.', [[]]),
 
   'pr-str': v
-    .nativeFn('pr-str', function prStrImpl(...args: CljValue[]) {
-      return v.string(args.map(printString).join(' '))
+    .nativeFnCtx('pr-str', function prStrImpl(ctx: EvaluationContext, _callEnv, ...args: CljValue[]) {
+      return withPrintContext(buildPrintContext(ctx), () =>
+        v.string(args.map(printString).join(' '))
+      )
     })
     .doc(
       'Returns a readable string representation of the given values (strings are quoted).',
@@ -329,9 +331,9 @@ export const utilFunctions: Record<string, CljValue> = {
     ),
 
   'pretty-print-str': v
-    .nativeFn(
+    .nativeFnCtx(
       'pretty-print-str',
-      function prettyPrintStrImpl(...args: CljValue[]) {
+      function prettyPrintStrImpl(ctx: EvaluationContext, _callEnv, ...args: CljValue[]) {
         if (args.length === 0) return v.string('')
         const form = args[0]
         const widthArg = args[1]
@@ -339,7 +341,9 @@ export const utilFunctions: Record<string, CljValue> = {
           widthArg !== undefined && widthArg.kind === 'number'
             ? widthArg.value
             : 80
-        return v.string(prettyPrintString(form, maxWidth))
+        return withPrintContext(buildPrintContext(ctx), () =>
+          v.string(prettyPrintString(form, maxWidth))
+        )
       }
     )
     .doc('Returns a pretty-printed string representation of form.', [
@@ -367,14 +371,18 @@ export const utilFunctions: Record<string, CljValue> = {
     ),
 
   'prn-str': v
-    .nativeFn('prn-str', function prnStrImpl(...args: CljValue[]) {
-      return v.string(args.map(printString).join(' ') + '\n')
+    .nativeFnCtx('prn-str', function prnStrImpl(ctx: EvaluationContext, _callEnv, ...args: CljValue[]) {
+      return withPrintContext(buildPrintContext(ctx), () =>
+        v.string(args.map(printString).join(' ') + '\n')
+      )
     })
     .doc('pr-str to a string, followed by a newline.', [['&', 'args']]),
 
   'print-str': v
-    .nativeFn('print-str', function printStrImpl(...args: CljValue[]) {
-      return v.string(args.map(valueToString).join(' '))
+    .nativeFnCtx('print-str', function printStrImpl(ctx: EvaluationContext, _callEnv, ...args: CljValue[]) {
+      return withPrintContext(buildPrintContext(ctx), () =>
+        v.string(args.map(valueToString).join(' '))
+      )
     })
     .doc('print to a string (human-readable, no quotes on strings).', [
       ['&', 'args'],

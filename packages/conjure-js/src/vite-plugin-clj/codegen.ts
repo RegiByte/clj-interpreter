@@ -1,10 +1,8 @@
-import { isMacro } from '../core/assertions'
-import type { Session } from '../core/session'
-import type { Arity, CljValue } from '../core/types'
-import { extractNsName, extractNsRequires } from './namespace-utils'
+import type { Arity, DestructurePattern } from '../core/types'
+import { extractNsName, extractNsRequires, extractStringRequires } from './namespace-utils'
+import { readNamespaceVars } from './static-analysis'
 
 export interface CodegenContext {
-  session: Session
   sourceRoots: string[]
   coreIndexPath: string
   virtualSessionId: string
@@ -14,11 +12,13 @@ export interface CodegenContext {
 export function generateModuleCode(
   ctx: CodegenContext,
   nsNameFromPath: string,
-  source: string
+  source: string,
+  filePath?: string
 ): string {
   const nsName = extractNsName(source) ?? nsNameFromPath
 
-  ctx.session.loadFile(source, nsName)
+  // Detect string requires from AST — determines sync vs async load call.
+  const hasStringRequires = extractStringRequires(source, filePath).length > 0
 
   const requires = extractNsRequires(source)
   const depImports = requires
@@ -30,44 +30,62 @@ export function generateModuleCode(
     .filter(Boolean)
     .join('\n')
 
-  const nsData = ctx.session.getNs(nsName)
-  if (!nsData) {
-    return `throw new Error('Namespace ${nsName} failed to load');`
-  }
-
+  // Static analysis: pure AST walk, no execution.
+  const vars = readNamespaceVars(source)
   const exportLines: string[] = []
-  for (const [name, v] of nsData.vars) {
-    const value = v.value
-    if (isMacro(value)) continue
 
-    const safeName = safeJsIdentifier(name)
+  for (const descriptor of vars) {
+    if (descriptor.isMacro) continue
+    if (descriptor.isPrivate) continue
+
+    const safeName = safeJsIdentifier(descriptor.name)
     // At runtime, vars.get() returns a CljVar; deref with .value
-    const deref = `__ns.vars.get(${JSON.stringify(name)}).value`
-    if (isAFunction(value)) {
+    const deref = `__ns.vars.get(${JSON.stringify(descriptor.name)}).value`
+
+    if (descriptor.kind === 'fn') {
       exportLines.push(
         `export function ${safeName}(...args) {` +
           `  const fn = ${deref};` +
           `  const cljArgs = args.map(jsToClj);` +
-          `  const result = applyFunction(fn, cljArgs);` +
-          `  return cljToJs(result);` +
+          `  const result = __session.applyFunction(fn, cljArgs);` +
+          `  return cljToJs(result, __session);` +
           `}`
       )
     } else {
       exportLines.push(
-        `export const ${safeName} = cljToJs(${deref});`
+        `export const ${safeName} = cljToJs(${deref}, __session);`
       )
     }
   }
 
   const escapedSource = JSON.stringify(source)
+  // Files with string requires need async loading (top-level await, requires target: esnext).
+  // Files without string requires use the sync path — no top-level await overhead.
+  const loadCall = hasStringRequires
+    ? `await __session.loadFileAsync(${escapedSource}, ${JSON.stringify(nsName)});`
+    : `__session.loadFile(${escapedSource}, ${JSON.stringify(nsName)});`
+
+  if (exportLines.length === 0) {
+    // No public exports — emit a minimal module that loads the namespace at runtime.
+    // Namespace will be available in the session even without JS-side exports.
+    return [
+      `import { getSession } from ${JSON.stringify(ctx.virtualSessionId)};`,
+      depImports,
+      ``,
+      `const __session = getSession();`,
+      loadCall,
+      ``,
+      `if (import.meta.hot) { import.meta.hot.accept() }`,
+    ].join('\n')
+  }
 
   return [
     `import { getSession } from ${JSON.stringify(ctx.virtualSessionId)};`,
-    `import { cljToJs, jsToClj, applyFunction } from ${JSON.stringify(ctx.coreIndexPath)};`,
+    `import { cljToJs, jsToClj } from ${JSON.stringify(ctx.coreIndexPath)};`,
     depImports,
     ``,
     `const __session = getSession();`,
-    `__session.loadFile(${escapedSource}, ${JSON.stringify(nsName)});`,
+    loadCall,
     `const __ns = __session.getNs(${JSON.stringify(nsName)});`,
     ``,
     ...exportLines,
@@ -78,47 +96,54 @@ export function generateModuleCode(
   ].join('\n')
 }
 
-function isAFunction(value: CljValue): boolean {
-  return value.kind === 'function' || value.kind === 'native-function'
+export function generateDts(
+  _ctx: CodegenContext,
+  nsNameFromPath: string,
+  source: string
+): string {
+  const nsName = extractNsName(source) ?? nsNameFromPath
+  const vars = readNamespaceVars(source)
+
+  const declarations: string[] = []
+  for (const descriptor of vars) {
+    if (descriptor.isMacro) continue
+    if (descriptor.isPrivate) continue
+
+    const safeName = safeJsIdentifier(descriptor.name)
+
+    if (descriptor.kind === 'fn') {
+      if (descriptor.arities && descriptor.arities.length > 0) {
+        for (const arity of descriptor.arities) {
+          declarations.push(`export function ${safeName}${arityToSignature(arity)};`)
+        }
+      } else {
+        declarations.push(`export function ${safeName}(...args: unknown[]): unknown;`)
+      }
+    } else {
+      // 'const' with inferred type, or 'unknown'
+      const tsType = descriptor.tsType ?? 'unknown'
+      declarations.push(`export const ${safeName}: ${tsType};`)
+    }
+  }
+
+  // Suppress the unused-variable warning — nsName is used for documentation only here
+  void nsName
+
+  return declarations.join('\n')
 }
 
-function cljValueToTsType(value: CljValue): string {
-  switch (value.kind) {
-    case 'number':
-      return 'number'
-    case 'string':
-      return 'string'
-    case 'boolean':
-      return 'boolean'
-    case 'nil':
-      return 'null'
-    case 'keyword':
-      return 'string'
-    case 'symbol':
-      return 'string'
-    case 'list':
-    case 'vector':
-      return 'unknown[]'
-    case 'map':
-      return 'Record<string, unknown>'
-    case 'function':
-    case 'native-function':
-      return '(...args: unknown[]) => unknown'
-    case 'macro':
-      return 'never'
-    case 'var':
-      return 'unknown'
-    default:
-      throw new Error(`Unknown CljValue kind: ${value.kind}`)
-  }
-}
+// ---------------------------------------------------------------------------
+// Signature helpers
+// ---------------------------------------------------------------------------
+
+type ArityShape = { params: DestructurePattern[]; restParam: DestructurePattern | null }
 
 function patternName(p: Arity['params'][number], index: number): string {
   if (p.kind === 'symbol') return safeJsIdentifier(p.name)
   return `arg${index}`
 }
 
-function arityToSignature(arity: Arity): string {
+function arityToSignature(arity: ArityShape): string {
   const fixedParams = arity.params
     .map((p, i) => `${patternName(p, i)}: unknown`)
     .join(', ')
@@ -137,46 +162,9 @@ function arityToSignature(arity: Arity): string {
   return `(${fixedParams}): unknown`
 }
 
-export function generateDts(
-  ctx: CodegenContext,
-  nsNameFromPath: string,
-  source: string
-): string {
-  const nsName = extractNsName(source) ?? nsNameFromPath
-
-  try {
-    ctx.session.loadFile(source, nsName)
-  } catch {
-    return ''
-  }
-
-  const nsData = ctx.session.getNs(nsName)
-  if (!nsData) return ''
-
-  const declarations: string[] = []
-  for (const [name, v] of nsData.vars) {
-    const value = v.value
-    if (isMacro(value)) continue
-
-    const safeName = safeJsIdentifier(name)
-
-    if (value.kind === 'function') {
-      for (const arity of value.arities) {
-        declarations.push(
-          `export function ${safeName}${arityToSignature(arity)};`
-        )
-      }
-    } else if (value.kind === 'native-function') {
-      declarations.push(
-        `export function ${safeName}(...args: unknown[]): unknown;`
-      )
-    } else {
-      declarations.push(`export const ${safeName}: ${cljValueToTsType(value)};`)
-    }
-  }
-
-  return declarations.join('\n')
-}
+// ---------------------------------------------------------------------------
+// Identifier sanitization
+// ---------------------------------------------------------------------------
 
 const JS_RESERVED_WORDS = new Set([
   'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger',

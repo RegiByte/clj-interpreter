@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { cljToJs, ConversionError, jsToClj } from '../conversions'
+import { ConversionError, jsToClj } from '../conversions'
 import { applyFunction } from '../evaluator'
+import { createSession } from '../session'
 import {
   cljBoolean,
   cljFunction,
@@ -18,51 +19,53 @@ import {
 import { makeEnv } from '../env'
 import type { CljValue } from '../types'
 
+const session = createSession()
+
 describe('cljToJs', () => {
   describe('primitives', () => {
     it('converts CljNumber to number', () => {
-      expect(cljToJs(cljNumber(42))).toBe(42)
-      expect(cljToJs(cljNumber(0))).toBe(0)
-      expect(cljToJs(cljNumber(-3.14))).toBe(-3.14)
+      expect(session.cljToJs(cljNumber(42))).toBe(42)
+      expect(session.cljToJs(cljNumber(0))).toBe(0)
+      expect(session.cljToJs(cljNumber(-3.14))).toBe(-3.14)
     })
 
     it('converts CljString to string', () => {
-      expect(cljToJs(cljString('hello'))).toBe('hello')
-      expect(cljToJs(cljString(''))).toBe('')
+      expect(session.cljToJs(cljString('hello'))).toBe('hello')
+      expect(session.cljToJs(cljString(''))).toBe('')
     })
 
     it('converts CljBoolean to boolean', () => {
-      expect(cljToJs(cljBoolean(true))).toBe(true)
-      expect(cljToJs(cljBoolean(false))).toBe(false)
+      expect(session.cljToJs(cljBoolean(true))).toBe(true)
+      expect(session.cljToJs(cljBoolean(false))).toBe(false)
     })
 
     it('converts CljNil to null', () => {
-      expect(cljToJs(cljNil())).toBe(null)
+      expect(session.cljToJs(cljNil())).toBe(null)
     })
 
     it('converts CljKeyword to string without colon', () => {
-      expect(cljToJs(cljKeyword(':foo'))).toBe('foo')
-      expect(cljToJs(cljKeyword(':hello-world'))).toBe('hello-world')
+      expect(session.cljToJs(cljKeyword(':foo'))).toBe('foo')
+      expect(session.cljToJs(cljKeyword(':hello-world'))).toBe('hello-world')
     })
 
     it('converts CljSymbol to string', () => {
-      expect(cljToJs(cljSymbol('my-var'))).toBe('my-var')
+      expect(session.cljToJs(cljSymbol('my-var'))).toBe('my-var')
     })
   })
 
   describe('collections', () => {
     it('converts CljVector to array', () => {
       const vec = cljVector([cljNumber(1), cljNumber(2), cljNumber(3)])
-      expect(cljToJs(vec)).toEqual([1, 2, 3])
+      expect(session.cljToJs(vec)).toEqual([1, 2, 3])
     })
 
     it('converts CljList to array', () => {
       const list = cljList([cljString('a'), cljString('b')])
-      expect(cljToJs(list)).toEqual(['a', 'b'])
+      expect(session.cljToJs(list)).toEqual(['a', 'b'])
     })
 
     it('converts empty vector to empty array', () => {
-      expect(cljToJs(cljVector([]))).toEqual([])
+      expect(session.cljToJs(cljVector([]))).toEqual([])
     })
 
     it('converts nested vectors recursively', () => {
@@ -70,7 +73,7 @@ describe('cljToJs', () => {
         cljNumber(1),
         cljVector([cljNumber(2), cljNumber(3)]),
       ])
-      expect(cljToJs(nested)).toEqual([1, [2, 3]])
+      expect(session.cljToJs(nested)).toEqual([1, [2, 3]])
     })
 
     it('converts CljMap with keyword keys to object', () => {
@@ -78,7 +81,7 @@ describe('cljToJs', () => {
         [cljKeyword(':name'), cljString('alice')],
         [cljKeyword(':age'), cljNumber(30)],
       ])
-      expect(cljToJs(map)).toEqual({ name: 'alice', age: 30 })
+      expect(session.cljToJs(map)).toEqual({ name: 'alice', age: 30 })
     })
 
     it('converts CljMap with string keys to object', () => {
@@ -86,7 +89,7 @@ describe('cljToJs', () => {
         [cljString('x'), cljNumber(1)],
         [cljString('y'), cljNumber(2)],
       ])
-      expect(cljToJs(map)).toEqual({ x: 1, y: 2 })
+      expect(session.cljToJs(map)).toEqual({ x: 1, y: 2 })
     })
 
     it('converts CljMap with number keys to object', () => {
@@ -94,7 +97,7 @@ describe('cljToJs', () => {
         [cljNumber(0), cljString('zero')],
         [cljNumber(1), cljString('one')],
       ])
-      expect(cljToJs(map)).toEqual({ '0': 'zero', '1': 'one' })
+      expect(session.cljToJs(map)).toEqual({ '0': 'zero', '1': 'one' })
     })
 
     it('converts nested map values recursively', () => {
@@ -107,35 +110,35 @@ describe('cljToJs', () => {
           ]),
         ],
       ])
-      expect(cljToJs(map)).toEqual({
+      expect(session.cljToJs(map)).toEqual({
         person: { name: 'bob', scores: [10, 20] },
       })
     })
 
     it('converts empty map to empty object', () => {
-      expect(cljToJs(cljMap([]))).toEqual({})
+      expect(session.cljToJs(cljMap([]))).toEqual({})
     })
 
     it('throws ConversionError for vector keys in maps', () => {
       const map = cljMap([
         [cljVector([cljNumber(1), cljNumber(2)]), cljString('value')],
       ])
-      expect(() => cljToJs(map)).toThrow(ConversionError)
-      expect(() => cljToJs(map)).toThrow('Rich key types')
+      expect(() => session.cljToJs(map)).toThrow(ConversionError)
+      expect(() => session.cljToJs(map)).toThrow('Rich key types')
     })
 
     it('throws ConversionError for list keys in maps', () => {
       const map = cljMap([
         [cljList([cljNumber(1)]), cljString('value')],
       ])
-      expect(() => cljToJs(map)).toThrow(ConversionError)
+      expect(() => session.cljToJs(map)).toThrow(ConversionError)
     })
 
     it('throws ConversionError for map keys in maps', () => {
       const map = cljMap([
         [cljMap([[cljKeyword(':a'), cljNumber(1)]]), cljString('value')],
       ])
-      expect(() => cljToJs(map)).toThrow(ConversionError)
+      expect(() => session.cljToJs(map)).toThrow(ConversionError)
     })
   })
 
@@ -146,7 +149,7 @@ describe('cljToJs', () => {
           throw new Error('expected numbers')
         return cljNumber(a.value + b.value)
       })
-      const jsFn = cljToJs(add) as (...args: unknown[]) => unknown
+      const jsFn = session.cljToJs(add) as (...args: unknown[]) => unknown
       expect(typeof jsFn).toBe('function')
       expect(jsFn(3, 4)).toBe(7)
     })
@@ -171,7 +174,7 @@ describe('cljToJs', () => {
         env
       )
 
-      const jsFn = cljToJs(fn) as (...args: unknown[]) => unknown
+      const jsFn = session.cljToJs(fn) as (...args: unknown[]) => unknown
       expect(typeof jsFn).toBe('function')
       expect(jsFn(5)).toBe(15)
     })
@@ -180,13 +183,13 @@ describe('cljToJs', () => {
       const vecFn = cljNativeFunction('make-vec', () =>
         cljVector([cljNumber(1), cljNumber(2)])
       )
-      const jsFn = cljToJs(vecFn) as () => unknown
+      const jsFn = session.cljToJs(vecFn) as () => unknown
       expect(jsFn()).toEqual([1, 2])
     })
 
     it('function wrapper converts JS args to Clj', () => {
       const identity = cljNativeFunction('identity', (x: CljValue) => x)
-      const jsFn = cljToJs(identity) as (x: unknown) => unknown
+      const jsFn = session.cljToJs(identity) as (x: unknown) => unknown
       expect(jsFn('hello')).toBe('hello')
       expect(jsFn(42)).toBe(42)
       expect(jsFn(null)).toBe(null)
@@ -197,8 +200,8 @@ describe('cljToJs', () => {
   describe('macros', () => {
     it('throws ConversionError for macros', () => {
       const macro = cljMacro([cljSymbol('x')], null, [cljSymbol('x')], makeEnv())
-      expect(() => cljToJs(macro)).toThrow(ConversionError)
-      expect(() => cljToJs(macro)).toThrow('Macros cannot be exported')
+      expect(() => session.cljToJs(macro)).toThrow(ConversionError)
+      expect(() => session.cljToJs(macro)).toThrow('Macros cannot be exported')
     })
   })
 })
@@ -225,8 +228,10 @@ describe('jsToClj', () => {
       expect(jsToClj(null)).toEqual(cljNil())
     })
 
-    it('converts undefined to CljNil', () => {
-      expect(jsToClj(undefined)).toEqual(cljNil())
+    it('converts undefined to CljJsValue wrapping undefined', () => {
+      const result = jsToClj(undefined)
+      expect(result.kind).toBe('js-value')
+      if (result.kind === 'js-value') expect(result.value).toBeUndefined()
     })
   })
 
@@ -281,6 +286,25 @@ describe('jsToClj', () => {
       expect(result).toEqual(
         cljMap([
           [cljKeyword(':items'), cljVector([cljNumber(1), cljNumber(2)])],
+        ])
+      )
+    })
+
+    it('uses string keys when keywordizeKeys is false', () => {
+      const result = jsToClj({ name: 'alice', age: 30 }, { keywordizeKeys: false })
+      expect(result).toEqual(
+        cljMap([
+          [cljString('name'), cljString('alice')],
+          [cljString('age'), cljNumber(30)],
+        ])
+      )
+    })
+
+    it('propagates keywordizeKeys: false recursively', () => {
+      const result = jsToClj({ person: { name: 'bob' } }, { keywordizeKeys: false })
+      expect(result).toEqual(
+        cljMap([
+          [cljString('person'), cljMap([[cljString('name'), cljString('bob')]])],
         ])
       )
     })
@@ -351,28 +375,28 @@ describe('jsToClj', () => {
 
 describe('roundtrip conversions', () => {
   it('number roundtrips', () => {
-    expect(cljToJs(jsToClj(42))).toBe(42)
+    expect(session.cljToJs(jsToClj(42))).toBe(42)
   })
 
   it('string roundtrips', () => {
-    expect(cljToJs(jsToClj('hello'))).toBe('hello')
+    expect(session.cljToJs(jsToClj('hello'))).toBe('hello')
   })
 
   it('boolean roundtrips', () => {
-    expect(cljToJs(jsToClj(true))).toBe(true)
-    expect(cljToJs(jsToClj(false))).toBe(false)
+    expect(session.cljToJs(jsToClj(true))).toBe(true)
+    expect(session.cljToJs(jsToClj(false))).toBe(false)
   })
 
   it('null roundtrips', () => {
-    expect(cljToJs(jsToClj(null))).toBe(null)
+    expect(session.cljToJs(jsToClj(null))).toBe(null)
   })
 
   it('array roundtrips', () => {
-    expect(cljToJs(jsToClj([1, 2, 3]))).toEqual([1, 2, 3])
+    expect(session.cljToJs(jsToClj([1, 2, 3]))).toEqual([1, 2, 3])
   })
 
   it('nested structure roundtrips', () => {
     const original = { name: 'alice', scores: [10, 20], active: true }
-    expect(cljToJs(jsToClj(original))).toEqual(original)
+    expect(session.cljToJs(jsToClj(original))).toEqual(original)
   })
 })

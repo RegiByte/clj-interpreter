@@ -2,12 +2,11 @@
 // number?, string?, boolean?, vector?, list?, map?, keyword?, symbol?, fn?,
 // coll?, some, every?
 import { is } from '../assertions'
-import { applyFunction } from '../evaluator'
 import { EvaluationError } from '../errors'
 import { v } from '../factories'
 import { printString } from '../printer'
 import { toSeq } from '../transformations'
-import type { CljNumber, CljValue } from '../types'
+import type { CljNumber, CljValue, Env, EvaluationContext } from '../types'
 
 export const predicateFunctions: Record<string, CljValue> = {
   'nil?': v
@@ -163,9 +162,14 @@ export const predicateFunctions: Record<string, CljValue> = {
       ['x'],
     ]),
   some: v
-    .nativeFn(
+    .nativeFnCtx(
       'some',
-      function someImpl(pred: CljValue, coll: CljValue): CljValue {
+      function someImpl(
+        ctx: EvaluationContext,
+        callEnv: Env,
+        pred: CljValue,
+        coll: CljValue
+      ): CljValue {
         if (pred === undefined || !is.aFunction(pred)) {
           throw EvaluationError.atArg(
             `some expects a function as first argument${pred !== undefined ? `, got ${printString(pred)}` : ''}`,
@@ -184,7 +188,7 @@ export const predicateFunctions: Record<string, CljValue> = {
           )
         }
         for (const item of toSeq(coll)) {
-          const result = applyFunction(pred, [item])
+          const result = ctx.applyFunction(pred, [item], callEnv)
           if (is.truthy(result)) {
             return result
           }
@@ -198,9 +202,14 @@ export const predicateFunctions: Record<string, CljValue> = {
     ),
 
   'every?': v
-    .nativeFn(
+    .nativeFnCtx(
       'every?',
-      function everyPredImpl(pred: CljValue, coll: CljValue): CljValue {
+      function everyPredImpl(
+        ctx: EvaluationContext,
+        callEnv: Env,
+        pred: CljValue,
+        coll: CljValue
+      ): CljValue {
         if (pred === undefined || !is.aFunction(pred)) {
           throw EvaluationError.atArg(
             `every? expects a function as first argument${pred !== undefined ? `, got ${printString(pred)}` : ''}`,
@@ -216,7 +225,7 @@ export const predicateFunctions: Record<string, CljValue> = {
           )
         }
         for (const item of toSeq(coll)) {
-          if (is.falsy(applyFunction(pred, [item]))) {
+          if (is.falsy(ctx.applyFunction(pred, [item], callEnv))) {
             return v.boolean(false)
           }
         }

@@ -1,6 +1,7 @@
 import { EvaluationError } from './errors'
 import type { CljCons, CljLazySeq } from './types'
-import { valueKeywords, type CljMultiMethod, type CljValue } from './types'
+import { valueKeywords, type CljMultiMethod, type CljValue, type EvaluationContext } from './types'
+import { derefValue } from './env'
 
 const LAZY_PRINT_CAP = 100
 
@@ -77,6 +78,23 @@ export function withPrintContext<T>(ctx: PrintContext, fn: () => T): T {
     return fn()
   } finally {
     _printCtx = prev
+  }
+}
+
+/**
+ * Build a PrintContext by reading *print-length* and *print-level* from the
+ * runtime registry via ctx.resolveNs. Use this (instead of tryLookup) so that
+ * dynamic bindings from inside Clojure function bodies are visible even after
+ * a snapshot restore (where closure envs are stale).
+ */
+export function buildPrintContext(ctx: EvaluationContext): PrintContext {
+  const lenVar = ctx.resolveNs('clojure.core')?.vars.get('*print-length*')
+  const lvlVar = ctx.resolveNs('clojure.core')?.vars.get('*print-level*')
+  const len = lenVar ? derefValue(lenVar) : undefined
+  const level = lvlVar ? derefValue(lvlVar) : undefined
+  return {
+    printLength: len?.kind === 'number' ? len.value : null,
+    printLevel: level?.kind === 'number' ? level.value : null,
   }
 }
 
@@ -204,6 +222,24 @@ function printStringImpl(value: CljValue, depth: number): string {
         return `#<Pending @${printString(value.resolvedValue, depth + 1)}>`
       return '#<Pending>'
     // --- END ASYNC ---
+    case valueKeywords.jsValue: {
+      const raw = value.value
+      let typeName: string
+      if (raw === null) {
+        typeName = 'null'
+      } else if (raw === undefined) {
+        typeName = 'undefined'
+      } else if (typeof raw === 'function') {
+        typeName = 'Function'
+      } else if (Array.isArray(raw)) {
+        typeName = 'Array'
+      } else if (raw instanceof Promise) {
+        typeName = 'Promise'
+      } else {
+        typeName = (raw as { constructor?: { name?: string } }).constructor?.name ?? 'Object'
+      }
+      return `#<js ${typeName}>`
+    }
     default:
       throw new EvaluationError(`unhandled value type: ${value.kind}`, {
         value,

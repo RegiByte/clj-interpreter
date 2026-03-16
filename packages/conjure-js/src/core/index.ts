@@ -1,6 +1,10 @@
 // Session API
-export { createSession, snapshotSession, createSessionFromSnapshot } from './session'
-export type { Session, SessionSnapshot } from './session'
+export {
+  createSession,
+  snapshotSession,
+  createSessionFromSnapshot,
+} from './session'
+export type { Session, SessionSnapshot, SessionOptions } from './session'
 
 // Runtime API (advanced embedding)
 export { createRuntime, restoreRuntime } from './runtime'
@@ -19,9 +23,13 @@ export type {
 
 // Conversions
 export { cljToJs, jsToClj, ConversionError } from './conversions'
+export type { FunctionApplier } from './conversions'
 
 // Evaluator
-export { applyFunction, applyMacro, evaluateWithMeasurements } from './evaluator'
+export {
+  applyFunction,
+  evaluateWithMeasurements,
+} from './evaluator'
 
 // Errors
 export { EvaluationError, ReaderError, TokenizerError } from './errors'
@@ -97,6 +105,9 @@ export function readString(source: string): _CljValue {
   return forms[0]
 }
 
+// JS interop — import map type for user-defined session entrypoints
+export type ImportMap = Record<string, unknown>
+
 // Types
 export type {
   CljValue,
@@ -114,7 +125,7 @@ export type {
   CljMacro,
   CljVar,
   CljNamespace,
-  CljPending,
+  CljPending, // experimental
   Env,
   Arity,
   IOContext,

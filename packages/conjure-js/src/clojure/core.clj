@@ -12,8 +12,14 @@
         arglists  (if (vector? (first rest-decl))
                     (vector (first rest-decl))
                     (reduce (fn [acc arity] (conj acc (first arity))) [] rest-decl))
-        meta-map  (if doc {:doc doc :arglists arglists} {:arglists arglists})]
+        meta-map  (let [m (if doc {:doc doc :arglists arglists} {:arglists arglists})]
+                    (if (:private (meta name)) (assoc m :private true) m))]
     `(def ~(with-meta name meta-map) (fn ~@rest-decl))))
+
+(defmacro defn-
+  "Same as defn, but marks the var as private."
+  [name & fdecl]
+  (list* 'defn (with-meta name (assoc (meta name) :private true)) fdecl))
 
 
 (defn vary-meta

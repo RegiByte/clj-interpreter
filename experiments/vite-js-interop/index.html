@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Conjure — Vite JS Interop Demo</title>
+    <style>
+      :root {
+        --bg: #1e1e1e;
+        --bg-card: #252526;
+        --border: #3e3e42;
+        --text: #d4d4d4;
+        --text-dim: #858585;
+        --green: #4ec9b0;
+        --red: #f44747;
+        --yellow: #dcdcaa;
+        --blue: #569cd6;
+        --orange: #ce9178;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', ui-monospace, monospace;
+        padding: 2rem;
+        min-height: 100vh;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/app.tsx"></script>
+  </body>
+</html>

@@ -5,6 +5,7 @@ import {
   type CljCons,
   type CljDelay,
   type CljFunction,
+  type CljJsValue,
   type CljKeyword,
   type CljLazySeq,
   type CljList,
@@ -61,9 +62,13 @@ export const isAFunction = (
 ): value is CljFunction | CljNativeFunction =>
   isFunction(value) || isNativeFunction(value)
 
+export const isJsValue = (value: CljValue): value is CljJsValue =>
+  value.kind === 'js-value'
+
 /** True for any value that can be invoked like a function (IFn). */
 export const isCallable = (value: CljValue): boolean =>
-  isAFunction(value) || isKeyword(value) || isMap(value)
+  isAFunction(value) || isKeyword(value) || isMap(value) ||
+  (isJsValue(value) && typeof value.value === 'function')
 export const isMultiMethod = (value: CljValue): value is CljMultiMethod =>
   value.kind === 'multi-method'
 export const isAtom = (value: CljValue): value is CljAtom =>
@@ -236,4 +241,5 @@ export const is = {
   seqable: isSeqable,
   cljValue: isCljValue,
   equal: isEqual,
+  jsValue: isJsValue,
 }

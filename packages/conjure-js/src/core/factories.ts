@@ -6,6 +6,7 @@ import type {
   CljCons,
   CljDelay,
   CljFunction,
+  CljJsValue,
   CljKeyword,
   CljLazySeq,
   CljList,
@@ -158,6 +159,11 @@ export const cljNamespace = (name: string): CljNamespace => ({
   vars: new Map(),
   aliases: new Map(),
   readerAliases: new Map(),
+})
+
+export const cljJsValue = (value: unknown): CljJsValue => ({
+  kind: 'js-value',
+  value,
 })
 
 // --- ASYNC (experimental) ---
@@ -328,4 +334,5 @@ export const v = {
   lazySeq: cljLazySeq,
   namespace: cljNamespace,
   pending: cljPending,
+  jsValue: cljJsValue,
 }

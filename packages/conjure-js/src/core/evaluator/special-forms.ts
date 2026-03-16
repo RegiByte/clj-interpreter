@@ -27,8 +27,14 @@ import type {
 } from '../types'
 import { parseArities, RecurSignal } from './arity'
 import { destructureBindings } from './destructure'
+import { evaluateDot, evaluateNew } from './js-interop'
 import { evaluateQuasiquote } from './quasiquote'
 import { assertRecurInTailPosition } from './recur-check'
+import {
+  matchesDiscriminator,
+  parseTryStructure,
+  validateBindingVector,
+} from './form-parsers'
 
 function hasDynamicMeta(meta: CljMap | undefined): boolean {
   if (!meta) return false
@@ -69,6 +75,10 @@ export const specialFormKeywords = {
   // --- ASYNC (experimental) ---
   async: 'async',
   // --- END ASYNC ---
+  // --- JS INTEROP ---
+  '.': '.',
+  'js/new': 'js/new',
+  // --- END JS INTEROP ---
 } as const
 
 function keywordToDispatchFn(kw: CljKeyword): CljNativeFunction {
@@ -85,90 +95,10 @@ function evaluateTry(
   env: Env,
   ctx: EvaluationContext
 ): CljValue {
-  const forms = list.value.slice(1)
-  const bodyForms: CljValue[] = []
-  const catchClauses: Array<{
-    discriminator: CljValue
-    binding: string
-    body: CljValue[]
-  }> = []
-  let finallyForms: CljValue[] | null = null
-
-  for (let i = 0; i < forms.length; i++) {
-    const form = forms[i]
-    if (is.list(form) && form.value.length > 0 && is.symbol(form.value[0])) {
-      const head = form.value[0].name
-      if (head === 'catch') {
-        if (form.value.length < 3) {
-          throw new EvaluationError(
-            'catch requires a discriminator and a binding symbol',
-            { form, env }
-          )
-        }
-        const discriminator = form.value[1]
-        const bindingSym = form.value[2]
-        if (!is.symbol(bindingSym)) {
-          throw new EvaluationError('catch binding must be a symbol', {
-            form,
-            env,
-          })
-        }
-        catchClauses.push({
-          discriminator,
-          binding: bindingSym.name,
-          body: form.value.slice(3),
-        })
-        continue
-      }
-      if (head === 'finally') {
-        if (i !== forms.length - 1) {
-          throw new EvaluationError(
-            'finally clause must be the last in try expression',
-            {
-              form,
-              env,
-            }
-          )
-        }
-        finallyForms = form.value.slice(1)
-        continue
-      }
-    }
-    bodyForms.push(form)
-  }
-
-  function matchesDiscriminator(
-    discriminator: CljValue,
-    thrown: CljValue
-  ): boolean {
-    let disc: CljValue
-    try {
-      disc = ctx.evaluate(discriminator, env)
-    } catch {
-      // Discriminator failed to evaluate (e.g. unresolvable Java class name like
-      // java.lang.Throwable). Treat as catch-all — we're not on the JVM.
-      return true
-    }
-    // A symbol that evaluated to itself (shouldn't happen, but guard anyway)
-    if (disc.kind === 'symbol') return true
-    if (is.keyword(disc)) {
-      if (disc.name === ':default') return true
-      if (!is.map(thrown)) return false
-      const typeEntry = thrown.entries.find(
-        ([k]) => is.keyword(k) && k.name === ':type'
-      )
-      if (!typeEntry) return false
-      return is.equal(typeEntry[1], disc)
-    }
-    if (is.aFunction(disc)) {
-      const result = ctx.applyFunction(disc, [thrown], env)
-      return is.truthy(result)
-    }
-    throw new EvaluationError(
-      'catch discriminator must be a keyword or a predicate function',
-      { discriminator: disc, env }
-    )
-  }
+  const { bodyForms, catchClauses, finallyForms } = parseTryStructure(
+    list,
+    env
+  )
 
   let result: CljValue = v.nil()
   let pendingThrow: unknown = null
@@ -192,7 +122,7 @@ function evaluateTry(
 
     let handled = false
     for (const clause of catchClauses) {
-      if (matchesDiscriminator(clause.discriminator, thrownValue)) {
+      if (matchesDiscriminator(clause.discriminator, thrownValue, env, ctx)) {
         const catchEnv = extend([clause.binding], [thrownValue], env)
         result = ctx.evaluateForms(clause.body, catchEnv)
         handled = true
@@ -338,18 +268,7 @@ function evaluateLet(
   ctx: EvaluationContext
 ): CljValue {
   const bindings = list.value[1]
-  if (!is.vector(bindings)) {
-    throw new EvaluationError('Bindings must be a vector', {
-      bindings,
-      env,
-    })
-  }
-  if (bindings.value.length % 2 !== 0) {
-    throw new EvaluationError(
-      'Bindings must be a balanced pair of keys and values',
-      { bindings, env }
-    )
-  }
+  validateBindingVector(bindings, 'let', env)
   const body = list.value.slice(2)
   let localEnv = env
   for (let i = 0; i < bindings.value.length; i += 2) {
@@ -485,18 +404,7 @@ function evaluateLoop(
   ctx: EvaluationContext
 ): CljValue {
   const loopBindings = list.value[1]
-  if (!is.vector(loopBindings)) {
-    throw new EvaluationError('loop bindings must be a vector', {
-      loopBindings,
-      env,
-    })
-  }
-  if (loopBindings.value.length % 2 !== 0) {
-    throw new EvaluationError(
-      'loop bindings must be a balanced pair of keys and values',
-      { loopBindings, env }
-    )
-  }
+  validateBindingVector(loopBindings, 'loop', env)
   const loopBody = list.value.slice(2)
   assertRecurInTailPosition(loopBody)
 
@@ -841,6 +749,10 @@ const specialFormEvaluatorEntries = {
   // --- ASYNC (experimental) ---
   async: evaluateAsyncBlock,
   // --- END ASYNC ---
+  // --- JS INTEROP ---
+  '.': evaluateDot,
+  'js/new': evaluateNew,
+  // --- END JS INTEROP ---
 } as const satisfies Record<
   keyof typeof specialFormKeywords,
   SpecialFormEvaluatorFn
