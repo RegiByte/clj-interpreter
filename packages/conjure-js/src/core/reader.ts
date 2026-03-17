@@ -3,9 +3,15 @@ import { v } from './factories'
 import { is } from './assertions'
 import { makeTokenScanner, type TokenScanner } from './scanners'
 import { getTokenValue } from './tokenizer'
-import { valueKeywords, tokenKeywords, type Token } from './types'
-import type { CljValue, TokenKinds } from './types'
+import { type Token } from './types'
+import type { CljValue } from './types'
 import { getPos, setPos } from './positions'
+import {
+  tokenKeywords,
+  type TokenKinds,
+  tokenSymbols,
+  valueKeywords,
+} from './keywords.ts'
 
 function readAtom(ctx: ReaderCtx): CljValue {
   const scanner = ctx.scanner
@@ -18,13 +24,13 @@ function readAtom(ctx: ReaderCtx): CljValue {
       return readSymbol(scanner)
     case tokenKeywords.String: {
       scanner.advance()
-      const val: CljValue = { kind: 'string', value: token.value }
+      const val: CljValue = v.string(token.value)
       setPos(val, { start: token.start.offset, end: token.end.offset })
       return val
     }
     case tokenKeywords.Number: {
       scanner.advance()
-      const val: CljValue = { kind: 'number', value: token.value }
+      const val: CljValue = v.number(token.value)
       setPos(val, { start: token.start.offset, end: token.end.offset })
       return val
     }
@@ -46,12 +52,12 @@ function readAtom(ctx: ReaderCtx): CljValue {
               { start: token.start.offset, end: token.end.offset }
             )
           }
-          val = { kind: 'keyword', name: `:${fullNs}/${localName}` }
+          val = v.keyword(`:${fullNs}/${localName}`)
         } else {
-          val = { kind: 'keyword', name: `:${ctx.namespace}/${rest}` }
+          val = v.keyword(`:${ctx.namespace}/${rest}`)
         }
       } else {
-        val = { kind: 'keyword', name: kwName }
+        val = v.keyword(kwName)
       }
       setPos(val, { start: token.start.offset, end: token.end.offset })
       return val
@@ -78,7 +84,7 @@ const readQuote = (ctx: ReaderCtx) => {
   if (!value) {
     throw new ReaderError(`Unexpected token: ${getTokenValue(token)}`, token)
   }
-  return { kind: valueKeywords.list, value: [v.symbol('quote'), value] }
+  return v.list([v.symbol('quote'), value])
 }
 
 const readQuasiquote = (ctx: ReaderCtx) => {
@@ -95,7 +101,7 @@ const readQuasiquote = (ctx: ReaderCtx) => {
   if (!value) {
     throw new ReaderError(`Unexpected token: ${getTokenValue(token)}`, token)
   }
-  return { kind: valueKeywords.list, value: [v.symbol('quasiquote'), value] }
+  return v.list([v.symbol('quasiquote'), value])
 }
 
 const readUnquote = (ctx: ReaderCtx) => {
@@ -112,7 +118,7 @@ const readUnquote = (ctx: ReaderCtx) => {
   if (!value) {
     throw new ReaderError(`Unexpected token: ${getTokenValue(token)}`, token)
   }
-  return { kind: valueKeywords.list, value: [v.symbol('unquote'), value] }
+  return v.list([v.symbol('unquote'), value])
 }
 
 const readMeta = (ctx: ReaderCtx): CljValue => {
@@ -131,11 +137,11 @@ const readMeta = (ctx: ReaderCtx): CljValue => {
 
   // Convert metaForm to a CljMap
   let metaEntries: [CljValue, CljValue][]
-  if (metaForm.kind === 'keyword') {
+  if (is.keyword(metaForm)) {
     metaEntries = [[metaForm, v.boolean(true)]]
-  } else if (metaForm.kind === 'map') {
+  } else if (is.map(metaForm)) {
     metaEntries = metaForm.entries
-  } else if (metaForm.kind === 'symbol') {
+  } else if (is.symbol(metaForm)) {
     metaEntries = [[v.keyword(':tag'), metaForm]]
   } else {
     throw new ReaderError('Metadata must be a keyword, map, or symbol', token)
@@ -143,10 +149,10 @@ const readMeta = (ctx: ReaderCtx): CljValue => {
 
   // Attach metadata to IMeta targets: symbols, lists, vectors, maps.
   if (
-    target.kind === 'symbol' ||
-    target.kind === 'list' ||
-    target.kind === 'vector' ||
-    target.kind === 'map'
+    is.symbol(target) ||
+    is.list(target) ||
+    is.vector(target) ||
+    is.map(target)
   ) {
     const existingEntries = target.meta ? target.meta.entries : []
     const result = {
@@ -206,10 +212,7 @@ const readUnquoteSplicing = (ctx: ReaderCtx) => {
   if (!value) {
     throw new ReaderError(`Unexpected token: ${getTokenValue(token)}`, token)
   }
-  return {
-    kind: valueKeywords.list,
-    value: [v.symbol('unquote-splicing'), value],
-  }
+  return v.list([v.symbol(tokenSymbols.UnquoteSplicing), value])
 }
 
 const isClosingToken = (token: Token) => {
@@ -537,7 +540,7 @@ const readAnonFn = (ctx: ReaderCtx) => {
   }
 
   // The entire body content is a single implicit list — #(* 2 %) ≡ (fn [p1] (* 2 p1))
-  const bodyList: CljValue = { kind: 'list', value: bodyForms }
+  const bodyList: CljValue = v.list(bodyForms)
 
   const { maxIndex, hasRest } = collectAnonFnParams([bodyList])
 

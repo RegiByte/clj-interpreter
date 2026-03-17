@@ -13,6 +13,7 @@ import { v } from '../factories'
 // --- ASYNC (experimental) ---
 import { createAsyncEvalCtx } from './async-evaluator'
 // --- END ASYNC ---
+import { specialFormKeywords } from '../keywords.ts'
 import { getLineCol, getPos } from '../positions'
 import type {
   CljFunction,
@@ -27,16 +28,16 @@ import type {
 } from '../types'
 import { parseArities, RecurSignal } from './arity'
 import { destructureBindings } from './destructure'
-import { evaluateDot, evaluateNew } from './js-interop'
-import { evaluateQuasiquote } from './quasiquote'
-import { assertRecurInTailPosition } from './recur-check'
 import {
   matchesDiscriminator,
   parseTryStructure,
   validateBindingVector,
 } from './form-parsers'
-import { specialFormKeywords } from './keywords.ts'
-import { compileDo } from './compiler.ts'
+import { evaluateDot, evaluateNew } from './js-interop'
+import { evaluateQuasiquote } from './quasiquote'
+import { assertRecurInTailPosition } from './recur-check'
+
+import { compile } from '../compiler/index.ts'
 
 function hasDynamicMeta(meta: CljMap | undefined): boolean {
   if (!meta) return false
@@ -263,7 +264,7 @@ function evaluateFn(
   // (fn name [...] ...) — optional name symbol before the param vector/arities
   let fnName: string | undefined
   let arityForms = rest
-  if (rest[0]?.kind === 'symbol') {
+  if (rest[0] && is.symbol(rest[0])) {
     fnName = rest[0].name
     arityForms = rest.slice(1)
   }
@@ -272,7 +273,11 @@ function evaluateFn(
     assertRecurInTailPosition(arity.body)
     // Try to compile this arity
     // store the compiled body if successful
-    const compiled = compileDo(arity.body, null)
+    // wrap the body in a do form so the compiler can handle it
+    // at the top level dispatcher
+    const compiled = compile(
+      v.list([v.symbol(specialFormKeywords.do), ...arity.body])
+    )
     if (compiled !== null) {
       arity.compiledBody = compiled
     }

@@ -43,9 +43,9 @@ export function lookup(name: string, env: Env): CljValue {
     // Local bindings are stored as plain values — do NOT auto-deref.
     // A var stored in a local binding (e.g. from `(var foo)`) is a first-class value.
     if (raw !== undefined) return raw
-    const v = current.ns?.vars.get(name)
+    const theVar = current.ns?.vars.get(name)
     // Namespace vars are always auto-deref'd: `foo` resolves to the var's current value.
-    if (v !== undefined) return derefValue(v)
+    if (theVar !== undefined) return derefValue(theVar)
     current = current.outer
   }
   throw new EvaluationError(`Symbol ${name} not found`, { name })
@@ -56,8 +56,8 @@ export function tryLookup(name: string, env: Env): CljValue | undefined {
   while (current) {
     const raw = current.bindings.get(name)
     if (raw !== undefined) return raw
-    const v = current.ns?.vars.get(name)
-    if (v !== undefined) return derefValue(v)
+    const theVar = current.ns?.vars.get(name)
+    if (theVar !== undefined) return derefValue(theVar)
     current = current.outer
   }
   return undefined

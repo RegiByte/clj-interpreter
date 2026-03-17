@@ -1,6 +1,7 @@
 import { TokenizerError } from './errors'
 import { makeCharScanner, type CharScanner } from './scanners'
-import { tokenKeywords, tokenSymbols, type Token } from './types'
+import { tokenKeywords, tokenSymbols } from './keywords'
+import type { Token } from './types'
 
 export type TokensResult = {
   tokens: Token[]
@@ -169,9 +170,15 @@ const parseNumber = (ctx: TokenizationContext): Token => {
     value += scanner.advance()! // consume '.'
     value += scanner.consumeWhile(isNumber)
   }
-  if (!scanner.isAtEnd() && (scanner.peek() === 'e' || scanner.peek() === 'E')) {
+  if (
+    !scanner.isAtEnd() &&
+    (scanner.peek() === 'e' || scanner.peek() === 'E')
+  ) {
     value += scanner.advance()! // consume 'e' or 'E'
-    if (!scanner.isAtEnd() && (scanner.peek() === '+' || scanner.peek() === '-')) {
+    if (
+      !scanner.isAtEnd() &&
+      (scanner.peek() === '+' || scanner.peek() === '-')
+    ) {
       value += scanner.advance()! // consume optional sign
     }
     const exponentDigits = scanner.consumeWhile(isNumber)
@@ -226,7 +233,10 @@ const parseMetaToken = (ctx: TokenizationContext): Token => {
   return { kind: 'Meta', start, end: scanner.position() }
 }
 
-const parseRegexLiteral = (ctx: TokenizationContext, start: ReturnType<typeof ctx.scanner.position>): Token => {
+const parseRegexLiteral = (
+  ctx: TokenizationContext,
+  start: ReturnType<typeof ctx.scanner.position>
+): Token => {
   const scanner = ctx.scanner
   scanner.advance() // consume opening '"'
   const buffer: string[] = []

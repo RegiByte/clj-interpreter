@@ -1,31 +1,3 @@
-export const valueKeywords = {
-  number: 'number',
-  string: 'string',
-  boolean: 'boolean',
-  keyword: 'keyword',
-  nil: 'nil',
-  symbol: 'symbol',
-  list: 'list',
-  vector: 'vector',
-  map: 'map',
-  function: 'function',
-  nativeFunction: 'native-function',
-  macro: 'macro',
-  multiMethod: 'multi-method',
-  atom: 'atom',
-  reduced: 'reduced',
-  volatile: 'volatile',
-  regex: 'regex',
-  var: 'var',
-  set: 'set',
-  delay: 'delay',
-  lazySeq: 'lazy-seq',
-  cons: 'cons',
-  namespace: 'namespace',
-  jsValue: 'js-value',
-} as const
-export type ValueKeywords = (typeof valueKeywords)[keyof typeof valueKeywords]
-
 export type CljNumber = { kind: 'number'; value: number }
 export type CljString = { kind: 'string'; value: string }
 export type CljBoolean = { kind: 'boolean'; value: boolean }
@@ -242,46 +214,6 @@ export type CljValue =
   | CljPending
   | CljJsValue
 
-/** Tokens */
-export const tokenKeywords = {
-  LParen: 'LParen',
-  RParen: 'RParen',
-  LBracket: 'LBracket',
-  RBracket: 'RBracket',
-  LBrace: 'LBrace',
-  RBrace: 'RBrace',
-  String: 'String',
-  Number: 'Number',
-  Keyword: 'Keyword',
-  Quote: 'Quote',
-  Quasiquote: 'Quasiquote',
-  Unquote: 'Unquote',
-  UnquoteSplicing: 'UnquoteSplicing',
-  Comment: 'Comment',
-  Whitespace: 'Whitespace',
-  Symbol: 'Symbol',
-  AnonFnStart: 'AnonFnStart',
-  Deref: 'Deref',
-  Regex: 'Regex',
-  VarQuote: 'VarQuote',
-  Meta: 'Meta',
-  SetStart: 'SetStart',
-} as const
-export const tokenSymbols = {
-  Quote: 'quote',
-  Quasiquote: 'quasiquote',
-  Unquote: 'unquote',
-  UnquoteSplicing: 'unquote-splicing',
-  LParen: '(',
-  RParen: ')',
-  LBracket: '[',
-  RBracket: ']',
-  LBrace: '{',
-  RBrace: '}',
-} as const
-export type TokenSymbols = (typeof tokenSymbols)[keyof typeof tokenSymbols]
-export type TokenKinds = keyof typeof tokenKeywords
-
 export type Cursor = {
   line: number
   col: number
@@ -405,6 +337,18 @@ export type Token = (
  * Phases 2+ (if, fn*, apply) will need it. We keep the shape fixed now.
  */
 export type CompiledExpr = (env: Env, ctx: EvaluationContext) => CljValue
+
+/**
+ * A compile function takes a node and an optional compile-time env. It returns a compiled expression
+ * when it can't compile a node, it returns null, falling back to the interpreter
+ * we have this definition here so that recursive compiler functions such as compileIf,
+ * and compileDo can reference the "root dispatcher" when compiling sub-forms.
+ * It's a clean way to prevent cyclical dependencies. Only recursive compiler fns need this.
+ */
+export type CompileFn = (
+  node: CljValue,
+  env: CompileEnv | null
+) => CompiledExpr | null
 
 /**
  * A mutable box. Allocated at compile time.

@@ -12,6 +12,8 @@ import type {
 } from '../types'
 import { destructureBindings } from './destructure'
 
+const REST_SYMBOL = '&'
+
 export class RecurSignal {
   args: CljValue[]
   constructor(args: CljValue[]) {
@@ -23,23 +25,31 @@ export function parseParamVector(
   args: CljVector,
   env: Env
 ): { params: DestructurePattern[]; restParam: DestructurePattern | null } {
-  const ampIdx = args.value.findIndex((a) => is.symbol(a) && a.name === '&')
+  const ampIdx = args.value.findIndex(
+    (a) => is.symbol(a) && a.name === REST_SYMBOL
+  )
   let params: DestructurePattern[] = []
   let restParam: DestructurePattern | null = null
   if (ampIdx === -1) {
     params = args.value as DestructurePattern[]
   } else {
     const ampsCount = args.value.filter(
-      (a) => is.symbol(a) && a.name === '&'
+      (a) => is.symbol(a) && a.name === REST_SYMBOL
     ).length
     if (ampsCount > 1) {
-      throw new EvaluationError('& can only appear once', { args, env })
-    }
-    if (ampIdx !== args.value.length - 2) {
-      throw new EvaluationError('& must be second-to-last argument', {
+      throw new EvaluationError(`${REST_SYMBOL} can only appear once`, {
         args,
         env,
       })
+    }
+    if (ampIdx !== args.value.length - 2) {
+      throw new EvaluationError(
+        `${REST_SYMBOL} must be second-to-last argument`,
+        {
+          args,
+          env,
+        }
+      )
     }
     params = args.value.slice(0, ampIdx) as DestructurePattern[]
     restParam = args.value[ampIdx + 1] as DestructurePattern

@@ -5,6 +5,7 @@ import { v } from './factories'
 import type { CljNamespace, CljValue, Env, EvaluationContext } from './types'
 import { ensureNamespaceInRegistry, processRequireSpec } from './registry'
 import type { NamespaceRegistry } from './registry'
+import { specialFormKeywords } from './keywords'
 
 // ---------------------------------------------------------------------------
 // wireNsCore — wires *ns*, namespace introspection fns, require, and resolve
@@ -112,8 +113,10 @@ export function wireNsCore(
         if (theVar.ns !== ns.name) return
         const isPrivate = (theVar.meta?.entries ?? []).some(
           ([k, val]) =>
-            k.kind === 'keyword' && k.name === ':private' &&
-            val.kind === 'boolean' && val.value === true
+            k.kind === 'keyword' &&
+            k.name === ':private' &&
+            val.kind === 'boolean' &&
+            val.value === true
         )
         if (!isPrivate) entries.push([v.symbol(name), theVar])
       })
@@ -195,27 +198,7 @@ export function wireNsCore(
     v.nativeFn('special-symbol?', (sym: CljValue) => {
       if (sym === undefined || !isSymbol(sym)) return v.boolean(false)
       const specials = new Set([
-        'def',
-        'if',
-        'do',
-        'let',
-        'quote',
-        'var',
-        'fn',
-        'loop',
-        'recur',
-        'throw',
-        'try',
-        'catch',
-        'finally',
-        'ns',
-        'defmacro',
-        'binding',
-        'monitor-enter',
-        'monitor-exit',
-        'new',
-        'set!',
-        '.',
+        ...Object.values(specialFormKeywords),
         'import',
       ])
       return v.boolean(specials.has(sym.name))
@@ -306,6 +289,7 @@ export function wireIdeStubs(registry: NamespaceRegistry, coreEnv: Env): void {
   )
 
   // Java class stubs — Cursive references these as bare symbols for type checks
+  // other IDE integrations may probe the env to access the capabilities of the runtime
   for (const javaClass of [
     'Class',
     'Object',

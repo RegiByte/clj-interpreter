@@ -1,5 +1,4 @@
 import {
-  valueKeywords,
   type CljAtom,
   type CljBoolean,
   type CljCons,
@@ -15,6 +14,7 @@ import {
   type CljNamespace,
   type CljNativeFunction,
   type CljNumber,
+  type CljPending,
   type CljReduced,
   type CljRegex,
   type CljSet,
@@ -26,7 +26,7 @@ import {
   type CljVolatile,
 } from './types.ts'
 
-import { specialFormKeywords } from './evaluator/keywords.ts'
+import { specialFormKeywords, valueKeywords } from './keywords.ts'
 
 export const isNil = (value: CljValue): boolean => value.kind === 'nil'
 export const isBoolean = (value: CljValue): value is CljBoolean =>
@@ -210,6 +210,9 @@ export const isEqual = (a: CljValue, b: CljValue): boolean => {
 export const isNumber = (value: CljValue): value is CljNumber =>
   value.kind === 'number'
 
+export const isPending = (value: CljValue): value is CljPending =>
+  value.kind === 'pending'
+
 // Main assertion interface for the entire package
 export const is = {
   nil: isNil,
@@ -245,4 +248,5 @@ export const is = {
   cljValue: isCljValue,
   equal: isEqual,
   jsValue: isJsValue,
+  pending: isPending,
 }

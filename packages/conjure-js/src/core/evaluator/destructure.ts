@@ -1,14 +1,7 @@
 import { is } from '../assertions'
 import { EvaluationError } from '../errors'
-import {
-  cljKeyword,
-  cljList,
-  cljNil,
-  cljString,
-  cljSymbol,
-  v,
-} from '../factories'
-import { realizeLazySeq, consToArray } from '../transformations'
+import { v } from '../factories'
+import { consToArray, realizeLazySeq } from '../transformations'
 import type { CljMap, CljValue, Env, EvaluationContext } from '../types'
 
 function toSeqSafe(value: CljValue): CljValue[] {
@@ -28,7 +21,7 @@ function toSeqSafe(value: CljValue): CljValue[] {
 
 /** Return the first element of a seq-like value without full realization. */
 function seqFirst(value: CljValue): CljValue {
-  if (is.nil(value)) return cljNil()
+  if (is.nil(value)) return v.nil()
   if (is.lazySeq(value)) {
     const realized = realizeLazySeq(value)
     return is.nil(realized) ? v.nil() : seqFirst(realized)
@@ -88,9 +81,7 @@ function destructureVector(
   const elems = [...pattern]
 
   // :as alias — must appear as second-to-last with a symbol after it
-  const asIdx = elems.findIndex(
-    (e) => is.keyword(e) && e.kind === 'keyword' && e.name === ':as'
-  )
+  const asIdx = elems.findIndex((e) => is.keyword(e) && e.name === ':as')
   if (asIdx !== -1) {
     const asSym = elems[asIdx + 1]
     if (!asSym || !is.symbol(asSym)) {
@@ -131,7 +122,7 @@ function destructureVector(
         const restArgs = toSeqSafe(current)
         const entries: [CljValue, CljValue][] = []
         for (let i = 0; i < restArgs.length; i += 2) {
-          entries.push([restArgs[i], restArgs[i + 1] ?? cljNil()])
+          entries.push([restArgs[i], restArgs[i + 1] ?? v.nil()])
         }
         pairs.push(
           ...destructureBindings(
@@ -143,7 +134,7 @@ function destructureVector(
         )
       } else {
         // Keep the rest as-is (still lazy) — wrap in list only if it's nil/empty
-        const restValue = seqIsEmpty(current) ? cljNil() : current
+        const restValue = seqIsEmpty(current) ? v.nil() : current
         pairs.push(...destructureBindings(restPattern, restValue, ctx, env))
       }
     }
@@ -152,7 +143,7 @@ function destructureVector(
 
     // positional bindings
     for (let i = 0; i < positionalCount; i++) {
-      pairs.push(...destructureBindings(elems[i], seq[i] ?? cljNil(), ctx, env))
+      pairs.push(...destructureBindings(elems[i], seq[i] ?? v.nil(), ctx, env))
     }
 
     // rest binding
@@ -163,11 +154,11 @@ function destructureVector(
         // kwargs-style: coerce flat key-value pairs into a map
         const entries: [CljValue, CljValue][] = []
         for (let i = 0; i < restArgs.length; i += 2) {
-          entries.push([restArgs[i], restArgs[i + 1] ?? cljNil()])
+          entries.push([restArgs[i], restArgs[i + 1] ?? v.nil()])
         }
         restValue = { kind: 'map', entries }
       } else {
-        restValue = restArgs.length > 0 ? cljList(restArgs) : cljNil()
+        restValue = restArgs.length > 0 ? v.list(restArgs) : v.nil()
       }
       pairs.push(...destructureBindings(restPattern, restValue, ctx, env))
     }
@@ -184,33 +175,32 @@ function destructureMap(
 ): [string, CljValue][] {
   const pairs: [string, CljValue][] = []
 
-  const orMapVal = findMapEntry(pattern, cljKeyword(':or'))
+  const orMapVal = findMapEntry(pattern, v.keyword(':or'))
   const orMap = orMapVal && is.map(orMapVal) ? orMapVal : null
-  const asVal = findMapEntry(pattern, cljKeyword(':as'))
-
-  if (!is.map(value) && value.kind !== 'nil') {
+  const asVal = findMapEntry(pattern, v.keyword(':as'))
+  const isNil = is.nil(value)
+  if (!is.map(value) && !isNil) {
     throw new EvaluationError(`Cannot destructure ${value.kind} as a map`, {
       value,
       pattern,
     })
   }
 
-  const targetMap: CljMap =
-    value.kind === 'nil' ? { kind: 'map', entries: [] } : (value as CljMap)
+  const targetMap: CljMap = isNil ? v.map([]) : (value as CljMap)
 
-  for (const [k, v] of pattern.entries) {
-    if (is.keyword(k) && k.name === ':or') continue
-    if (is.keyword(k) && k.name === ':as') continue
+  for (const [key, val] of pattern.entries) {
+    if (is.keyword(key) && key.name === ':or') continue
+    if (is.keyword(key) && key.name === ':as') continue
 
     // :keys shorthand — lookup by keyword (supports qualified: ns/foo → :ns/foo, binds to foo)
-    if (is.keyword(k) && k.name === ':keys') {
-      if (!is.vector(v)) {
+    if (is.keyword(key) && key.name === ':keys') {
+      if (!is.vector(val)) {
         throw new EvaluationError(
           ':keys must be followed by a vector of symbols',
           { pattern }
         )
       }
-      for (const sym of v.value) {
+      for (const sym of val.value) {
         if (!is.symbol(sym)) {
           throw new EvaluationError(':keys vector must contain symbols', {
             pattern,
@@ -220,7 +210,7 @@ function destructureMap(
         const slashIdx = sym.name.indexOf('/')
         const localName =
           slashIdx !== -1 ? sym.name.slice(slashIdx + 1) : sym.name
-        const lookupKey = cljKeyword(':' + sym.name)
+        const lookupKey = v.keyword(':' + sym.name)
         const present = mapContainsKey(targetMap, lookupKey)
         const entry = present ? findMapEntry(targetMap, lookupKey)! : undefined
 
@@ -228,11 +218,11 @@ function destructureMap(
         if (present) {
           result = entry!
         } else if (orMap) {
-          const orDefault = findMapEntry(orMap, cljSymbol(localName))
+          const orDefault = findMapEntry(orMap, v.symbol(localName))
           result =
-            orDefault !== undefined ? ctx.evaluate(orDefault, env) : cljNil()
+            orDefault !== undefined ? ctx.evaluate(orDefault, env) : v.nil()
         } else {
-          result = cljNil()
+          result = v.nil()
         }
         pairs.push([localName, result])
       }
@@ -240,21 +230,21 @@ function destructureMap(
     }
 
     // :strs shorthand — lookup by string
-    if (is.keyword(k) && k.name === ':strs') {
-      if (!is.vector(v)) {
+    if (is.keyword(key) && key.name === ':strs') {
+      if (!is.vector(val)) {
         throw new EvaluationError(
           ':strs must be followed by a vector of symbols',
           { pattern }
         )
       }
-      for (const sym of v.value) {
+      for (const sym of val.value) {
         if (!is.symbol(sym)) {
           throw new EvaluationError(':strs vector must contain symbols', {
             pattern,
             sym,
           })
         }
-        const lookupKey = cljString(sym.name)
+        const lookupKey = v.string(sym.name)
         const present = mapContainsKey(targetMap, lookupKey)
         const entry = present ? findMapEntry(targetMap, lookupKey)! : undefined
 
@@ -262,11 +252,11 @@ function destructureMap(
         if (present) {
           result = entry!
         } else if (orMap) {
-          const orDefault = findMapEntry(orMap, cljSymbol(sym.name))
+          const orDefault = findMapEntry(orMap, v.symbol(sym.name))
           result =
-            orDefault !== undefined ? ctx.evaluate(orDefault, env) : cljNil()
+            orDefault !== undefined ? ctx.evaluate(orDefault, env) : v.nil()
         } else {
-          result = cljNil()
+          result = v.nil()
         }
         pairs.push([sym.name, result])
       }
@@ -274,21 +264,21 @@ function destructureMap(
     }
 
     // :syms shorthand — lookup by symbol
-    if (is.keyword(k) && k.name === ':syms') {
-      if (!is.vector(v)) {
+    if (is.keyword(key) && key.name === ':syms') {
+      if (!is.vector(val)) {
         throw new EvaluationError(
           ':syms must be followed by a vector of symbols',
           { pattern }
         )
       }
-      for (const sym of v.value) {
+      for (const sym of val.value) {
         if (!is.symbol(sym)) {
           throw new EvaluationError(':syms vector must contain symbols', {
             pattern,
             sym,
           })
         }
-        const lookupKey = cljSymbol(sym.name)
+        const lookupKey = v.symbol(sym.name)
         const present = mapContainsKey(targetMap, lookupKey)
         const entry = present ? findMapEntry(targetMap, lookupKey)! : undefined
 
@@ -296,11 +286,11 @@ function destructureMap(
         if (present) {
           result = entry!
         } else if (orMap) {
-          const orDefault = findMapEntry(orMap, cljSymbol(sym.name))
+          const orDefault = findMapEntry(orMap, v.symbol(sym.name))
           result =
-            orDefault !== undefined ? ctx.evaluate(orDefault, env) : cljNil()
+            orDefault !== undefined ? ctx.evaluate(orDefault, env) : v.nil()
         } else {
-          result = cljNil()
+          result = v.nil()
         }
         pairs.push([sym.name, result])
       }
@@ -309,20 +299,20 @@ function destructureMap(
 
     // Regular entry: {local-pattern :lookup-key}
     // The key of the map entry is the binding pattern, the value is the lookup key
-    const entry = findMapEntry(targetMap, v)
-    const present = mapContainsKey(targetMap, v)
+    const entry = findMapEntry(targetMap, val)
+    const present = mapContainsKey(targetMap, val)
 
     let boundVal: CljValue
     if (present) {
       boundVal = entry!
-    } else if (orMap && is.symbol(k)) {
-      const orDefault = findMapEntry(orMap, cljSymbol(k.name))
+    } else if (orMap && is.symbol(key)) {
+      const orDefault = findMapEntry(orMap, v.symbol(key.name))
       boundVal =
-        orDefault !== undefined ? ctx.evaluate(orDefault, env) : cljNil()
+        orDefault !== undefined ? ctx.evaluate(orDefault, env) : v.nil()
     } else {
-      boundVal = cljNil()
+      boundVal = v.nil()
     }
-    pairs.push(...destructureBindings(k, boundVal, ctx, env))
+    pairs.push(...destructureBindings(key, boundVal, ctx, env))
   }
 
   // :as alias

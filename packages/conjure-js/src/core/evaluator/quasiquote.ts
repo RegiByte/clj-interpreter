@@ -1,14 +1,10 @@
 import { is } from '../assertions'
 import { EvaluationError } from '../errors'
-import { cljList, cljMap, cljVector } from '../factories'
-import { toSeq } from '../transformations'
+import { v } from '../factories'
 import { makeGensym } from '../gensym'
-import {
-  type CljValue,
-  type Env,
-  type EvaluationContext,
-  valueKeywords,
-} from '../types'
+import { valueKeywords } from '../keywords'
+import { toSeq } from '../transformations'
+import { type CljValue, type Env, type EvaluationContext } from '../types'
 
 export function evaluateQuasiquote(
   form: CljValue,
@@ -58,7 +54,7 @@ export function evaluateQuasiquote(
         // Otherwise, recursively evaluate the quasiquote
         elements.push(evaluateQuasiquote(elem, env, autoGensyms, ctx))
       }
-      return isAList ? cljList(elements) : cljVector(elements)
+      return isAList ? v.list(elements) : v.vector(elements)
     }
     case valueKeywords.map: {
       const entries: [CljValue, CljValue][] = []
@@ -67,7 +63,7 @@ export function evaluateQuasiquote(
         const evaluatedValue = evaluateQuasiquote(value, env, autoGensyms, ctx)
         entries.push([evaluatedKey, evaluatedValue])
       }
-      return cljMap(entries)
+      return v.map(entries)
     }
     case valueKeywords.number:
     case valueKeywords.string:
@@ -83,7 +79,7 @@ export function evaluateQuasiquote(
         if (!autoGensyms.has(form.name)) {
           autoGensyms.set(form.name, makeGensym(form.name.slice(0, -1)))
         }
-        return { kind: 'symbol', name: autoGensyms.get(form.name)! }
+        return v.symbol(autoGensyms.get(form.name)!)
       }
       return form
     }

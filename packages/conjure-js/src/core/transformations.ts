@@ -1,8 +1,14 @@
-import { isCons, isLazySeq, isList, isMap, isNil, isSet, isVector } from './assertions'
+import { is } from './assertions'
 import { EvaluationError } from './errors'
-import { cljString, cljVector } from './factories'
-import { printString, getPrintContext } from './printer'
-import { type CljCons, type CljDelay, type CljLazySeq, type CljValue, valueKeywords } from './types'
+import { v } from './factories'
+import { valueKeywords } from './keywords'
+import { getPrintContext, printString } from './printer'
+import {
+  type CljCons,
+  type CljDelay,
+  type CljLazySeq,
+  type CljValue,
+} from './types'
 
 export function valueToString(value: CljValue): string {
   switch (value.kind) {
@@ -18,26 +24,36 @@ export function valueToString(value: CljValue): string {
       return value.name
     case valueKeywords.list: {
       const { printLength } = getPrintContext()
-      const items = printLength !== null ? value.value.slice(0, printLength) : value.value
-      const suffix = printLength !== null && value.value.length > printLength ? ' ...' : ''
+      const items =
+        printLength !== null ? value.value.slice(0, printLength) : value.value
+      const suffix =
+        printLength !== null && value.value.length > printLength ? ' ...' : ''
       return `(${items.map(valueToString).join(' ')}${suffix})`
     }
     case valueKeywords.vector: {
       const { printLength } = getPrintContext()
-      const items = printLength !== null ? value.value.slice(0, printLength) : value.value
-      const suffix = printLength !== null && value.value.length > printLength ? ' ...' : ''
+      const items =
+        printLength !== null ? value.value.slice(0, printLength) : value.value
+      const suffix =
+        printLength !== null && value.value.length > printLength ? ' ...' : ''
       return `[${items.map(valueToString).join(' ')}${suffix}]`
     }
     case valueKeywords.map: {
       const { printLength } = getPrintContext()
-      const entries = printLength !== null ? value.entries.slice(0, printLength) : value.entries
-      const suffix = printLength !== null && value.entries.length > printLength ? ' ...' : ''
+      const entries =
+        printLength !== null
+          ? value.entries.slice(0, printLength)
+          : value.entries
+      const suffix =
+        printLength !== null && value.entries.length > printLength ? ' ...' : ''
       return `{${entries.map(([key, v]) => `${valueToString(key)} ${valueToString(v)}`).join(' ')}${suffix}}`
     }
     case valueKeywords.set: {
       const { printLength } = getPrintContext()
-      const items = printLength !== null ? value.values.slice(0, printLength) : value.values
-      const suffix = printLength !== null && value.values.length > printLength ? ' ...' : ''
+      const items =
+        printLength !== null ? value.values.slice(0, printLength) : value.values
+      const suffix =
+        printLength !== null && value.values.length > printLength ? ' ...' : ''
       return `#{${items.map(valueToString).join(' ')}${suffix}}`
     }
     case valueKeywords.function: {
@@ -67,17 +83,20 @@ export function valueToString(value: CljValue): string {
       return `${prefix}${value.pattern}`
     }
     case valueKeywords.delay:
-      return value.realized ? `#<Delay @${valueToString(value.value!)}>` : '#<Delay pending>'
+      return value.realized
+        ? `#<Delay @${valueToString(value.value!)}>`
+        : '#<Delay pending>'
     case valueKeywords.lazySeq: {
       const realized = realizeLazySeq(value)
-      if (isNil(realized)) return '()'
+      if (is.nil(realized)) return '()'
       return valueToString(realized)
     }
     case valueKeywords.cons: {
       const items = consToArray(value)
       const { printLength } = getPrintContext()
       const visible = printLength !== null ? items.slice(0, printLength) : items
-      const suffix = printLength !== null && items.length > printLength ? ' ...' : ''
+      const suffix =
+        printLength !== null && items.length > printLength ? ' ...' : ''
       return `(${visible.map(valueToString).join(' ')}${suffix})`
     }
     case valueKeywords.namespace:
@@ -123,27 +142,27 @@ export function realizeLazySeq(ls: CljLazySeq): CljValue {
 }
 
 export const toSeq = (collection: CljValue): CljValue[] => {
-  if (isList(collection)) {
+  if (is.list(collection)) {
     return collection.value
   }
-  if (isVector(collection)) {
+  if (is.vector(collection)) {
     return collection.value
   }
-  if (isMap(collection)) {
-    return collection.entries.map(([k, v]) => cljVector([k, v]))
+  if (is.map(collection)) {
+    return collection.entries.map(([key, value]) => v.vector([key, value]))
   }
-  if (isSet(collection)) {
+  if (is.set(collection)) {
     return collection.values
   }
   if (collection.kind === 'string') {
-    return [...collection.value].map(cljString)
+    return [...collection.value].map(v.string)
   }
-  if (isLazySeq(collection)) {
+  if (is.lazySeq(collection)) {
     const realized = realizeLazySeq(collection)
-    if (isNil(realized)) return []
+    if (is.nil(realized)) return []
     return toSeq(realized)
   }
-  if (isCons(collection)) {
+  if (is.cons(collection)) {
     return consToArray(collection)
   }
   throw new EvaluationError(
@@ -157,21 +176,21 @@ export function consToArray(c: CljCons): CljValue[] {
   const result: CljValue[] = [c.head]
   let tail: CljValue = c.tail
   while (true) {
-    if (isNil(tail)) break
-    if (isCons(tail)) {
+    if (is.nil(tail)) break
+    if (is.cons(tail)) {
       result.push(tail.head)
       tail = tail.tail
       continue
     }
-    if (isLazySeq(tail)) {
+    if (is.lazySeq(tail)) {
       tail = realizeLazySeq(tail)
       continue
     }
-    if (isList(tail)) {
+    if (is.list(tail)) {
       result.push(...tail.value)
       break
     }
-    if (isVector(tail)) {
+    if (is.vector(tail)) {
       result.push(...tail.value)
       break
     }

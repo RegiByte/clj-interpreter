@@ -1,17 +1,17 @@
 import { builtInNamespaceSources } from '../clojure/generated/builtin-namespace-registry'
+import { cljToJs as _cljToJs } from './conversions'
+import { internVar, makeEnv } from './env'
 import { CljThrownSignal, EvaluationError, ReaderError } from './errors'
 import { createEvaluationContext, RecurSignal } from './evaluator'
-import { internVar, makeEnv } from './env'
-import { v } from './factories'
 import { jsToClj } from './evaluator/js-interop'
+import { v } from './factories'
 import type { RuntimeModule } from './module'
-import { cljToJs as _cljToJs } from './conversions'
+import { extractAliasMapFromTokens, extractNsNameFromTokens } from './ns-forms'
 import { formatErrorContext } from './positions'
 import { printString } from './printer'
 import { readForms } from './reader'
 import type { Runtime, RuntimeSnapshot } from './runtime'
 import { createRuntime, restoreRuntime } from './runtime'
-import { extractAliasMapFromTokens, extractNsNameFromTokens } from './ns-forms'
 import { tokenize } from './tokenizer'
 import type { CljNamespace, CljValue, Env } from './types'
 
@@ -57,7 +57,11 @@ export type Session = {
   getNs: (namespace: string) => CljNamespace | null
   loadFile: (source: string, nsName?: string, filePath?: string) => string
   /** Async variant of loadFile — handles string requires ((:require ["pkg" :as X])). */
-  loadFileAsync: (source: string, nsName?: string, filePath?: string) => Promise<string>
+  loadFileAsync: (
+    source: string,
+    nsName?: string,
+    filePath?: string
+  ) => Promise<string>
   evaluate: (
     source: string,
     opts?: { lineOffset?: number; colOffset?: number; file?: string }
@@ -142,7 +146,11 @@ function buildSessionFacade(
       return runtime.loadFile(source, nsName, filePath, ctx)
     },
 
-    async loadFileAsync(source: string, nsName?: string, filePath?: string): Promise<string> {
+    async loadFileAsync(
+      source: string,
+      nsName?: string,
+      filePath?: string
+    ): Promise<string> {
       // If there is no ns declaration in the source, pre-set the namespace from
       // the hint so the forms evaluate in the right context.
       if (nsName) {
@@ -301,7 +309,9 @@ function buildSessionFacade(
     },
 
     cljToJs(value: CljValue): unknown {
-      return _cljToJs(value, { applyFunction: (fn, args) => ctx.applyCallable(fn, args, makeEnv()) })
+      return _cljToJs(value, {
+        applyFunction: (fn, args) => ctx.applyCallable(fn, args, makeEnv()),
+      })
     },
 
     evaluateForms(forms: CljValue[]): CljValue {

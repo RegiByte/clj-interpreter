@@ -12,6 +12,9 @@ import type {
 
 import { evaluateSpecialForm } from './special-forms'
 
+const LIST_HEAD_POS = 0
+const LIST_BODY_POS = 1
+
 export function dispatchMultiMethod(
   mm: CljMultiMethod,
   args: CljValue[],
@@ -45,27 +48,31 @@ export function evaluateList(
   if (list.value.length === 0) {
     return list
   }
-  const first = list.value[0]
+  const head = list.value[LIST_HEAD_POS]
 
-  if (is.specialForm(first)) {
-    return evaluateSpecialForm(first.name, list, env, ctx)
+  if (is.specialForm(head)) {
+    return evaluateSpecialForm(head.name, list, env, ctx)
   }
 
-  const evaledFirst = ctx.evaluate(first, env)
+  const evaledHead = ctx.evaluate(head, env)
 
-  if (is.multiMethod(evaledFirst)) {
-    const args = list.value.slice(1).map((v) => ctx.evaluate(v, env))
-    return dispatchMultiMethod(evaledFirst, args, ctx, env)
+  if (is.multiMethod(evaledHead)) {
+    const args = list.value
+      .slice(LIST_BODY_POS)
+      .map((arg) => ctx.evaluate(arg, env))
+    return dispatchMultiMethod(evaledHead, args, ctx, env)
   }
 
-  if (!is.callable(evaledFirst)) {
-    const name = is.symbol(first) ? first.name : printString(first)
+  if (!is.callable(evaledHead)) {
+    const name = is.symbol(head) ? head.name : printString(head)
     throw new EvaluationError(`${name} is not callable`, { list, env })
   }
 
-  const args = list.value.slice(1).map((v) => ctx.evaluate(v, env))
+  const args = list.value
+    .slice(LIST_BODY_POS)
+    .map((arg) => ctx.evaluate(arg, env))
   try {
-    return ctx.applyCallable(evaledFirst, args, env)
+    return ctx.applyCallable(evaledHead, args, env)
   } catch (e) {
     maybeHydrateErrorPos(e, list)
     throw e

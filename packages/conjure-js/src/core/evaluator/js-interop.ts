@@ -1,6 +1,6 @@
 import { is } from '../assertions'
 import { EvaluationError } from '../errors'
-import { cljBoolean, cljJsValue, cljNil, cljNumber, cljString } from '../factories'
+import { v } from '../factories'
 import type { CljList, CljValue, Env, EvaluationContext } from '../types'
 
 // ---------------------------------------------------------------------------
@@ -14,12 +14,12 @@ import type { CljList, CljValue, Env, EvaluationContext } from '../types'
  * - primitives convert; everything else boxes.
  */
 export function jsToClj(raw: unknown): CljValue {
-  if (raw === null) return cljNil()
-  if (raw === undefined) return cljJsValue(undefined)
-  if (typeof raw === 'number') return cljNumber(raw)
-  if (typeof raw === 'string') return cljString(raw)
-  if (typeof raw === 'boolean') return cljBoolean(raw)
-  return cljJsValue(raw)
+  if (raw === null) return v.nil()
+  if (raw === undefined) return v.jsValue(undefined)
+  if (typeof raw === 'number') return v.number(raw)
+  if (typeof raw === 'string') return v.string(raw)
+  if (typeof raw === 'boolean') return v.boolean(raw)
+  return v.jsValue(raw)
 }
 
 /**
@@ -28,13 +28,13 @@ export function jsToClj(raw: unknown): CljValue {
  * have no meaningful JS representation and must be reduced to a primitive first.
  */
 function mapKeyToString(key: CljValue): string {
-  if (key.kind === 'string') return key.value
-  if (key.kind === 'keyword') return key.name.slice(1) // strip leading ':'
-  if (key.kind === 'number') return String(key.value)
-  if (key.kind === 'boolean') return String(key.value)
+  if (is.string(key)) return key.value
+  if (is.keyword(key)) return key.name.slice(1) // strip leading ':'
+  if (is.number(key)) return String(key.value)
+  if (is.boolean(key)) return String(key.value)
   throw new EvaluationError(
     `cljToJs: map key must be a string, keyword, number, or boolean — ` +
-    `got ${key.kind} (rich keys are not allowed as JS object keys; reduce to a primitive first)`,
+      `got ${key.kind} (rich keys are not allowed as JS object keys; reduce to a primitive first)`,
     { key }
   )
 }
@@ -43,14 +43,24 @@ function mapKeyToString(key: CljValue): string {
  * Convert a CljValue to a raw JS value for crossing the interop boundary.
  * Called on each argument passed to `.` and `js/new`.
  */
-export function cljToJs(val: CljValue, ctx: EvaluationContext, callEnv: Env): unknown {
+export function cljToJs(
+  val: CljValue,
+  ctx: EvaluationContext,
+  callEnv: Env
+): unknown {
   switch (val.kind) {
-    case 'js-value': return val.value
-    case 'number': return val.value
-    case 'string': return val.value
-    case 'boolean': return val.value
-    case 'nil': return null
-    case 'keyword': return val.name.slice(1) // strip leading ':'
+    case 'js-value':
+      return val.value
+    case 'number':
+      return val.value
+    case 'string':
+      return val.value
+    case 'boolean':
+      return val.value
+    case 'nil':
+      return null
+    case 'keyword':
+      return val.name.slice(1) // strip leading ':'
     case 'function':
     case 'native-function': {
       const fn = val
@@ -90,15 +100,14 @@ export function cljToJs(val: CljValue, ctx: EvaluationContext, callEnv: Env): un
  */
 function extractRawTarget(target: CljValue): unknown {
   switch (target.kind) {
-    case 'js-value': return target.value
+    case 'js-value':
+      return target.value
     case 'string':
     case 'number':
-    case 'boolean': return target.value
+    case 'boolean':
+      return target.value
     default:
-      throw new EvaluationError(
-        `cannot use . on ${target.kind}`,
-        { target }
-      )
+      throw new EvaluationError(`cannot use . on ${target.kind}`, { target })
   }
 }
 
@@ -108,10 +117,9 @@ export function evaluateDot(
   ctx: EvaluationContext
 ): CljValue {
   if (list.value.length < 3) {
-    throw new EvaluationError(
-      '. requires at least 2 arguments: (. obj prop)',
-      { list }
-    )
+    throw new EvaluationError('. requires at least 2 arguments: (. obj prop)', {
+      list,
+    })
   }
 
   const target = ctx.evaluate(list.value[1], env)
@@ -141,7 +149,7 @@ export function evaluateDot(
     // Functions are bound to their object so that ((. obj method)) works correctly.
     const rawProp = rawObj[propName]
     if (typeof rawProp === 'function') {
-      return cljJsValue((rawProp as (...a: unknown[]) => unknown).bind(rawObj))
+      return v.jsValue((rawProp as (...a: unknown[]) => unknown).bind(rawObj))
     }
     return jsToClj(rawProp)
   }
@@ -157,7 +165,10 @@ export function evaluateDot(
 
   const cljArgs = list.value.slice(3).map((a) => ctx.evaluate(a, env))
   const jsArgs = cljArgs.map((a) => cljToJs(a, ctx, env))
-  const rawResult = (method as (...args: unknown[]) => unknown).apply(rawObj, jsArgs)
+  const rawResult = (method as (...args: unknown[]) => unknown).apply(
+    rawObj,
+    jsArgs
+  )
   return jsToClj(rawResult)
 }
 
@@ -171,7 +182,9 @@ export function evaluateNew(
   ctx: EvaluationContext
 ): CljValue {
   if (list.value.length < 2) {
-    throw new EvaluationError('js/new requires a constructor argument', { list })
+    throw new EvaluationError('js/new requires a constructor argument', {
+      list,
+    })
   }
 
   const cls = ctx.evaluate(list.value[1], env)
@@ -185,5 +198,5 @@ export function evaluateNew(
   const cljArgs = list.value.slice(2).map((a) => ctx.evaluate(a, env))
   const jsArgs = cljArgs.map((a) => cljToJs(a, ctx, env))
   const ctor = cls.value as new (...args: unknown[]) => unknown
-  return cljJsValue(new ctor(...jsArgs))
+  return v.jsValue(new ctor(...jsArgs))
 }

@@ -43,7 +43,8 @@
 import { is } from '../assertions'
 import { extend } from '../env'
 import { CljThrownSignal, EvaluationError } from '../errors'
-import { cljNil } from '../factories'
+import { cljNil, v } from '../factories'
+import { specialFormKeywords, valueKeywords } from '../keywords'
 import type { CljList, CljValue, Env, EvaluationContext } from '../types'
 import { bindParams, RecurSignal, resolveArity } from './arity'
 import { destructureBindings } from './destructure'
@@ -89,56 +90,56 @@ async function evaluateFormAsync(
   // Self-evaluating forms and symbols: delegate directly to sync evaluator.
   // No async needed — these don't contain sub-expressions that could be pending.
   switch (expr.kind) {
-    case 'number':
-    case 'string':
-    case 'boolean':
-    case 'keyword':
-    case 'nil':
-    case 'symbol':
-    case 'function':
-    case 'native-function':
-    case 'macro':
-    case 'multi-method':
-    case 'atom':
-    case 'reduced':
-    case 'volatile':
-    case 'regex':
-    case 'var':
-    case 'delay':
-    case 'lazy-seq':
-    case 'cons':
-    case 'namespace':
-    case 'pending':
+    case valueKeywords.number:
+    case valueKeywords.string:
+    case valueKeywords.boolean:
+    case valueKeywords.keyword:
+    case valueKeywords.nil:
+    case valueKeywords.symbol:
+    case valueKeywords.function:
+    case valueKeywords.nativeFunction:
+    case valueKeywords.macro:
+    case valueKeywords.multiMethod:
+    case valueKeywords.atom:
+    case valueKeywords.reduced:
+    case valueKeywords.volatile:
+    case valueKeywords.regex:
+    case valueKeywords.var:
+    case valueKeywords.delay:
+    case valueKeywords.lazySeq:
+    case valueKeywords.cons:
+    case valueKeywords.namespace:
+    case valueKeywords.pending:
       return asyncCtx.syncCtx.evaluate(expr, env)
   }
 
-  if (expr.kind === 'vector') {
+  if (is.vector(expr)) {
     const elements: CljValue[] = []
     for (const el of expr.value) {
       elements.push(await evaluateFormAsync(el, env, asyncCtx))
     }
-    return { kind: 'vector', value: elements }
+    return v.vector(elements)
   }
 
-  if (expr.kind === 'map') {
+  if (is.map(expr)) {
     const entries: [CljValue, CljValue][] = []
     for (const [k, v] of expr.entries) {
       const ek = await evaluateFormAsync(k, env, asyncCtx)
       const ev = await evaluateFormAsync(v, env, asyncCtx)
       entries.push([ek, ev])
     }
-    return { kind: 'map', entries }
+    return v.map(entries)
   }
 
-  if (expr.kind === 'set') {
+  if (is.set(expr)) {
     const elements: CljValue[] = []
     for (const el of expr.values) {
       elements.push(await evaluateFormAsync(el, env, asyncCtx))
     }
-    return { kind: 'set', values: elements }
+    return v.set(elements)
   }
 
-  if (expr.kind === 'list') {
+  if (is.list(expr)) {
     return evaluateListAsync(expr, env, asyncCtx)
   }
 
@@ -151,7 +152,7 @@ async function evaluateFormsAsync(
   env: Env,
   asyncCtx: AsyncEvalCtx
 ): Promise<CljValue> {
-  let result: CljValue = cljNil()
+  let result: CljValue = v.nil()
   for (const form of forms) {
     const expanded = asyncCtx.syncCtx.expandAll(form, env)
     result = await evaluateFormAsync(expanded, env, asyncCtx)
@@ -196,28 +197,28 @@ const ASYNC_SPECIAL_FORMS = new Set([
 ])
 
 async function evaluateListAsync(
-  list: { kind: 'list'; value: CljValue[] },
+  list: CljList,
   env: Env,
   asyncCtx: AsyncEvalCtx
 ): Promise<CljValue> {
   if (list.value.length === 0) return list
 
-  const first = list.value[0]
+  const head = list.value[0]
 
   // Special forms: dispatch to async-aware handlers for the ones that need it,
   // delegate to sync ctx for safe ones (quote, var, fn, ns).
-  if (first.kind === 'symbol' && ASYNC_SPECIAL_FORMS.has(first.name)) {
-    return evaluateSpecialFormAsync(first.name, list, env, asyncCtx)
+  if (is.symbol(head) && ASYNC_SPECIAL_FORMS.has(head.name)) {
+    return evaluateSpecialFormAsync(head.name, list, env, asyncCtx)
   }
 
   // Evaluate the head (function position)
-  const fn = await evaluateFormAsync(first, env, asyncCtx)
+  const fn = await evaluateFormAsync(head, env, asyncCtx)
 
   // Deref interception: @x expands to (deref x).
   // If the dereffed value is CljPending, await it here — this is the heart of async @.
   if (is.aFunction(fn) && fn.name === 'deref' && list.value.length === 2) {
     const val = await evaluateFormAsync(list.value[1], env, asyncCtx)
-    if (val.kind === 'pending') {
+    if (is.pending(val)) {
       return val.promise // await the pending value
     }
     // Not pending: normal sync deref
@@ -237,22 +238,21 @@ async function evaluateListAsync(
 
 async function evaluateSpecialFormAsync(
   name: string,
-  list: { kind: 'list'; value: CljValue[] },
+  list: CljList,
   env: Env,
   asyncCtx: AsyncEvalCtx
 ): Promise<CljValue> {
   switch (name) {
     // Safe to delegate to sync: no sub-evaluation of async expressions
-    case 'quote':
-    case 'var':
-    case 'ns':
+    case specialFormKeywords.quote:
+    case specialFormKeywords.var:
+    case specialFormKeywords.ns:
     // fn/fn*: function CREATION is sync — the body is evaluated async only when called
-    case 'fn':
-    case 'fn*':
+    case specialFormKeywords.fn:
       return asyncCtx.syncCtx.evaluate(list, env)
 
     // recur: evaluate args async, then throw RecurSignal
-    case 'recur': {
+    case specialFormKeywords.recur: {
       const args: CljValue[] = []
       for (const arg of list.value.slice(1)) {
         args.push(await evaluateFormAsync(arg, env, asyncCtx))
@@ -261,70 +261,58 @@ async function evaluateSpecialFormAsync(
     }
 
     // do: sequential evaluation
-    case 'do':
+    case specialFormKeywords.do:
       return evaluateFormsAsync(list.value.slice(1), env, asyncCtx)
 
     // def: V1 does not support def inside (async ...) — unusual use case
-    case 'def':
+    case specialFormKeywords.def:
       throw new EvaluationError(
         'def inside (async ...) is not supported. Define vars outside the async block.',
         { list, env }
       )
 
     // if: evaluate condition, then selected branch
-    case 'if': {
+    case specialFormKeywords.if: {
       const condition = await evaluateFormAsync(list.value[1], env, asyncCtx)
       const isTruthy =
-        condition.kind !== 'nil' &&
-        !(condition.kind === 'boolean' && !condition.value)
+        !is.nil(condition) && !(is.boolean(condition) && !condition.value)
       if (isTruthy) {
         return evaluateFormAsync(list.value[2], env, asyncCtx)
       }
       return list.value[3] !== undefined
         ? evaluateFormAsync(list.value[3], env, asyncCtx)
-        : cljNil()
+        : v.nil()
     }
 
     // let/let*: sequential bindings (value eval is async, pattern binding is sync)
-    case 'let':
-    case 'let*':
+    case specialFormKeywords.let:
       return evaluateLetAsync(list, env, asyncCtx)
 
     // loop: like let but supports recur
-    case 'loop':
+    case specialFormKeywords.loop:
       return evaluateLoopAsync(list, env, asyncCtx)
 
     // binding: evaluate binding values async, then body
-    case 'binding':
+    case specialFormKeywords.binding:
       return evaluateBindingAsync(list, env, asyncCtx)
 
     // try: evaluate body async, handle catch/finally async
-    case 'try':
+    case specialFormKeywords.try:
       return evaluateTryAsync(list, env, asyncCtx)
 
     // set!: evaluate new value async, then call sync set! logic
-    case 'set!': {
+    case specialFormKeywords['set!']: {
       // Re-delegate to sync ctx with the value already evaluated.
       // The sync set! handler will re-evaluate list.value[2] as a form —
       // that won't work with an already-evaluated value. So we call the sync
       // evaluator on a reconstructed list with the value quoted.
       const newVal = await evaluateFormAsync(list.value[2], env, asyncCtx)
-      const quotedVal: CljValue = {
-        kind: 'list',
-        value: [{ kind: 'symbol', name: 'quote' }, newVal],
-      }
-      const newList: CljValue = {
-        kind: 'list',
-        value: [list.value[0], list.value[1], quotedVal],
-      }
+      const quoted = v.list([v.symbol(specialFormKeywords.quote), newVal])
+      const newList = v.list([list.value[0], list.value[1], quoted])
       return asyncCtx.syncCtx.evaluate(newList, env)
     }
 
-    // quasiquote: delegate to sync — expansion is structural, no async sub-eval
-    case 'quasiquote':
-      return asyncCtx.syncCtx.evaluate(list, env)
-
-    // defmacro, defmulti, defmethod, letfn, delay, lazy-seq, async:
+    // defmacro, quasiquote, defmulti, defmethod, letfn, delay, lazy-seq, async:
     // delegate to sync evaluator (they don't have async sub-expressions in their
     // definition forms, or they create thunks that are evaluated sync later)
     default:
@@ -333,12 +321,12 @@ async function evaluateSpecialFormAsync(
 }
 
 async function evaluateLetAsync(
-  list: { kind: 'list'; value: CljValue[] },
+  list: CljList,
   env: Env,
   asyncCtx: AsyncEvalCtx
 ): Promise<CljValue> {
   const bindings = list.value[1]
-  validateBindingVector(bindings, 'let', env)
+  validateBindingVector(bindings, specialFormKeywords.let, env)
 
   let currentEnv = env
   const pairs = bindings.value
@@ -363,12 +351,12 @@ async function evaluateLetAsync(
 }
 
 async function evaluateLoopAsync(
-  list: { kind: 'list'; value: CljValue[] },
+  list: CljList,
   env: Env,
   asyncCtx: AsyncEvalCtx
 ): Promise<CljValue> {
   const loopBindings = list.value[1]
-  validateBindingVector(loopBindings, 'loop', env)
+  validateBindingVector(loopBindings, specialFormKeywords.loop, env)
 
   const loopBody = list.value.slice(2)
 
@@ -432,7 +420,7 @@ async function evaluateLoopAsync(
 }
 
 async function evaluateBindingAsync(
-  list: { kind: 'list'; value: CljValue[] },
+  list: CljList,
   env: Env,
   asyncCtx: AsyncEvalCtx
 ): Promise<CljValue> {
@@ -446,19 +434,16 @@ async function evaluateBindingAsync(
 }
 
 async function evaluateTryAsync(
-  list: { kind: 'list'; value: CljValue[] },
+  list: CljList,
   env: Env,
   asyncCtx: AsyncEvalCtx
 ): Promise<CljValue> {
   // parseTryStructure validates catch/finally structure (binding symbol, ordering).
   // matchesDiscriminator uses asyncCtx.syncCtx — discriminator evaluation is always
   // synchronous (keyword checks, predicate calls on already-resolved values).
-  const { bodyForms, catchClauses, finallyForms } = parseTryStructure(
-    list as CljList,
-    env
-  )
+  const { bodyForms, catchClauses, finallyForms } = parseTryStructure(list, env)
 
-  let result: CljValue = cljNil()
+  let result: CljValue = v.nil()
   let pendingThrow: unknown = null
 
   try {
@@ -471,16 +456,10 @@ async function evaluateTryAsync(
       thrownValue = e.value
     } else if (e instanceof EvaluationError) {
       thrownValue = {
-        kind: 'map',
+        kind: valueKeywords.map,
         entries: [
-          [
-            { kind: 'keyword', name: ':type' },
-            { kind: 'keyword', name: ':error/runtime' },
-          ],
-          [
-            { kind: 'keyword', name: ':message' },
-            { kind: 'string', value: (e as Error).message },
-          ],
+          [v.keyword(':type'), v.keyword(':error/runtime')],
+          [v.keyword(':message'), v.string((e as Error).message)],
         ],
       }
     } else {
@@ -525,7 +504,7 @@ async function applyCallableAsync(
   callEnv: Env,
   asyncCtx: AsyncEvalCtx
 ): Promise<CljValue> {
-  if (fn.kind === 'native-function') {
+  if (is.nativeFunction(fn)) {
     // Native functions are sync — call as-is.
     // We do NOT auto-await CljPending results here: the caller is responsible
     // for awaiting (via @ deref interception or then/catch). This preserves
@@ -536,7 +515,7 @@ async function applyCallableAsync(
     return fn.fn(...args)
   }
 
-  if (fn.kind === 'function') {
+  if (is.function(fn)) {
     const arity = resolveArity(fn.arities, args.length)
     let currentArgs = args
     while (true) {

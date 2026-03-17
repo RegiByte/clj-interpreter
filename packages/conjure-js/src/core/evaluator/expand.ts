@@ -1,6 +1,6 @@
 import { is } from '../assertions'
 import { derefValue, getNamespaceEnv, tryLookup } from '../env'
-import { cljList, cljMap, cljVector } from '../factories'
+import { v } from '../factories'
 import type { CljValue, Env, EvaluationContext } from '../types'
 
 /**
@@ -31,7 +31,7 @@ export function macroExpandAllWithContext(
     )
     return expanded.every((e, i) => e === form.value[i])
       ? form
-      : cljVector(expanded)
+      : v.vector(expanded)
   }
 
   // Maps: expand each key and value
@@ -47,7 +47,7 @@ export function macroExpandAllWithContext(
       ([k, v], i) => k === form.entries[i][0] && v === form.entries[i][1]
     )
       ? form
-      : cljMap(expanded)
+      : v.map(expanded)
   }
 
   // Atoms (number, string, boolean, keyword, nil, symbol, regex, functions, etc.)
@@ -65,7 +65,7 @@ export function macroExpandAllWithContext(
     )
     return expanded.every((e, i) => e === form.value[i])
       ? form
-      : cljList(expanded)
+      : v.list(expanded)
   }
 
   const name = first.name
@@ -103,7 +103,5 @@ export function macroExpandAllWithContext(
   const expanded = form.value.map((sub) =>
     macroExpandAllWithContext(sub, env, ctx)
   )
-  return expanded.every((e, i) => e === form.value[i])
-    ? form
-    : cljList(expanded)
+  return expanded.every((e, i) => e === form.value[i]) ? form : v.list(expanded)
 }

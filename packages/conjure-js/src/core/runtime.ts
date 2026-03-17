@@ -1,30 +1,30 @@
-import { isKeyword, isString, isSymbol, isVector } from './assertions'
-import {
-  resolveModuleOrder,
-  type RuntimeModule,
-  type ModuleContext,
-} from './module'
+import { builtInNamespaceSources } from '../clojure/generated/builtin-namespace-registry'
+import { is } from './assertions'
+import { wireIdeStubs, wireNsCore } from './bootstrap'
 import { internVar, makeEnv, makeNamespace } from './env'
 import { EvaluationError } from './errors'
 import { v } from './factories'
-import { readForms } from './reader'
-import { tokenize } from './tokenizer'
-import type { CljNamespace, CljValue, Env, EvaluationContext } from './types'
-import { builtInNamespaceSources } from '../clojure/generated/builtin-namespace-registry'
-import { makeCoreModule } from './core-module'
-import { makeJsModule } from './stdlib/js-namespace'
 import {
-  cloneRegistry,
-  ensureNamespaceInRegistry,
-  processRequireSpec,
-} from './registry'
-import type { NamespaceRegistry } from './registry'
+  resolveModuleOrder,
+  type ModuleContext,
+  type RuntimeModule,
+} from './module'
+import { makeCoreModule } from './modules/core'
+import { makeJsModule } from './modules/js'
 import {
   extractAliasMapFromTokens,
   extractNsNameFromTokens,
   extractRequireClauses,
 } from './ns-forms'
-import { wireIdeStubs, wireNsCore } from './bootstrap'
+import { readForms } from './reader'
+import type { NamespaceRegistry } from './registry'
+import {
+  cloneRegistry,
+  ensureNamespaceInRegistry,
+  processRequireSpec,
+} from './registry'
+import { tokenize } from './tokenizer'
+import type { CljNamespace, CljValue, Env, EvaluationContext } from './types'
 
 // ---------------------------------------------------------------------------
 // Core types
@@ -184,9 +184,9 @@ function buildRuntime(
       for (const specs of requireClauses) {
         for (const spec of specs) {
           if (
-            isVector(spec) &&
+            is.vector(spec) &&
             spec.value.length > 0 &&
-            isString(spec.value[0])
+            is.string(spec.value[0])
           ) {
             const specifier = spec.value[0].value
             throw new EvaluationError(
@@ -210,9 +210,9 @@ function buildRuntime(
       for (const specs of requireClauses) {
         for (const spec of specs) {
           if (
-            isVector(spec) &&
+            is.vector(spec) &&
             spec.value.length > 0 &&
-            isString(spec.value[0])
+            is.string(spec.value[0])
           ) {
             // String module require — calls importModule and interns result as a var
             const specifier = spec.value[0].value
@@ -226,12 +226,12 @@ function buildRuntime(
             let aliasName: string | null = null
             for (let i = 1; i < elements.length; i++) {
               if (
-                isKeyword(elements[i]) &&
+                is.keyword(elements[i]) &&
                 (elements[i] as { name: string }).name === ':as'
               ) {
                 i++
                 const aliasSym = elements[i]
-                if (!aliasSym || !isSymbol(aliasSym)) {
+                if (!aliasSym || !is.symbol(aliasSym)) {
                   throw new EvaluationError(':as expects a symbol alias', {
                     spec,
                   })

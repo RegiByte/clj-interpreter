@@ -1,6 +1,7 @@
 import { is } from '../assertions'
 import { EvaluationError } from '../errors'
 import { cljNil } from '../factories'
+import { valueKeywords } from '../keywords'
 import { printString } from '../printer'
 import type {
   CljFunction,
@@ -19,14 +20,14 @@ export function applyFunctionWithContext(
   ctx: EvaluationContext,
   callEnv: Env
 ): CljValue {
-  if (fn.kind === 'native-function') {
+  if (fn.kind === valueKeywords.nativeFunction) {
     // New path, native fns receive evaluation context as first argument
     if (fn.fnWithContext) {
       return fn.fnWithContext(ctx, callEnv, ...args)
     }
     return fn.fn(...args)
   }
-  if (fn.kind === 'function') {
+  if (fn.kind === valueKeywords.function) {
     const arity = resolveArity(fn.arities, args.length)
     let currentArgs = args
     while (true) {
@@ -94,7 +95,7 @@ export function applyCallableWithContext(
     return applyFunctionWithContext(fn, args, ctx, callEnv)
   }
   if (is.jsValue(fn)) {
-    if (typeof fn.value !== 'function') {
+    if (typeof fn.value !== valueKeywords.function) {
       throw new EvaluationError(
         `js-value is not callable: ${typeof fn.value}`,
         { fn, args }

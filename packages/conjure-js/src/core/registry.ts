@@ -1,4 +1,4 @@
-import { isKeyword, isSymbol, isVector } from './assertions'
+import { is } from './assertions'
 import { makeEnv, makeNamespace } from './env'
 import { EvaluationError } from './errors'
 import type { CljValue, Env } from './types'
@@ -89,7 +89,7 @@ export function processRequireSpec(
   registry: NamespaceRegistry,
   resolveNs?: (nsName: string) => boolean
 ): void {
-  if (!isVector(spec)) {
+  if (!is.vector(spec)) {
     throw new EvaluationError(
       'require spec must be a vector, e.g. [my.ns :as alias]',
       { spec }
@@ -97,7 +97,7 @@ export function processRequireSpec(
   }
 
   const elements = spec.value
-  if (elements.length === 0 || !isSymbol(elements[0])) {
+  if (elements.length === 0 || !is.symbol(elements[0])) {
     throw new EvaluationError(
       'First element of require spec must be a namespace symbol',
       { spec }
@@ -107,13 +107,13 @@ export function processRequireSpec(
   const nsName = elements[0].name
 
   const hasAsAlias = elements.some(
-    (el) => isKeyword(el) && el.name === ':as-alias'
+    (el) => is.keyword(el) && el.name === ':as-alias'
   )
   if (hasAsAlias) {
     let i = 1
     while (i < elements.length) {
       const kw = elements[i]
-      if (!isKeyword(kw)) {
+      if (!is.keyword(kw)) {
         throw new EvaluationError(
           `Expected keyword in require spec, got ${kw.kind}`,
           { spec, position: i }
@@ -122,7 +122,7 @@ export function processRequireSpec(
       if (kw.name === ':as-alias') {
         i++
         const alias = elements[i]
-        if (!alias || !isSymbol(alias)) {
+        if (!alias || !is.symbol(alias)) {
           throw new EvaluationError(':as-alias expects a symbol alias', {
             spec,
             position: i,
@@ -155,7 +155,7 @@ export function processRequireSpec(
   let i = 1
   while (i < elements.length) {
     const kw = elements[i]
-    if (!isKeyword(kw)) {
+    if (!is.keyword(kw)) {
       throw new EvaluationError(
         `Expected keyword in require spec, got ${kw.kind}`,
         { spec, position: i }
@@ -165,7 +165,7 @@ export function processRequireSpec(
     if (kw.name === ':as') {
       i++
       const alias = elements[i]
-      if (!alias || !isSymbol(alias)) {
+      if (!alias || !is.symbol(alias)) {
         throw new EvaluationError(':as expects a symbol alias', {
           spec,
           position: i,
@@ -176,14 +176,14 @@ export function processRequireSpec(
     } else if (kw.name === ':refer') {
       i++
       const symsVec = elements[i]
-      if (!symsVec || !isVector(symsVec)) {
+      if (!symsVec || !is.vector(symsVec)) {
         throw new EvaluationError(':refer expects a vector of symbols', {
           spec,
           position: i,
         })
       }
       for (const sym of symsVec.value) {
-        if (!isSymbol(sym)) {
+        if (!is.symbol(sym)) {
           throw new EvaluationError(':refer vector must contain only symbols', {
             spec,
             sym,

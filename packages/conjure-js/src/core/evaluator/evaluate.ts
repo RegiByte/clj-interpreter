@@ -1,12 +1,19 @@
+/**
+ * Evaluator - Core entrypoint
+ * Handles the evaluation of a single expression.
+ * Delegates most of the work to domain handlers.
+ * Uses the compiler to compile the expression to a closure when possible.
+ * The interpreter is the source of truth for the semantics of the language.
+ */
+
+import { compile } from '../compiler'
 import { derefValue, getNamespaceEnv, lookup } from '../env'
 import { EvaluationError } from '../errors'
 import { v } from '../factories'
+import { valueKeywords } from '../keywords.ts'
 import { getPos } from '../positions'
-import { valueKeywords } from '../types'
-
 import type { CljValue, Env, EvaluationContext } from '../types'
 import { evaluateMap, evaluateSet, evaluateVector } from './collections'
-import { compile } from './compiler'
 import { evaluateList } from './dispatch'
 
 export type EvaluationMeasurement = {

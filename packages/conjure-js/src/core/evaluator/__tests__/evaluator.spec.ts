@@ -1,15 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  cljBoolean,
-  cljFunction,
-  cljKeyword,
-  cljList,
-  cljNil,
-  cljNumber,
-  cljString,
-  cljSymbol,
-  cljVector,
-} from '../../factories'
+import { v } from '../../factories'
 import { lookup } from '../../env'
 import { freshSession, toCljValue } from './evaluator-test-utils'
 
@@ -18,21 +8,21 @@ describe('evaluator spec', () => {
     it('should evaluate a single form', () => {
       const session = freshSession()
       const result = session.evaluate('1')
-      expect(result).toMatchObject(cljNumber(1))
+      expect(result).toMatchObject(v.number(1))
     })
 
     it('should evaluate an empty list', () => {
       const session = freshSession()
       const result = session.evaluate('()')
-      expect(result).toMatchObject(cljList([]))
+      expect(result).toMatchObject(v.list([]))
     })
 
     it.each([
-      ['1', cljNumber(1)],
-      ['"hello"', cljString('hello')],
-      ['true', cljBoolean(true)],
-      [':keyword', cljKeyword(':keyword')],
-      ['nil', cljNil()],
+      ['1', v.number(1)],
+      ['"hello"', v.string('hello')],
+      ['true', v.boolean(true)],
+      [':keyword', v.keyword(':keyword')],
+      ['nil', v.nil()],
     ])('should evaluate self-evaluating forms: %s', (code, expected) => {
       const session = freshSession()
       expect(session.evaluate(code)).toMatchObject(expected)
@@ -41,7 +31,7 @@ describe('evaluator spec', () => {
     it('should evaluate functions to self', () => {
       const session = freshSession()
       const userEnv = session.registry.get('user')!
-      const form = cljFunction([cljSymbol('n1')], null, [cljNumber(1)], userEnv)
+      const form = v.function([v.symbol('n1')], null, [v.number(1)], userEnv)
       const result = session.evaluateForms([form])
       expect(result).toMatchObject(form)
     })
@@ -49,7 +39,7 @@ describe('evaluator spec', () => {
     it('should evaluate a vector with items and strip comments at parse time', () => {
       const session = freshSession()
       const result = session.evaluate('[1 ; comment\n 2]')
-      expect(result).toMatchObject(cljVector([cljNumber(1), cljNumber(2)]))
+      expect(result).toMatchObject(v.vector([v.number(1), v.number(2)]))
     })
   })
 
@@ -60,10 +50,10 @@ describe('evaluator spec', () => {
       const result = session.evaluate('(fn [a b] (+ a b))')
       const userEnv = session.registry.get('user')!
       expect(result).toMatchObject(
-        cljFunction(
-          [cljSymbol('a'), cljSymbol('b')],
+        v.function(
+          [v.symbol('a'), v.symbol('b')],
           null,
-          [cljList([cljSymbol('+'), cljSymbol('a'), cljSymbol('b')])],
+          [v.list([v.symbol('+'), v.symbol('a'), v.symbol('b')])],
           userEnv
         )
       )
@@ -71,16 +61,16 @@ describe('evaluator spec', () => {
         throw new Error('Result is not a function')
       }
       // check if the outer env was captured by the function
-      expect(lookup('some-symbol', result.env)).toMatchObject(cljNumber(1))
+      expect(lookup('some-symbol', result.env)).toMatchObject(v.number(1))
     })
 
     it('should evaluate def special form', () => {
       const session = freshSession()
       const result = session.evaluate('(def some-symbol 1)')
-      expect(result).toMatchObject(cljNil())
-      expect(lookup('some-symbol', session.registry.get('user')!)).toMatchObject(
-        cljNumber(1)
-      )
+      expect(result).toMatchObject(v.nil())
+      expect(
+        lookup('some-symbol', session.registry.get('user')!)
+      ).toMatchObject(v.number(1))
     })
 
     it('def should define a global binding, not local', () => {
@@ -89,33 +79,33 @@ describe('evaluator spec', () => {
     (def y 2)
     (+ 1 x))
     y`)
-      expect(result).toMatchObject(cljNumber(2))
+      expect(result).toMatchObject(v.number(2))
     })
 
     it('should evaluate a quote special form', () => {
       const session = freshSession()
       const result = session.evaluate('(quote (+ 1 2 3))')
       expect(result).toMatchObject(
-        cljList([cljSymbol('+'), cljNumber(1), cljNumber(2), cljNumber(3)])
+        v.list([v.symbol('+'), v.number(1), v.number(2), v.number(3)])
       )
     })
 
     it('should evaluate a do special form', () => {
       const session = freshSession()
-      expect(session.evaluate('(do 1 2 3)')).toMatchObject(cljNumber(3))
+      expect(session.evaluate('(do 1 2 3)')).toMatchObject(v.number(3))
     })
 
     it('should evaluate a let special form', () => {
       const session = freshSession()
       expect(session.evaluate('(let [a 1 b 2] [a a b b])')).toMatchObject(
-        cljVector([cljNumber(1), cljNumber(1), cljNumber(2), cljNumber(2)])
+        v.vector([v.number(1), v.number(1), v.number(2), v.number(2)])
       )
     })
 
     it('should evaluate a if special form', () => {
       const session = freshSession()
-      expect(session.evaluate('(if true 1 2)')).toMatchObject(cljNumber(1))
-      expect(session.evaluate('(if false 1 2)')).toMatchObject(cljNumber(2))
+      expect(session.evaluate('(if true 1 2)')).toMatchObject(v.number(1))
+      expect(session.evaluate('(if false 1 2)')).toMatchObject(v.number(2))
     })
   })
 
@@ -136,7 +126,7 @@ describe('evaluator spec', () => {
       const result = session.evaluate(`(def x 10)
     (def mult-10 (fn [n] (* n x)))
     (mult-10 2)`)
-      expect(result).toMatchObject(cljNumber(20))
+      expect(result).toMatchObject(v.number(20))
     })
 
     it('should capture the outer environment in a function', () => {
@@ -144,19 +134,19 @@ describe('evaluator spec', () => {
       const result =
         session.evaluate(`(def make-adder (fn [n] (fn [x] (+ n x))))
 ((make-adder 5) 3) `)
-      expect(result).toMatchObject(cljNumber(8))
+      expect(result).toMatchObject(v.number(8))
     })
 
     it('should evaluate a nested function call', () => {
       const session = freshSession()
       expect(
         session.evaluate('((fn [a b] ((fn [x] (* x a)) b)) 2 3)')
-      ).toMatchObject(cljNumber(6))
+      ).toMatchObject(v.number(6))
     })
 
     it('should evaluate if with truthy value', () => {
       const session = freshSession()
-      expect(session.evaluate('(if [1] 1 2)')).toMatchObject(cljNumber(1))
+      expect(session.evaluate('(if [1] 1 2)')).toMatchObject(v.number(1))
     })
   })
 })
