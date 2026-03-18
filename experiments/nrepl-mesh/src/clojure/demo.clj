@@ -31,8 +31,8 @@ mesh/*eval-target*
 
 (async
  (let [[result-a result-b]
-       @(all [(m/with-node :node1 '(do (println "Hello there node 1") 42))
-              (m/with-node :node2 '(do (println "Hello there node 2") 3))])]
+       @(all [(mesh/with-node :node1 '(do (println "Hello there node 1") 42))
+              (mesh/with-node :node2 '(do (println "Hello there node 2") 3))])]
    (println "local log" result-a result-b)
    (+ result-a result-b)))
 

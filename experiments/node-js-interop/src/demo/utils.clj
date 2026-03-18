@@ -34,12 +34,12 @@
     :done
     (deep (dec n))))
 
-(deep 3936)
+(deep 3936) ;; <-- old max
 (deep 4000)
 (deep 5000)
 (deep 6000)
 (deep 7000)
-(deep 7247)
+(deep 7247) ;; <-- new max
 
 (loop [n 1000000]
   (if (zero? n)
