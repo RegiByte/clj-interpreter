@@ -11,8 +11,6 @@
  *   1. Remove (or comment out) its row from the "bails" section
  *   2. Add a row to the matching "compiles" section
  *   3. All tests must remain green
- *
- * TODO comments mark forms targeted for future compilation work.
  */
 
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -359,6 +357,60 @@ describe('Compiler Coverage — compiles → non-null', () => {
       expect(result).toEqual(v.keyword(':done'))
     })
   })
+  // -------------------------------------------------------------------------
+  // Phase 8 — try/catch/finally
+  //
+  // compileTry compiles body forms, each catch clause body, and finally forms
+  // eagerly. Discriminators are stored as raw AST nodes and evaluated at
+  // runtime by matchesDiscriminator — same as the interpreter path.
+  //
+  // Bails if any body form, catch body, or finally form cannot be compiled.
+  // -------------------------------------------------------------------------
+  describe('Phase 8 — try/catch/finally', () => {
+    it.each([
+      ['bare try, no throw', '(try 42)', v.number(42)],
+      ['multi-form body returns last', '(try 1 2 3)', v.number(3)],
+      ['finally discards its result', '(try 42 (finally "nope"))', v.number(42)],
+      ['catch skipped when no throw', '(try 42 (catch :default e "skip"))', v.number(42)],
+      ['catch by :type keyword', '(try (throw {:type :foo}) (catch :foo e "got"))', v.string('got')],
+      [':default catches any thrown value', '(try (throw 99) (catch :default e e))', v.number(99)],
+      ['bind thrown map and access key', '(try (throw {:type :t :v 7}) (catch :t e (:v e)))', v.number(7)],
+      ['EvaluationError caught as :error/runtime', '(try (/ 1 0) (catch :error/runtime e "caught"))', v.string('caught')],
+      ['EvaluationError :message key populated', '(try (/ 1 0) (catch :default e (:type e)))', v.keyword(':error/runtime')],
+      ['predicate discriminator (string?)', '(try (throw "oops") (catch string? e (str "got:" e)))', v.string('got:oops')],
+      ['first matching clause wins', '(try (throw {:type :b}) (catch :a e "a") (catch :b e "b") (catch :default e "d"))', v.string('b')],
+      ['nested try — inner handles', '(try (try (throw {:type :inner}) (catch :inner e "handled")) (catch :default e "outer"))', v.string('handled')],
+      ['nested try — outer handles', '(try (try (throw {:type :esc}) (catch :other e "wrong")) (catch :esc e "outer-got"))', v.string('outer-got')],
+    ])('%s', (_, code, expected) => {
+      expect(compileForm(code)).not.toBeNull()
+      expect(session().evaluate(code)).toEqual(expected)
+    })
+
+    it('finally runs when no error occurs (atom observable)', () => {
+      const s = session()
+      s.evaluate('(def ran (atom false))')
+      s.evaluate('(try 42 (finally (reset! ran true)))')
+      expect(s.evaluate('@ran')).toEqual(v.boolean(true))
+    })
+
+    it('finally runs when error is caught', () => {
+      const s = session()
+      s.evaluate('(def ran (atom false))')
+      s.evaluate('(try (throw {:type :t}) (catch :default e nil) (finally (reset! ran true)))')
+      expect(s.evaluate('@ran')).toEqual(v.boolean(true))
+    })
+
+    it('finally runs even when error is not caught (via outer try)', () => {
+      const s = session()
+      s.evaluate('(def ran (atom false))')
+      s.evaluate('(try (try (throw {:type :t}) (finally (reset! ran true))) (catch :default e nil))')
+      expect(s.evaluate('@ran')).toEqual(v.boolean(true))
+    })
+
+    it('unhandled throw propagates through try with no matching catch', () => {
+      expect(() => session().evaluate('(try (throw {:type :uncaught}))')).toThrow()
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -446,19 +498,20 @@ describe('Compiler Coverage — bails → null', () => {
   })
 
   // -------------------------------------------------------------------------
-  // Special forms — exceptions
+  // try with uncompilable sub-forms
   //
-  // TODO: try compilation
-  //   try: compile body + catch/finally branches; rethrow non-matching errors
+  // compileTry bails (returns null) when any body form, catch clause body,
+  // or finally form cannot be compiled. Discriminators are never compiled —
+  // they're evaluated at runtime — so they never cause a bail.
   //
   // Note: `throw` is a native function (not a special form), so (throw expr)
-  // compiles correctly as a function call since Phase 7. Only `try` bails.
+  // compiles as a function call. try itself now compiles via Phase 8.
   // -------------------------------------------------------------------------
-  describe('Special forms — exceptions (try) — TODO', () => {
+  describe('try with uncompilable sub-forms — compileTry bails', () => {
     it.each([
-      ['(try (+ 1 2))', '(try (+ 1 2))'],
-      ['(try 1 (catch :default e e))', '(try 1 (catch :default e e))'],
-      ['(try 1 (finally 2))', '(try 1 (finally 2))'],
+      ['uncompilable body (def)', '(try (def x 1))'],
+      ['uncompilable catch body (def)', '(try 1 (catch :default e (def x e)))'],
+      ['uncompilable finally (def)', '(try 1 (finally (def x 1)))'],
     ])('%s: %s → null', (_, code) => {
       expect(compileForm(code)).toBeNull()
     })

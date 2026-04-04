@@ -70,7 +70,7 @@ export type TryStructure = {
  * finally clause. Validates that catch has a discriminator + binding symbol and
  * that finally (if present) is the last form.
  */
-export function parseTryStructure(list: CljList, env: Env): TryStructure {
+export function parseTryStructure(list: CljList, env: Env = {} as Env): TryStructure {
   const forms = list.value.slice(1)
   const bodyForms: CljValue[] = []
   const catchClauses: CatchClause[] = []

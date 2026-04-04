@@ -12,6 +12,7 @@
  * - Phase 5: loop* / recur → while(true) with mutable slot cells
  * - Phase 6: qualified symbols (ns/sym)
  * - Phase 7: collection literals ([...], {...}, #{...})
+ * - Phase 8: try/catch/finally
  *
  * Returns null for unsupported forms (fallback to interpreter).
  * See ./evaluate.ts:evaluateWithContext for the entry point.
@@ -35,14 +36,14 @@ import { compileFnBody, compileLet, compileLoop, compileRecur } from './binding.
 import { compileCall } from './callable.ts'
 import { compileMap, compileSet, compileVector } from './collections.ts'
 import { findSlot } from './compile-env.ts'
-import { compileDo, compileIf } from './control-flow.ts'
+import { compileDo, compileIf, compileTry } from './control-flow.ts'
 
 /**
  * Export the compiler functions for use in the evaluator
  * Ideally external consumers should only use the compile function,
  * not it's children!
  */
-export { compileDo, compileIf, compileLet, compileLoop, compileRecur, compileFnBody }
+export { compileDo, compileIf, compileLet, compileLoop, compileRecur, compileFnBody, compileTry }
 
 function compileList(
   node: CljList,
@@ -64,6 +65,8 @@ function compileList(
         return compileLoop(node, compileEnv, compile)
       case specialFormKeywords.recur:
         return compileRecur(node, compileEnv, compile)
+      case specialFormKeywords.try:
+        return compileTry(node, compileEnv, compile)
     }
   }
 

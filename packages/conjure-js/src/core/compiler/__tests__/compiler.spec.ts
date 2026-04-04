@@ -108,9 +108,8 @@ describe('Compiler Phase 1', () => {
   })
 
   it('special forms without compiler support return null', () => {
-    // def, binding, try etc. have no compiler case — always bail to interpreter
+    // def, binding, letfn* etc. have no compiler case — always bail to interpreter
     expect(compile(formToNode('(def x 1)'))).toBeNull()
-    expect(compile(formToNode('(try 1 (catch js/Error e e))'))).toBeNull()
   })
 
   it('qualified symbols compile to a non-null closure (Phase 6)', () => {
