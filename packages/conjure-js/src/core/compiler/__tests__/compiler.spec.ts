@@ -107,14 +107,10 @@ describe('Compiler Phase 1', () => {
     expect(compiled(env2, null as any)).toEqual(v.number(99))
   })
 
-  it.each([
-    ['vector', v.vector([v.number(1), v.number(2)])],
-    ['map', v.map([[v.string('a'), v.number(1)]])],
-    ['set', v.set([v.number(1), v.number(2)])],
-  ])('unrecognized forms return null: %s -> null', (_name, node) => {
-    // note, this test needs to be updated as we support more forms
-    const compiled = compile(node)
-    expect(compiled).toBeNull()
+  it('special forms without compiler support return null', () => {
+    // def, binding, try etc. have no compiler case — always bail to interpreter
+    expect(compile(formToNode('(def x 1)'))).toBeNull()
+    expect(compile(formToNode('(try 1 (catch js/Error e e))'))).toBeNull()
   })
 
   it('qualified symbols compile to a non-null closure (Phase 6)', () => {
@@ -215,8 +211,8 @@ describe('Compiler Phase 3A', () => {
 
 describe('Compiler Phase 3B', () => {
   it.each([
-    // destructuring pattern
-    ['(let [{:keys [a]} m] a)'],
+    // destructuring pattern (using let* — the post-macroexpansion form the compiler sees)
+    ['(let* [{:keys [a]} m] a)'],
     // uncompilable def init
     ['(let [x (def y 1)] x)'],
     // uncompilable def body
@@ -332,12 +328,12 @@ describe('Compiler Phase 5', () => {
   })
 
   it('should bail on uncompilable loop', () => {
-    // destructuring not supported yet
-    const compledLoop = compileForm('(loop [{:keys [a]} {:a 42}] a)')
+    // destructuring not supported — using loop* (the post-macroexpansion form)
+    const compledLoop = compileForm('(loop* [{:keys [a]} {:a 42}] a)')
     expect(compledLoop).toBeNull()
 
     // uncompilable def body
-    const compiledFn = compileForm('(loop [x 1] (def z x) z)')
+    const compiledFn = compileForm('(loop* [x 1] (def z x) z)')
     expect(compiledFn).toBeNull()
   })
 
@@ -412,6 +408,84 @@ describe('Compiler Phase 6 — Qualified Symbol Compilation', () => {
 
   it('throws at runtime for unknown namespace', () => {
     expect(() => session().evaluate('nonexistent.ns/foo')).toThrow()
+  })
+})
+
+describe('Compiler Phase 7 — Collection Literals', () => {
+  it.each([
+    ['empty vector', '[]', v.vector([])],
+    ['number vector', '[1 2 3]', v.vector([v.number(1), v.number(2), v.number(3)])],
+    ['keyword vector', '[:a :b]', v.vector([v.keyword(':a'), v.keyword(':b')])],
+    ['vector with expression', '[(+ 1 2) :k]', v.vector([v.number(3), v.keyword(':k')])],
+    ['empty map', '{}', v.map([])],
+    [
+      'keyword-keyed map',
+      '{:a 1 :b 2}',
+      v.map([
+        [v.keyword(':a'), v.number(1)],
+        [v.keyword(':b'), v.number(2)],
+      ]),
+    ],
+    ['empty set', '#{}', v.set([])],
+    ['number set', '#{1 2 3}', v.set([v.number(1), v.number(2), v.number(3)])],
+    [
+      'nested: vector of map and set',
+      '[{:a 1} #{2}]',
+      v.vector([v.map([[v.keyword(':a'), v.number(1)]]), v.set([v.number(2)])]),
+    ],
+  ])('compiles %s', (_, code, expected) => {
+    const compiled = compileForm(code)
+    expect(compiled).not.toBeNull()
+    expect(typeof compiled).toBe('function')
+    if (typeof compiled !== 'function') return
+    const userEnv = runtime.getNamespaceEnv('user')
+    if (!userEnv) expect.fail('user namespace should be created')
+    const result = compiled(userEnv, createEvaluationContext())
+    expect(result).toEqual(expected)
+  })
+
+  it('set deduplicates using structural equality (is.equal)', () => {
+    // #{1 1 2} should yield a 2-element set, not 3
+    const compiled = compileForm('#{1 1 2}')
+    expect(compiled).not.toBeNull()
+    if (typeof compiled !== 'function') return
+    const userEnv = runtime.getNamespaceEnv('user')
+    if (!userEnv) expect.fail('user namespace should be created')
+    const result = compiled(userEnv, createEvaluationContext())
+    expect(result).toEqual(v.set([v.number(1), v.number(2)]))
+  })
+
+  it('bails when a vector element cannot be compiled', () => {
+    expect(compileForm('[(def x 1) 2]')).toBeNull()
+  })
+
+  it('bails when a map value cannot be compiled', () => {
+    expect(compileForm('{:a (def x 1)}')).toBeNull()
+  })
+
+  it('bails when a set element cannot be compiled', () => {
+    expect(compileForm('#{(def x 1) 2}')).toBeNull()
+  })
+
+  it('session: vector literal', () => {
+    expect(session().evaluate('[1 2 3]')).toEqual(
+      v.vector([v.number(1), v.number(2), v.number(3)])
+    )
+  })
+
+  it('session: map literal', () => {
+    expect(session().evaluate('{:a 1 :b 2}')).toEqual(
+      v.map([
+        [v.keyword(':a'), v.number(1)],
+        [v.keyword(':b'), v.number(2)],
+      ])
+    )
+  })
+
+  it('session: set literal', () => {
+    expect(session().evaluate('#{1 2 3}')).toEqual(
+      v.set([v.number(1), v.number(2), v.number(3)])
+    )
   })
 })
 

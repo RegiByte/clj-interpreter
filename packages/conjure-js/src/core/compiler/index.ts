@@ -5,10 +5,13 @@
  * interpreter dispatch overhead. Supports:
  * - Phase 1: Literals, symbols
  * - Phase 2: if, do
- * - Phase 3: let with slot indexing
- * - Phase 4: fn with compile-once caching
- * - Phase 5: loop/recur → while
+ * - Phase 3A: Function calls (generic)
+ * - Phase 3B: let* with slot indexing
+ * - Phase 4: fn* with compile-once body caching
+ * - Phase 4b: fn* param slots (eliminates bindParams + RecurSignal for fn recur)
+ * - Phase 5: loop* / recur → while(true) with mutable slot cells
  * - Phase 6: qualified symbols (ns/sym)
+ * - Phase 7: collection literals ([...], {...}, #{...})
  *
  * Returns null for unsupported forms (fallback to interpreter).
  * See ./evaluate.ts:evaluateWithContext for the entry point.
@@ -19,14 +22,18 @@ import { EvaluationError } from '../errors.ts'
 import { specialFormKeywords, valueKeywords } from '../keywords.ts'
 import {
   type CljList,
+  type CljMap,
+  type CljSet,
   type CljSymbol,
   type CljValue,
+  type CljVector,
   type CompiledExpr,
   type CompileEnv,
   type CompileFn,
 } from '../types.ts'
 import { compileFnBody, compileLet, compileLoop, compileRecur } from './binding.ts'
 import { compileCall } from './callable.ts'
+import { compileMap, compileSet, compileVector } from './collections.ts'
 import { findSlot } from './compile-env.ts'
 import { compileDo, compileIf } from './control-flow.ts'
 
@@ -135,6 +142,12 @@ export function compile(
     case valueKeywords.symbol: {
       return compileSymbol(node, compileEnv)
     }
+    case valueKeywords.vector:
+      return compileVector(node as CljVector, compileEnv, compile)
+    case valueKeywords.map:
+      return compileMap(node as CljMap, compileEnv, compile)
+    case valueKeywords.set:
+      return compileSet(node as CljSet, compileEnv, compile)
     case valueKeywords.list: {
       return compileList(node, compileEnv, compile)
     }

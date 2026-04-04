@@ -158,6 +158,11 @@ export function applyCallableWithContext(
     const found = fn.values.some((v) => is.equal(v, key))
     return found ? key : cljNil()
   }
+  // Vars are IFn — deref to current value and delegate. This makes #'handler
+  // hot-swappable: the var is captured, not the value at capture time.
+  if (is.var(fn)) {
+    return applyCallableWithContext(fn.value, args, ctx, callEnv)
+  }
   throw new EvaluationError(`${printString(fn)} is not a callable value`, {
     fn,
     args,

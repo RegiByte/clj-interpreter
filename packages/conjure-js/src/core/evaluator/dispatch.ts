@@ -54,7 +54,12 @@ export function evaluateList(
     return evaluateSpecialForm(head.name, list, env, ctx)
   }
 
-  const evaledHead = ctx.evaluate(head, env)
+  let evaledHead = ctx.evaluate(head, env)
+
+  // Vars are IFn — dereference before dispatch so (#'mm arg) routes correctly.
+  if (is.var(evaledHead)) {
+    evaledHead = evaledHead.value
+  }
 
   if (is.multiMethod(evaledHead)) {
     const args = list.value

@@ -234,13 +234,19 @@ describe('Compiler Coverage — compiles → non-null', () => {
   // -------------------------------------------------------------------------
   // Phase 4 — fn body compile-once caching
   //
-  // NOTE: compile((fn [x] x)) itself returns null — `fn` is a special form
-  // not handled by the compile() dispatcher. Phase 4 works differently:
-  // evaluateFn() calls compileDo() on the body at definition time and stores
-  // the result in arity.compiledBody. Every subsequent call uses that closure
-  // directly without walking the AST again.
+  // NOTE: compile((fn* [x] x)) itself returns null — `fn*` IS a special form
+  // and has no compiler dispatch case. Phase 4 works differently:
+  // evaluateFnStar() calls compileDo() on the body at definition time and
+  // stores the result in arity.compiledBody. Every subsequent call uses that
+  // closure directly without walking the AST again.
   //
-  // Evidence: arity.compiledBody !== undefined after a fn is created.
+  // Phase 4b (Session 124): evaluateFnStar() additionally calls compileFnBody()
+  // for no-rest-param simple-symbol arities. compileFnBody allocates SlotRef[]
+  // per param (stored in arity.paramSlots), marks a fn-level loop target
+  // (enabling compiled recur), and wraps body in while(true). This eliminates
+  // bindParams env allocation and RecurSignal for fn-level recur.
+  //
+  // Evidence: arity.compiledBody and arity.paramSlots set after fn is created.
   // -------------------------------------------------------------------------
   describe('Phase 4 — fn body compile-once caching', () => {
     it('fn with compilable body stores compiledBody on arity', () => {
@@ -363,14 +369,12 @@ describe('Compiler Coverage — bails → null', () => {
   // -------------------------------------------------------------------------
   // Value types not in the compile() switch
   //
-  // The compiler switch only handles: number, string, keyword, nil, boolean,
-  // regex, symbol, list. Everything else falls through to return null.
+  // The compiler switch handles: number, string, keyword, nil, boolean,
+  // regex, symbol, list, vector, map, set (Phase 7). Everything else (function
+  // values, var objects, etc.) falls through to return null.
   // -------------------------------------------------------------------------
   describe('Value types not in compile() switch', () => {
     it.each([
-      ['vector literal', v.vector([v.number(1), v.number(2)])],
-      ['map literal', v.map([[v.keyword(':a'), v.number(1)]])],
-      ['set literal', v.set([v.number(1)])],
       ['function value', v.function([], null as any, null as any, null as any)],
       ['var', { kind: 'var', value: v.nil() } as any],
     ])('%s → null', (_, node) => {
@@ -398,24 +402,28 @@ describe('Compiler Coverage — bails → null', () => {
   })
 
   // -------------------------------------------------------------------------
-  // (fn ...) special form at the top-level compile() dispatcher
+  // (fn* ...) special form at the top-level compile() dispatcher
   //
-  // fn IS a special form, so compileCall is skipped. It is NOT in the
-  // compiler's switch cases. Therefore compile((fn ...)) → null.
+  // fn* IS a special form (in specialFormKeywords), so compileCall is skipped.
+  // It is NOT in the compiler's switch cases. Therefore compile((fn* ...)) → null.
   //
-  // Phase 4 is NOT about compile((fn ...)) returning non-null.
-  // It is about evaluateFn() calling compileDo() on the body at definition
-  // time and caching it in arity.compiledBody. The fn form itself always bails.
+  // Note: `fn` is a macro (not a special form) since Session 125. The compiler
+  // never sees `fn` in production — the expander converts it to `fn*` first.
+  //
+  // Phase 4 is NOT about compile((fn* ...)) returning non-null.
+  // It is about evaluateFnStar() calling compileFnBody() on each arity at
+  // definition time and caching it in arity.compiledBody / arity.paramSlots.
+  // The fn* form itself always bails from compile().
   // -------------------------------------------------------------------------
-  describe('(fn ...) at top level compile() always bails', () => {
+  describe('(fn* ...) at top level compile() always bails', () => {
     it.each([
-      ['simple fn', '(fn [x] x)'],
-      ['multi-arity fn', '(fn ([x] x) ([x y] (+ x y)))'],
-      ['fn with destructured param', '(fn [[a b]] a)'],
-      ['fn with map destructured param', '(fn [{:keys [x]}] x)'],
+      ['simple fn*', '(fn* [x] x)'],
+      ['multi-arity fn*', '(fn* ([x] x) ([x y] (+ x y)))'],
+      ['fn* with destructured param', '(fn* [[a b]] a)'],
+      ['fn* with map destructured param', '(fn* [{:keys [x]}] x)'],
     ])('%s: %s → null', (_, code) => {
-      // The fn special form is handled entirely by evaluateFn(), not compile().
-      // Body compilation happens inside evaluateFn() via compileDo().
+      // The fn* special form is handled entirely by evaluateFnStar(), not compile().
+      // Body/param compilation happens inside evaluateFnStar() via compileFnBody().
       expect(compileForm(code)).toBeNull()
     })
   })
@@ -440,16 +448,17 @@ describe('Compiler Coverage — bails → null', () => {
   // -------------------------------------------------------------------------
   // Special forms — exceptions
   //
-  // TODO: try/throw compilation
+  // TODO: try compilation
   //   try: compile body + catch/finally branches; rethrow non-matching errors
-  //   throw: compile the thrown value; emit a JS throw statement in closure
+  //
+  // Note: `throw` is a native function (not a special form), so (throw expr)
+  // compiles correctly as a function call since Phase 7. Only `try` bails.
   // -------------------------------------------------------------------------
-  describe('Special forms — exceptions (try, throw) — TODO', () => {
+  describe('Special forms — exceptions (try) — TODO', () => {
     it.each([
       ['(try (+ 1 2))', '(try (+ 1 2))'],
       ['(try 1 (catch :default e e))', '(try 1 (catch :default e e))'],
       ['(try 1 (finally 2))', '(try 1 (finally 2))'],
-      ['(throw (ex-info "oops" {}))', '(throw (ex-info "oops" {}))'],
     ])('%s: %s → null', (_, code) => {
       expect(compileForm(code)).toBeNull()
     })
@@ -522,34 +531,37 @@ describe('Compiler Coverage — bails → null', () => {
   })
 
   // -------------------------------------------------------------------------
-  // let with destructuring
+  // let* with destructuring
   //
-  // TODO: resolves after let* / destructure migration
-  //   When let becomes a macro over let* via (destructure bindings),
-  //   the let* form with only simple symbols will compile cleanly.
-  //   These tests should move to "compiles" after that migration.
+  // compileLet handles let* forms. Non-symbol binding patterns (destructuring)
+  // cause compileLet to bail — the interpreter handles destructuring via let.
+  //
+  // Note: `let` is a macro since Session 125. These tests use `let*` — the
+  // post-macroexpansion form that the compiler actually sees in production.
   // -------------------------------------------------------------------------
-  describe('let with destructuring bindings — TODO: after let* migration', () => {
+  describe('let* with destructuring bindings — compileLet bails', () => {
     it.each([
-      ['vector destructuring', '(let [[a b] [1 2]] a)'],
-      ['vector with rest', '(let [[a & b] [1 2 3]] b)'],
-      ['map :keys destructuring', '(let [{:keys [a b]} {:a 1 :b 2}] a)'],
-      ['nested destructuring', '(let [[a [b c]] [1 [2 3]]] b)'],
-      [':as alias', '(let [[a :as all] [1 2]] all)'],
+      ['vector destructuring', '(let* [[a b] [1 2]] a)'],
+      ['vector with rest', '(let* [[a & b] [1 2 3]] b)'],
+      ['map :keys destructuring', '(let* [{:keys [a b]} {:a 1 :b 2}] a)'],
+      ['nested destructuring', '(let* [[a [b c]] [1 [2 3]]] b)'],
+      [':as alias', '(let* [[a :as all] [1 2]] all)'],
     ])('%s: %s → null', (_, code) => {
       expect(compileForm(code)).toBeNull()
     })
   })
 
   // -------------------------------------------------------------------------
-  // loop with destructuring
+  // loop* with destructuring
   //
-  // TODO: resolves after loop* / destructure migration
+  // compileLoop handles loop* forms. Non-symbol binding patterns bail.
+  //
+  // Note: `loop` is a macro since Session 125. These tests use `loop*`.
   // -------------------------------------------------------------------------
-  describe('loop with destructuring bindings — TODO: after loop* migration', () => {
+  describe('loop* with destructuring bindings — compileLoop bails', () => {
     it.each([
-      ['vector destructuring in loop', '(loop [[a & b] [1 2 3]] a)'],
-      ['map destructuring in loop', '(loop [{:keys [x]} {:x 1}] x)'],
+      ['vector destructuring in loop*', '(loop* [[a & b] [1 2 3]] a)'],
+      ['map destructuring in loop*', '(loop* [{:keys [x]} {:x 1}] x)'],
     ])('%s: %s → null', (_, code) => {
       expect(compileForm(code)).toBeNull()
     })

@@ -245,6 +245,61 @@ describe('Native functions as Vars', () => {
   })
 })
 
+describe('Vars as IFn — #\' in call position and HOFs', () => {
+  it('#\'inc in direct call position applies the function', () => {
+    const s = mkSession()
+    expect((s.evaluate("(#'inc 5)") as any).value).toBe(6)
+  })
+
+  it('#\'+ with multiple args', () => {
+    const s = mkSession()
+    expect((s.evaluate("(#'+ 1 2 3)") as any).value).toBe(6)
+  })
+
+  it('var passed to map — applies element-wise', () => {
+    const s = mkSession()
+    const result = materialize(s.evaluate("(map #'inc [1 2 3])"))
+    expect((result as any).value).toEqual([
+      { kind: 'number', value: 2 },
+      { kind: 'number', value: 3 },
+      { kind: 'number', value: 4 },
+    ])
+  })
+
+  it('var passed to apply', () => {
+    const s = mkSession()
+    expect((s.evaluate("(apply #'+ [1 2 3])") as any).value).toBe(6)
+  })
+
+  it('hot-swap — redefing the var is seen by the caller', () => {
+    const s = mkSession()
+    s.evaluate('(def handler (fn [x] x))')
+    s.evaluate('(def call-it (fn [f] (f 42)))')
+    // Pass the var, not the value
+    expect((s.evaluate("(call-it #'handler)") as any).value).toBe(42)
+    // Redefine handler
+    s.evaluate('(def handler (fn [x] (* x 10)))')
+    // The var deref's to the new value at call time
+    expect((s.evaluate("(call-it #'handler)") as any).value).toBe(420)
+  })
+
+  it('var holding a multimethod dispatches correctly from call position', () => {
+    const s = mkSession()
+    s.evaluate('(defmulti shape-area :shape)')
+    s.evaluate('(defmethod shape-area :circle [m] (* 3 (:r m) (:r m)))')
+    expect(
+      (s.evaluate("(#'shape-area {:shape :circle :r 2})") as any).value
+    ).toBe(12)
+  })
+
+  it('var? still returns true; the var is not confused with its value', () => {
+    const s = mkSession()
+    s.evaluate('(def f inc)')
+    expect((s.evaluate("(var? #'f)") as any).value).toBe(true)
+    expect((s.evaluate("(var? f)") as any).value).toBe(false)
+  })
+})
+
 describe('set!', () => {
   it('mutates the active binding slot', () => {
     const s = mkSession()
