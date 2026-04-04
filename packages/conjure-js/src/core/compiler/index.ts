@@ -33,6 +33,7 @@ import {
   type CompileFn,
 } from '../types.ts'
 import { getPos } from '../positions.ts'
+import { jsToClj } from '../evaluator/js-interop.ts'
 import { compileFnBody, compileLet, compileLoop, compileRecur } from './binding.ts'
 import { compileCall } from './callable.ts'
 import { compileMap, compileSet, compileVector } from './collections.ts'
@@ -94,10 +95,62 @@ function compileSymbol(
   const symbolName = node.name
   const slashIdx = symbolName.indexOf('/')
   if (slashIdx > 0 && slashIdx < symbolName.length - 1) {
-    // Phase 6: qualified symbol — alias/name strings captured at compile time,
-    // namespace resolved at runtime (vars are mutable; ctx not available at compile time).
     const alias = symbolName.slice(0, slashIdx)
     const localName = symbolName.slice(slashIdx + 1)
+
+    if (localName.includes('.')) {
+      // Dot-chain qualified symbol: js/console.log, js/Math.pow, etc.
+      // Resolves the root var (js/console, js/Math) then walks property segments.
+      const segments = localName.split('.')
+      return (env, ctx) => {
+        const nsEnv = getNamespaceEnv(env)
+        const targetNs = nsEnv.ns?.aliases.get(alias) ?? ctx.resolveNs(alias) ?? null
+        if (!targetNs) {
+          throw new EvaluationError(`No such namespace or alias: ${alias}`, {
+            symbol: symbolName, env,
+          }, getPos(node))
+        }
+        const rootVar = targetNs.vars.get(segments[0])
+        if (rootVar === undefined) {
+          throw new EvaluationError(`Symbol ${alias}/${segments[0]} not found`, {
+            symbol: symbolName, env,
+          }, getPos(node))
+        }
+        let current = derefValue(rootVar)
+        for (let i = 1; i < segments.length; i++) {
+          // Unwrap to raw JS for property access
+          let raw: unknown
+          if (current.kind === 'js-value') {
+            raw = current.value
+          } else if (current.kind === 'string' || current.kind === 'number' || current.kind === 'boolean') {
+            raw = current.value
+          } else {
+            throw new EvaluationError(
+              `Cannot access property '${segments[i]}' on ${current.kind} while resolving ${symbolName}`,
+              { symbol: symbolName }, getPos(node)
+            )
+          }
+          if (raw === null || raw === undefined) {
+            throw new EvaluationError(
+              `Cannot access property '${segments[i]}' on ${raw === null ? 'null' : 'undefined'} while resolving ${symbolName}`,
+              { symbol: symbolName }, getPos(node)
+            )
+          }
+          const obj = raw as Record<string, unknown>
+          const prop = obj[segments[i]]
+          // Bind functions to their parent so (js/console.log "hi") works correctly
+          if (typeof prop === 'function') {
+            current = jsToClj((prop as (...a: unknown[]) => unknown).bind(obj))
+          } else {
+            current = jsToClj(prop)
+          }
+        }
+        return current
+      }
+    }
+
+    // Phase 6: qualified symbol — alias/name strings captured at compile time,
+    // namespace resolved at runtime (vars are mutable; ctx not available at compile time).
     return (env, ctx) => {
       const nsEnv = getNamespaceEnv(env)
       const targetNs = nsEnv.ns?.aliases.get(alias) ?? ctx.resolveNs(alias) ?? null

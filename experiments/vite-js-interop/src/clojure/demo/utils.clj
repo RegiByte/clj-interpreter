@@ -33,15 +33,15 @@
   (multiply 2 3)
   (doc +)
 
-  (. js/Math pow 3 2)
+  (js/Math.pow 3 2)
 
   (def x 10)
   x
 
   (log-text (str "x is " x))
-  (log-text (str "(. js/Math abs -99) -> " (. js/Math abs -99)))
+  (log-text (str "(. js/Math abs -99) -> " (js/Math.abs -99)))
   (def x 20)
 
-
+  (js/console.log "Hello from JS console.log!")
   
  )

@@ -13,7 +13,7 @@ export default function conjureFactory(
   return createSession({
     importModule: (s) => importMap[s],
     // Expose Math as js/Math — validates Mode 2 hostBindings work in Clojure
-    hostBindings: { Math },
+    hostBindings: { Math, console },
     // onOutput is provided by the vite plugin to forward output to Calva (REPL :out).
     // Falls back to console.log alone if not provided (e.g. standalone use).
     output: (text) => {
