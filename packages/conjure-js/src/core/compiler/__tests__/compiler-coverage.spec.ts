@@ -479,10 +479,9 @@ describe('Compiler Coverage — bails → null', () => {
   // -------------------------------------------------------------------------
   // Special forms — lazy / async
   // -------------------------------------------------------------------------
-  describe('Special forms — lazy and async (lazy-seq, delay, async)', () => {
+  describe('Special forms — lazy and async (lazy-seq, async)', () => {
     it.each([
       ['lazy-seq', '(lazy-seq (cons 1 nil))'],
-      ['delay', '(delay (+ 1 2))'],
       ['async', '(async (+ 1 2))'],
     ])('%s: %s → null', (_, code) => {
       expect(compileForm(code)).toBeNull()
@@ -518,12 +517,10 @@ describe('Compiler Coverage — bails → null', () => {
   // -------------------------------------------------------------------------
   // Special forms — macros / multimethods
   // -------------------------------------------------------------------------
-  describe('Special forms — defmacro, defmulti, defmethod, letfn', () => {
+  describe('Special forms — defmacro, letfn*', () => {
     it.each([
       ['defmacro', '(defmacro foo [x] x)'],
-      ['defmulti', '(defmulti foo identity)'],
-      ['defmethod', '(defmethod foo :default [x] x)'],
-      ['letfn', '(letfn [(f [x] (+ x 1))] (f 5))'],
+      ['letfn*', '(letfn* [f (fn* [x] (+ x 1))] (f 5))'],
     ])('%s: %s → null', (_, code) => {
       expect(compileForm(code)).toBeNull()
     })

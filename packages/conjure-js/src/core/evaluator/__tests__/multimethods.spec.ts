@@ -146,4 +146,19 @@ describe('multimethods', () => {
     session.evaluate('(defmulti area :shape)')
     expectError('(area {:shape :missing})', 'No method in multimethod', session)
   })
+
+  it('re-evaluating defmulti preserves all registered methods (re-eval guard)', () => {
+    const session = freshSession()
+    session.evaluate('(defmulti area :shape)')
+    session.evaluate('(defmethod area :rect [r] (* (:w r) (:h r)))')
+    session.evaluate('(defmethod area :circle [c] (* 2 (:r c)))')
+    // Re-evaluate defmulti — should be a no-op, not reset the multimethod
+    session.evaluate('(defmulti area :shape)')
+    expect(session.evaluate('(area {:shape :rect :w 3 :h 4})')).toEqual(
+      v.number(12)
+    )
+    expect(session.evaluate('(area {:shape :circle :r 5})')).toEqual(
+      v.number(10)
+    )
+  })
 })

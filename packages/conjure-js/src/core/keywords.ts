@@ -14,15 +14,11 @@ export const specialFormKeywords = {
   ns: 'ns',
   // Macro forms
   defmacro: 'defmacro',
-  // Multi methods
-  defmulti: 'defmulti',
-  defmethod: 'defmethod',
   // Binding forms
   binding: 'binding',
   'set!': 'set!',
-  letfn: 'letfn',
+  'letfn*': 'letfn*',
   // Lazy forms
-  delay: 'delay',
   'lazy-seq': 'lazy-seq',
   async: 'async',
   // JS INTEROP

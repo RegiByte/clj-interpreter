@@ -20,6 +20,7 @@ import { transducerFunctions } from './stdlib/transducers'
 import { utilFunctions } from './stdlib/utils'
 import { lazyFunctions } from './stdlib/lazy'
 import { varFunctions } from './stdlib/vars'
+import { multimethodFunctions } from './stdlib/multimethods'
 // --- ASYNC (experimental) ---
 import { asyncFunctions } from './stdlib/async-fns'
 import { printFunctions, printVars } from './stdlib/print'
@@ -83,6 +84,7 @@ const nativeFunctions = {
   ...stringFunctions,
   ...utilFunctions,
   ...varFunctions,
+  ...multimethodFunctions,
   ...lazyFunctions,
   ...printFunctions,
   // --- ASYNC (experimental) ---

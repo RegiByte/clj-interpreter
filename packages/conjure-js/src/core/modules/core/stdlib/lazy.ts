@@ -1,7 +1,8 @@
 import { is } from '../../../assertions'
+import { EvaluationError } from '../../../errors'
 import { v } from '../../../factories'
 import { realizeDelay, realizeLazySeq } from '../../../transformations'
-import type { CljValue } from '../../../types'
+import type { CljValue, Env, EvaluationContext } from '../../../types'
 
 export const lazyFunctions = {
   force: v
@@ -31,4 +32,25 @@ export const lazyFunctions = {
       return v.boolean(false)
     })
     .doc('Returns true if a Delay or LazySeq has been realized.', [['x']]),
+  'make-delay': v
+    .nativeFnCtx(
+      'make-delay',
+      function makeDelayImpl(
+        ctx: EvaluationContext,
+        callEnv: Env,
+        fn: CljValue
+      ) {
+        if (!is.aFunction(fn)) {
+          throw new EvaluationError(
+            `make-delay: argument must be a function, got ${fn.kind}`,
+            { fn }
+          )
+        }
+        return v.delay(() => ctx.applyCallable(fn, [], callEnv))
+      }
+    )
+    .doc(
+      'Creates a Delay that invokes thunk-fn (a zero-arg function) on first force.',
+      [['thunk-fn']]
+    ),
 }

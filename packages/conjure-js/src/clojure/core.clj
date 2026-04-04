@@ -34,6 +34,20 @@
   [name & fdecl]
   (list* 'defn (with-meta name (assoc (meta name) :private true)) fdecl))
 
+;; defmulti / defmethod: multimethod sugar over native make-multimethod! / add-method!
+;; defmulti uses a re-eval guard in make-multimethod! — re-loading a namespace
+;; preserves all registered methods.
+(defmacro defmulti [name dispatch-fn]
+  `(make-multimethod! ~(str name) ~dispatch-fn))
+
+(defmacro defmethod [mm-name dispatch-val & fn-tail]
+  `(add-method! (var ~mm-name) ~dispatch-val (fn* ~@fn-tail)))
+
+;; delay: wraps body in a zero-arg fn and defers evaluation until forced.
+;; make-delay is a native primitive that creates the CljDelay value.
+(defmacro delay [& body]
+  `(make-delay (fn* [] ~@body)))
+
 
 (defn vary-meta
   "Returns an object of the same type and value as obj, with
@@ -642,6 +656,18 @@
        (if (and s (pred (first s)))
          (drop-while pred (rest s))
          s)))))
+
+;; letfn: expands to letfn* (the primitive), which takes a flat vector of
+;; [name fn-form name fn-form ...] pairs and evaluates each fn-form in a
+;; shared env frame so all fns can see each other (mutual recursion).
+(defmacro letfn [fnspecs & body]
+  (cons 'letfn*
+        (cons (reduce (fn* [acc spec]
+                        (conj (conj acc (first spec))
+                              (cons 'fn* (rest spec))))
+                      []
+                      fnspecs)
+              body)))
 
 ;; map-indexed: stateful transducer; passes index and item to f
 (defn map-indexed
