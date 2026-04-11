@@ -302,8 +302,10 @@ export const protocolFunctions: Record<string, CljValue> = {
     ),
 
   // -------------------------------------------------------------------------
-  // protocols value
-  // Returns a vector of all protocols that value implements.
+  // protocols type-kw-or-value
+  // Returns a vector of all protocols that a type implements.
+  // Accepts a keyword type tag (preferred: :string, :user/Circle) or any value
+  // (backward compat: extracts the type tag via typeTagOf).
   // Scans all loaded namespaces — uses ctx.allNamespaces().
   // -------------------------------------------------------------------------
   'protocols': v
@@ -312,12 +314,16 @@ export const protocolFunctions: Record<string, CljValue> = {
       function protocolsImpl(
         ctx: EvaluationContext,
         _callEnv: Env,
-        valueVal: CljValue
+        arg: CljValue
       ) {
-        if (valueVal === undefined) {
+        if (arg === undefined) {
           throw new EvaluationError(`protocols: argument is required`, {})
         }
-        const tag = typeTagOf(valueVal)
+        // Keyword type tag: strip leading colon from the internal name field
+        // ':string' → 'string', ':user/Circle' → 'user/Circle'
+        const tag = is.keyword(arg)
+          ? arg.name.slice(1)
+          : typeTagOf(arg)
         const matching: CljValue[] = []
         for (const proto of allProtocols(ctx)) {
           if (proto.impls.has(tag)) matching.push(proto)
@@ -326,8 +332,8 @@ export const protocolFunctions: Record<string, CljValue> = {
       }
     )
     .doc(
-      'Returns a vector of all protocols that value implements, by scanning all loaded namespaces.',
-      [['value']]
+      'Returns a vector of all protocols that a type implements. Accepts a keyword type tag (:string, :user/Circle) or any value.',
+      [['type-kw-or-value']]
     ),
 
   // -------------------------------------------------------------------------

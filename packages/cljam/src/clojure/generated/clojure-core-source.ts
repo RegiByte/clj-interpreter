@@ -1609,36 +1609,18 @@ export const clojure_coreSource = `\
 ;; Protocols and Records
 ;; ---------------------------------------------------------------------------
 
-;; Maps Clojure type name symbols to cljam kind strings.
-;; Used by extend-protocol and extend-type to compute type tags at macro time.
-(def ^:private TYPE-NAME-MAP
-  {'nil        "nil"
-   'String     "string"
-   'Number     "number"
-   'Boolean    "boolean"
-   'Keyword    "keyword"
-   'Symbol     "symbol"
-   'List       "list"
-   'Vector     "vector"
-   'Map        "map"
-   'Set        "set"
-   'Function   "function"
-   'NativeFunction "native-function"
-   'Atom       "atom"
-   'LazySeq    "lazy-seq"
-   'Cons       "cons"
-   'Regex      "regex"
-   'Var        "var"
-   'JsValue    "js-value"})
-
 (defn- resolve-type-tag
-  "Returns the type-tag string for a type symbol.
-  Built-in types map to their kind string (e.g. String → 'string').
-  Unknown symbols are treated as record types in the current namespace
-  (e.g. Circle → 'user/Circle')."
-  [type-sym]
-  (or (get TYPE-NAME-MAP type-sym)
-      (str (name (ns-name *ns*)) "/" (name type-sym))))
+  "Returns the type-tag string for a keyword type specifier.
+  Simple keywords map directly to kind strings: :string → \\"string\\".
+  Namespaced keywords map to record type tags: :user/Circle → \\"user/Circle\\".
+  nil literal is accepted for backward compatibility → \\"nil\\"."
+  [type-kw]
+  (cond
+    (nil? type-kw)     "nil"
+    (keyword? type-kw) (if (namespace type-kw)
+                         (str (namespace type-kw) "/" (name type-kw))
+                         (name type-kw))
+    :else (throw (ex-info (str "extend-protocol/extend-type: expected a keyword type tag or nil, got: " type-kw) {}))))
 
 (defn- parse-method-def
   "Parses a single protocol method form (name [& params] doc?) into a
@@ -1676,8 +1658,11 @@ export const clojure_coreSource = `\
     \`(hash-map ~@pairs)))
 
 (defn- group-by-type
-  "Partitions a flat extend-protocol body into [[type-sym [method ...]] ...].
-  Type symbols and nil (non-list forms) delimit groups."
+  "Partitions a flat impl body into [[delimiter [method ...]] ...].
+  Used by extend-protocol (keyword type tags: :string, :user/Circle),
+  extend-type (protocol symbols: IShape, IValidator), and
+  defrecord (protocol symbols inline).
+  Keywords, symbols, and the nil literal are all recognised as block delimiters."
   [specs]
   (let [no-type :__no-type__]
     (loop [remaining specs
@@ -1689,8 +1674,8 @@ export const clojure_coreSource = `\
           (conj result [current-type current-methods])
           result)
         (let [form (first remaining)]
-          (if (or (symbol? form) (nil? form))
-            ;; New type block (symbol or nil)
+          (if (or (keyword? form) (symbol? form) (nil? form))
+            ;; New block (keyword type tag, protocol symbol, or nil)
             (recur (rest remaining)
                    form
                    []

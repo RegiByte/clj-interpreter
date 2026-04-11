@@ -65,6 +65,11 @@ export const utilFunctions: Record<string, CljValue> = {
       if (x === undefined) {
         throw new EvaluationError('type expects an argument', { x })
       }
+      // Records return a namespaced keyword :ns/RecordType — the same keyword
+      // you pass to extend-protocol/:protocols for this type.
+      if (x.kind === 'record') {
+        return v.keyword(`:${x.ns}/${x.recordType}`)
+      }
       const kindToKeyword: Record<string, string> = {
         number: ':number',
         string: ':string',
@@ -75,20 +80,30 @@ export const utilFunctions: Record<string, CljValue> = {
         list: ':list',
         vector: ':vector',
         map: ':map',
+        set: ':set',
         function: ':function',
+        'native-function': ':function',
         regex: ':regex',
         var: ':var',
-        'native-function': ':function',
+        delay: ':delay',
+        'lazy-seq': ':lazy-seq',
+        cons: ':cons',
+        atom: ':atom',
+        namespace: ':namespace',
+        protocol: ':protocol',
+        pending: ':pending',
+        'js-value': ':js-value',
       }
-      const name = kindToKeyword[x.kind]
-      if (!name) {
+      const kw = kindToKeyword[x.kind]
+      if (!kw) {
         throw new EvaluationError(`type: unhandled kind ${x.kind}`, { x })
       }
-      return v.keyword(name)
+      return v.keyword(kw)
     })
-    .doc('Returns a keyword representing the type of the given value.', [
-      ['x'],
-    ]),
+    .doc(
+      'Returns a keyword representing the type of a value. Records return :ns/RecordType; built-ins return :string, :number, :nil, etc.',
+      [['x']]
+    ),
   gensym: v
     .nativeFn('gensym', function gensymImpl(...args: CljValue[]) {
       if (args.length > 1) {

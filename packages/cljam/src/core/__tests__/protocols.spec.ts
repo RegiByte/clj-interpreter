@@ -85,9 +85,9 @@ describe('extend-protocol on built-in types', () => {
     sess.evaluate(`
       (defprotocol IDescribe (describe-val [this]))
       (extend-protocol IDescribe
-        String (describe-val [s] (str "string:" s))
-        Number (describe-val [n] (str "number:" n))
-        nil    (describe-val [_] "nil"))
+        :string (describe-val [s] (str "string:" s))
+        :number (describe-val [n] (str "number:" n))
+        :nil    (describe-val [_] "nil"))
     `)
     expect(sess.evaluate('(describe-val "hello")')).toEqual(cljString('string:hello'))
     expect(sess.evaluate('(describe-val 42)')).toEqual(cljString('number:42'))
@@ -98,7 +98,7 @@ describe('extend-protocol on built-in types', () => {
     const sess = s()
     sess.evaluate(`
       (defprotocol IFoo (foo [this]))
-      (extend-protocol IFoo String (foo [s] s))
+      (extend-protocol IFoo :string (foo [s] s))
     `)
     expect(() => sess.evaluate('(foo 42)')).toThrow(
       "No implementation of protocol method 'user/IFoo/foo' for type 'number'"
@@ -110,8 +110,8 @@ describe('extend-protocol on built-in types', () => {
     sess.evaluate(`
       (defprotocol ITag (tag [this]))
       (extend-protocol ITag
-        Boolean (tag [b] (if b :yes :no))
-        Keyword (tag [k] (str "kw:" (name k))))
+        :boolean (tag [b] (if b :yes :no))
+        :keyword (tag [k] (str "kw:" (name k))))
     `)
     expect(sess.evaluate('(tag true)')).toEqual(cljKeyword(':yes'))
     expect(sess.evaluate('(tag false)')).toEqual(cljKeyword(':no'))
@@ -122,12 +122,12 @@ describe('extend-protocol on built-in types', () => {
     const sess = s()
     sess.evaluate(`
       (defprotocol IGreet (greet [this]))
-      (extend-protocol IGreet String (greet [s] (str "Hello " s)))
+      (extend-protocol IGreet :string (greet [s] (str "Hello " s)))
     `)
     expect(sess.evaluate('(greet "World")')).toEqual(cljString('Hello World'))
     // Override
     sess.evaluate(`
-      (extend-protocol IGreet String (greet [s] (str "Hi " s)))
+      (extend-protocol IGreet :string (greet [s] (str "Hi " s)))
     `)
     expect(sess.evaluate('(greet "World")')).toEqual(cljString('Hi World'))
   })
@@ -310,7 +310,7 @@ describe('geometry domain — defrecord with inline protocol', () => {
     )
   })
 
-  it('Circle perimeter is 2×π×r', () => {
+  it('Circle perimeter is 2 * π * r', () => {
     const sess = s()
     sess.evaluate(GEOMETRY_SRC)
     const result = sess.evaluate('(perimeter (->Circle 3))')
@@ -321,13 +321,13 @@ describe('geometry domain — defrecord with inline protocol', () => {
     )
   })
 
-  it('Rectangle area is width×height', () => {
+  it('Rectangle area is width * height', () => {
     const sess = s()
     sess.evaluate(GEOMETRY_SRC)
     expect(sess.evaluate('(area (->Rectangle 4 5))')).toEqual(cljNumber(20))
   })
 
-  it('Rectangle perimeter is 2×(w+h)', () => {
+  it('Rectangle perimeter is 2 * (w + h)', () => {
     const sess = s()
     sess.evaluate(GEOMETRY_SRC)
     expect(sess.evaluate('(perimeter (->Rectangle 3 7))')).toEqual(cljNumber(20))
@@ -383,7 +383,7 @@ describe('satisfies?', () => {
     const sess = s()
     sess.evaluate(`
       (defprotocol IFoo (foo [x]))
-      (extend-protocol IFoo String (foo [s] s))
+      (extend-protocol IFoo :string (foo [s] s))
     `)
     expect(sess.evaluate('(satisfies? IFoo "hello")')).toEqual(cljBoolean(true))
     expect(sess.evaluate('(satisfies? IFoo 42)')).toEqual(cljBoolean(false))
@@ -393,7 +393,7 @@ describe('satisfies?', () => {
     const sess = s()
     sess.evaluate(`
       (defprotocol IBar (bar [x]))
-      (extend-protocol IBar Number (bar [n] n))
+      (extend-protocol IBar :number (bar [n] n))
     `)
     expect(sess.evaluate('(satisfies? IBar 5)')).toEqual(cljBoolean(true))
   })
@@ -418,10 +418,10 @@ describe('protocols introspection', () => {
     sess.evaluate(`
       (defprotocol IA (a-method [x]))
       (defprotocol IB (b-method [x]))
-      (extend-protocol IA String (a-method [s] s))
-      (extend-protocol IB String (b-method [s] s))
+      (extend-protocol IA :string (a-method [s] s))
+      (extend-protocol IB :string (b-method [s] s))
     `)
-    const protos = sess.evaluate('(protocols "hello")')
+    const protos = sess.evaluate('(protocols :string)')
     expect(protos.kind).toBe('vector')
     const protosVec = protos as { kind: 'vector'; value: { kind: string; name: string }[] }
     const names = protosVec.value.map((p) => p.name)
@@ -432,7 +432,7 @@ describe('protocols introspection', () => {
   it('protocols returns empty vector when nothing implemented', () => {
     const sess = s()
     sess.evaluate('(defprotocol IFoo (foo [x]))')
-    const protos = sess.evaluate('(protocols 42)')
+    const protos = sess.evaluate('(protocols :number)')
     expect(protos.kind).toBe('vector')
     // May or may not be empty depending on what built-ins implement
     // Just check it's a vector we can work with
@@ -445,9 +445,9 @@ describe('extenders', () => {
     sess.evaluate(`
       (defprotocol IFoo (foo [x]))
       (extend-protocol IFoo
-        String (foo [s] s)
-        Number (foo [n] n)
-        nil    (foo [_] nil))
+        :string (foo [s] s)
+        :number (foo [n] n)
+        :nil    (foo [_] nil))
     `)
     const ext = sess.evaluate('(extenders IFoo)')
     expect(ext.kind).toBe('vector')
@@ -484,7 +484,7 @@ describe('extend-type', () => {
 
       (defrecord Square [side])
 
-      (extend-type Square
+      (extend-type :user/Square
         IArea  (area [this] (* (:side this) (:side this)))
         ILabel (label [this] (str "Square(" (:side this) ")")))
     `)
@@ -496,7 +496,7 @@ describe('extend-type', () => {
     const sess = s()
     sess.evaluate(`
       (defprotocol IWrap (wrap [x]))
-      (extend-type Number
+      (extend-type :number
         IWrap (wrap [n] {:value n}))
     `)
     expect(sess.evaluate('(:value (wrap 42))')).toEqual(cljNumber(42))
@@ -572,10 +572,10 @@ const SERIALIZATION_SRC = `
   (serialize [this] "Return a JSON-like string representation."))
 
 (extend-protocol ISerializable
-  String  (serialize [s] (str "\\"" s "\\""))
-  Number  (serialize [n] (str n))
-  Boolean (serialize [b] (if b "true" "false"))
-  nil     (serialize [_] "null"))
+  :string  (serialize [s] (str "\\"" s "\\""))
+  :number  (serialize [n] (str n))
+  :boolean (serialize [b] (if b "true" "false"))
+  :nil     (serialize [_] "null"))
 
 (defrecord JsonObject [pairs]
   ISerializable
@@ -676,7 +676,7 @@ describe('re-eval safety', () => {
     const sess = s()
     sess.evaluate(`
       (defprotocol IFoo (foo [x]))
-      (extend-protocol IFoo String (foo [s] (str "v1:" s)))
+      (extend-protocol IFoo :string (foo [s] (str "v1:" s)))
     `)
     expect(sess.evaluate('(foo "hello")')).toEqual(cljString('v1:hello'))
     // Re-eval defprotocol — should NOT wipe the impls
