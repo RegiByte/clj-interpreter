@@ -7,6 +7,6 @@
     "start": "bun server.ts"
   },
   "dependencies": {
-    "conjure-js": "file:../../packages/conjure-js"
+    "@regibyte/cljam": "file:../../packages/cljam"
   }
 }

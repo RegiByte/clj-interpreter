@@ -1,0 +1,42 @@
+{
+  "name": "@regibyte/cljam-date",
+  "version": "0.1.1",
+  "private": false,
+  "type": "module",
+  "description": "Date handling library for cljam",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RegiByte/cljam.git"
+  },
+  "author": "Regibyte",
+  "homepage": "https://github.com/RegiByte/cljam",
+  "license": "MIT",
+  "exports": {
+    ".": "./conjure.ts"
+  },
+  "files": [
+    "conjure.ts",
+    "src/**/*.ts",
+    "src/**/*.clj",
+    "src/generated/**",
+    "!src/**/__tests__/**",
+    "!src/**/*.spec.ts",
+    "!src/**/*.test.ts",
+    "tsconfig.json",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@regibyte/cljam": ">=0.0.14"
+  },
+  "devDependencies": {
+    "@regibyte/cljam": "file:../cljam",
+    "vitest": "^4.0.18",
+    "typescript": "~5.9.3",
+    "@types/node": "^25.3.5"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "gen:sources": "node ../cljam/scripts/gen-library-sources.mjs src/clojure src/generated/sources.ts",
+    "prepublishOnly": "npm run gen:sources"
+  }
+}

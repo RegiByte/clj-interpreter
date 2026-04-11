@@ -1,5 +1,5 @@
-import { EvaluationError, printString, createSession } from 'conjure-js'
-import type { Session } from 'conjure-js'
+import { EvaluationError, printString, createSession } from '@regibyte/cljam'
+import type { Session } from '@regibyte/cljam'
 
 export type ReplEntrySource = {
   kind: 'source'

@@ -1,7 +1,9 @@
 # Library Distribution Spec
 
-**Status:** Draft — Session 135 (2026-04-04)  
-**Scope:** `ConjureLibrary` format · preset system · `allowedPackages` permission model · source registration · three concrete library designs
+**Status:** Implemented — Sessions 135–143 (2026-04-04 → 2026-04-11)  
+**Scope:** `CljamLibrary` format · preset system · `allowedPackages` permission model · source registration · three concrete library designs
+
+> **Note:** Sections 1–7 are implemented. Sections 8.1 (`cljam-date`) and 8.3 parts map to `@regibyte/cljam-integrant`. Section 8.2 (`cljam-schema`) and 8.3 (`cljam-ring`) remain future work.
 
 ---
 
@@ -17,16 +19,16 @@
 
 ---
 
-## 2. The `ConjureLibrary` Format
+## 2. The `CljamLibrary` Format
 
-`ConjureLibrary` is the user-facing unit of capability for Conjure. It wraps:
+`CljamLibrary` is the user-facing unit of capability for cljam. It wraps:
 - Clojure source namespaces (optional — pure-native libraries may not have any)
 - A native `RuntimeModule` (optional — pure-Clojure libraries may not have one)
 
 ```typescript
-// packages/conjure-js/src/core/library.ts
+// packages/@regibyte/cljam/src/core/library.ts
 
-export type ConjureLibrary = {
+export type CljamLibrary = {
   /** Unique library identifier — used in error messages and deduplication. */
   id: string
   /**
@@ -49,18 +51,18 @@ export type ConjureLibrary = {
 
 `RuntimeModule` is an established internal abstraction: it installs named vars into namespaces and has dependency ordering. It knows nothing about file loading or `:require` resolution. Mixing `.clj` source concerns into it would pollute a clean boundary.
 
-`ConjureLibrary` is the external, user-facing concept. Internally, `createSession` decomposes it: native module → handed to `runtime.installModules()`; sources → registered in the runtime's source registry.
+`CljamLibrary` is the external, user-facing concept. Internally, `createSession` decomposes it: native module → handed to `runtime.installModules()`; sources → registered in the runtime's source registry.
 
 ### Library manifest convention (npm packages)
 
-A Conjure library published to npm exports its library from a `conjure.ts` entry:
+A cljam library published to npm exports its library from a `conjure.ts` entry:
 
 ```typescript
 // my-conjure-lib/conjure.ts
-import type { ConjureLibrary } from 'conjure-js'
+import type { CljamLibrary } from '@regibyte/cljam'
 import { makeNativeModule } from './native'
 
-export const library: ConjureLibrary = {
+export const library: CljamLibrary = {
   id: 'my-conjure-lib',
   sources: {
     'my-lib.core': /* the .clj source as a string, typically inlined at build time */,
@@ -101,14 +103,14 @@ export type SessionOptions = {
    * Each library's module (if any) is installed via installModules().
    * Libraries are processed after modules.
    */
-  libraries?: ConjureLibrary[]
+  libraries?: CljamLibrary[]
   /**
    * Controls which Clojure namespaces may be loaded via (:require [ns]).
    * - 'all' (default): any namespace may be loaded (existing behaviour)
    * - string[]: only namespaces whose root package matches one of these prefixes
    *   may be loaded. 'clojure.*' and built-in namespaces are always allowed.
-   *   Example: ['conjure-date', 'conjure-schema'] allows 'conjure-date.core',
-   *   'conjure-date.utils', etc. but blocks everything else.
+   *   Example: ['cljam-date', 'cljam-schema'] allows 'cljam-date.core',
+   *   'cljam-date.utils', etc. but blocks everything else.
    */
   allowedPackages?: string[] | 'all'
 }
@@ -163,12 +165,12 @@ Library 'lib-b' tried to register namespace 'shared.utils', already registered b
 - The session's own namespaces already in the registry
 
 **Prefix matching:**  
-`allowedPackages: ['conjure-date', 'my-app']` allows any namespace whose dotted name starts with `conjure-date.` or `my-app.` (or exactly equals `conjure-date` / `my-app`).
+`allowedPackages: ['cljam-date', 'my-app']` allows any namespace whose dotted name starts with `cljam-date.` or `my-app.` (or exactly equals `cljam-date` / `my-app`).
 
 **Error message on violation:**
 ```
 Access denied: namespace 'some-lib.core' is not in the allowed packages for this session.
-Allowed packages: ["conjure-date", "conjure-schema"]
+Allowed packages: ["cljam-date", "cljam-schema"]
 To allow all packages, use: allowedPackages: 'all'
 ```
 
@@ -189,7 +191,7 @@ allowedPackages?: string[] | 'all'
 createSession({
   ...sandboxPreset(),
   libraries: [dateLib, schemaLib],
-  allowedPackages: ['conjure-date', 'conjure-schema'],
+  allowedPackages: ['cljam-date', 'cljam-schema'],
 })
 ```
 
@@ -202,7 +204,7 @@ The model gets exactly what you gave it. Nothing else loads. The error message i
 Presets are plain functions returning `SessionOptions`. No registration. No magic. Compose with spread.
 
 ```typescript
-// packages/conjure-js/src/presets.ts
+// packages/@regibyte/cljam/src/presets.ts
 
 export function nodePreset(): SessionOptions {
   return {
@@ -278,7 +280,7 @@ createSession({
   output: (text) => output.push(text),
   stderr: (text) => output.push(`[err] ${text}`),
   libraries: [dateLib, schemaLib],
-  allowedPackages: ['conjure-date', 'conjure-schema'],
+  allowedPackages: ['cljam-date', 'cljam-schema'],
 })
 
 // Browser with restricted package access
@@ -318,12 +320,12 @@ This is primarily useful when building LLM tools: you can inject `session.capabi
 
 ## 8. Concrete Library Designs
 
-### 8.1 `conjure-date` — Thin date library
+### 8.1 `cljam-date` — Thin date library
 
 **Goal:** Ergonomic date handling without reaching for `js/new`.  
 **Peer dependencies:** None (uses native `Date` and `Intl`).
 
-**Native layer** (`conjure.date.native`):
+**Native layer** (`cljam.date.native`):
 | Function | Wraps | Notes |
 |---|---|---|
 | `now*` | `new Date()` | Returns CljJsValue wrapping a Date |
@@ -335,10 +337,10 @@ This is primarily useful when building LLM tools: you can inject `session.capabi
 | `year*` / `month*` / `day*` etc. | `.getFullYear()` etc. | Accessors |
 | `add-millis*` | `new Date(d.getTime() + n)` | |
 
-**Clojure layer** (`conjure.date`):
+**Clojure layer** (`cljam.date`):
 ```clojure
-(ns conjure.date
-  (:require [conjure.date.native :as n]))
+(ns cljam.date
+  (:require [cljam.date.native :as n]))
 
 (defn now [] (n/now*))
 (defn from-millis [ms] (n/from-millis* ms))
@@ -358,7 +360,7 @@ This is primarily useful when building LLM tools: you can inject `session.capabi
 **Usage:**
 ```clojure
 (ns my-app.core
-  (:require [conjure.date :as d]))
+  (:require [cljam.date :as d]))
 
 (def today (d/now))
 (def tomorrow (d/add-days today 1))
@@ -369,7 +371,7 @@ This is primarily useful when building LLM tools: you can inject `session.capabi
 
 ---
 
-### 8.2 `conjure-schema` — Zod-backed schema validation
+### 8.2 `cljam-schema` — Zod-backed schema validation
 
 **Goal:** Validate data and get Clojure maps as output (not JS objects).  
 **Peer dependencies:** `zod`.
@@ -422,7 +424,7 @@ function zodIssuesToClj(issues: ZodIssue[]): CljValue {
 
 ---
 
-### 8.3 `conjure-ring` — Ring-like HTTP server
+### 8.3 `cljam-ring` — Ring-like HTTP server
 
 **Goal:** Create web servers with a pure Clojure handler model.  
 **Peer dependencies:** None at the library level (runtime-dependent: Bun or Node).
@@ -463,8 +465,8 @@ function zodIssuesToClj(issues: ZodIssue[]): CljValue {
 **Routing (pure Clojure):**
 ```clojure
 (ns my-app.routes
-  (:require [conjure.ring :as ring]
-            [conjure.ring.response :as res]))
+  (:require [cljam.ring :as ring]
+            [cljam.ring.response :as res]))
 
 (defn user-handler [req]
   (res/json {:id (get-in req [:params :id])
@@ -496,10 +498,10 @@ function zodIssuesToClj(issues: ZodIssue[]): CljValue {
 ```
 
 **Implementation layers:**
-- `conjure.ring.native` — `serve*`, `stop*`: wraps Bun.serve or Node http.createServer; converts JS request → Clojure map; invokes handler; converts response map → JS response
-- `conjure.ring` — `serve`, `stop!`, `routes`, `GET`, `POST`, etc.
-- `conjure.ring.response` — `json`, `html`, `text`, `status`, `redirect`
-- `conjure.ring.middleware` — `wrap-json-body`, `wrap-cors`, `wrap-params`
+- `cljam.ring.native` — `serve*`, `stop*`: wraps Bun.serve or Node http.createServer; converts JS request → Clojure map; invokes handler; converts response map → JS response
+- `cljam.ring` — `serve`, `stop!`, `routes`, `GET`, `POST`, etc.
+- `cljam.ring.response` — `json`, `html`, `text`, `status`, `redirect`
+- `cljam.ring.middleware` — `wrap-json-body`, `wrap-cors`, `wrap-params`
 
 **Runtime adapter pattern:**  
 The native module is injected differently for Bun vs Node. The library accepts an optional adapter:
@@ -525,14 +527,14 @@ The adapter is the only runtime-specific piece. The Clojure layer is identical f
 
 This spec describes the design. Implementation should happen in this order:
 
-1. **`ConjureLibrary` type + `libraries` option in `SessionOptions`** — the scaffolding
+1. **`CljamLibrary` type + `libraries` option in `SessionOptions`** — the scaffolding
 2. **Source registration mechanics** — `registeredSources` in `RuntimeOptions` + lookup in `processRequireSpec`
 3. **`allowedPackages` enforcement** — thread through `ctx`, check in `processRequireSpec`
 4. **Preset functions** — `nodePreset`, `browserPreset`, `sandboxPreset` in `src/presets.ts`
 5. **`session.capabilities`** — read-only introspection property
-6. **`conjure-date`** — first library, minimal native surface, validates the whole pipeline
-7. **`conjure-schema`** — second library, validates cross-boundary data conversion
-8. **`conjure-ring`** — third library, validates async server integration
+6. **`cljam-date`** — first library, minimal native surface, validates the whole pipeline
+7. **`cljam-schema`** — second library, validates cross-boundary data conversion
+8. **`cljam-ring`** — third library, validates async server integration
 
 Steps 1–5 are the core infra. Steps 6–8 are the payoff — each library will surface gaps in the spec as they're built.
 
@@ -542,10 +544,10 @@ Steps 1–5 are the core infra. Steps 6–8 are the payoff — each library will
 
 | Question | Status | Notes |
 |---|---|---|
-| Should `ConjureLibrary.sources` support lazy-load functions `() => Record<...>` instead of eagerly materialized strings? | Deferred | Strings are simpler; revisit if large libraries cause bundle-size issues |
-| Should `allowedPackages` use exact-match or prefix-match? | **Decided: prefix** | `'conjure-date'` covers `conjure-date.core`, `conjure-date.utils`, etc. |
+| Should `CljamLibrary.sources` support lazy-load functions `() => Record<...>` instead of eagerly materialized strings? | Deferred | Strings are simpler; revisit if large libraries cause bundle-size issues |
+| Should `allowedPackages` use exact-match or prefix-match? | **Decided: prefix** | `'cljam-date'` covers `cljam-date.core`, `cljam-date.utils`, etc. |
 | Should `session.capabilities` be live (reactive to `addSourceRoot` etc.) or a snapshot? | Deferred | Snapshot is simpler; revisit for LLM agent use cases |
-| How does `conjure-ring` handle async handlers? | Open | Option A: handler returns a `CljPending`; Option B: `ring/serve-async`. Needs its own design pass. |
+| How does `cljam-ring` handle async handlers? | Open | Option A: handler returns a `CljPending`; Option B: `ring/serve-async`. Needs its own design pass. |
 | Should the ring library be runtime-agnostic at the spec level (Bun + Node)? | **Decided: yes** | Adapter pattern; Clojure layer is identical |
-| Should `conjure-schema` support custom validators (`:refine` / `:transform`)? | Deferred | Ship the happy path first |
-| Where do library packages live (monorepo vs separate repos)? | Deferred | First library in `packages/conjure-date`; extract later if ecosystem grows |
+| Should `cljam-schema` support custom validators (`:refine` / `:transform`)? | Deferred | Ship the happy path first |
+| Where do library packages live (monorepo vs separate repos)? | Deferred | First library in `packages/cljam-date`; extract later if ecosystem grows |

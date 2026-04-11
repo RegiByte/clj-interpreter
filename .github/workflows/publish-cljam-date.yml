@@ -1,0 +1,45 @@
+name: Publish cljam-date
+
+on:
+  push:
+    tags:
+      - 'cljam-date@*'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run tests
+        working-directory: packages/cljam-date
+        run: bun run test
+
+      - name: Generate sources
+        working-directory: packages/cljam-date
+        run: npm run gen:sources
+
+      - name: Publish to npm
+        working-directory: packages/cljam-date
+        run: npm publish --provenance --access=public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

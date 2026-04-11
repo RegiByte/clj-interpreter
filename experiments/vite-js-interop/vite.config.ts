@@ -1,6 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import { cljPlugin } from 'conjure-js/vite-plugin'
+import { cljPlugin } from 'cljam/vite-plugin'
 
 // Vite JS Interop Experiment
 // Validates: static import table, two-mode session entrypoint, complex CLJ dependency chains.

@@ -17,8 +17,8 @@
  */
 
 import { readFileSync } from 'node:fs'
-import { createSession } from 'conjure-js'
-import { startNreplServer, makeNodeHostModule } from 'conjure-js/nrepl'
+import { createSession } from '@regibyte/cljam'
+import { startNreplServer, makeNodeHostModule } from 'cljam/nrepl'
 import { createRedisBroker } from './brokers/redis.js'
 import { MeshNode } from './mesh-node.js'
 import { makeMeshModule } from './mesh-module.js'

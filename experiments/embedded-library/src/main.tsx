@@ -2,7 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
-import { createSession, printString } from 'conjure-js'
+import { createSession, printString } from 'cljam'
 import { foo } from './clojure/webrepl.clj'
 
 console.log(foo)

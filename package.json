@@ -3,17 +3,17 @@
   "workspaces": [
     "packages/*"
   ],
-  "conjure": {
+  "cljam": {
     "sourceRoots": [
-      "packages/conjure-js/src/clojure"
+      "packages/cljam/src/clojure"
     ]
   },
   "scripts": {
-    "test": "bun run --filter 'conjure-js' test",
-    "build": "bun run --filter 'conjure-js' build-npm-bin",
+    "test": "bun run --filter '@regibyte/cljam' test && bun run --filter '@regibyte/cljam-date' test && bun run --filter '@regibyte/cljam-integrant' test",
+    "build": "bun run --filter '@regibyte/cljam' build-vite-plugin",
     "dev": "bun run --filter 'playground' dev",
-    "repl": "bun run --filter 'conjure-js' repl",
-    "nrepl": "bun run --filter 'conjure-js' nrepl",
+    "repl": "bun run --filter 'cljam' repl",
+    "nrepl": "bun run --filter 'cljam' nrepl",
     "playground": "bun run --filter 'playground' dev"
   }
 }

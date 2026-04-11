@@ -7,7 +7,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
-import { createSession } from 'conjure-js'
+import { createSession } from '@regibyte/cljam'
 import { createRedisBroker } from '../src/brokers/redis.js'
 import { MeshNode } from '../src/mesh-node.js'
 import type { RedisBroker } from '../src/brokers/redis.js'

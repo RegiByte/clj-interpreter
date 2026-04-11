@@ -1,5 +1,5 @@
-import { createSession } from 'conjure-js'
-import type { ImportMap } from 'conjure-js'
+import { createSession } from '@regibyte/cljam'
+import type { ImportMap } from '@regibyte/cljam'
 
 // Mode 2 user-defined session factory.
 // The plugin scanned all .clj files for string requires (finding "date-fns")

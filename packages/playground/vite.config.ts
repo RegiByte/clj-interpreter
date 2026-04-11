@@ -2,7 +2,7 @@ import { defineConfig } from 'vite'
 import { monaco } from '@bithero/monaco-editor-vite-plugin'
 
 export default defineConfig({
-  base: '/conjure-js/',
+  base: '/cljam/',
   plugins: [
     monaco({
       features: 'all',

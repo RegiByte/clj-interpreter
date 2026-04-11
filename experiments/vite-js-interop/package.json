@@ -9,7 +9,7 @@
     "test:build": "bun run build && bun test-build.ts"
   },
   "dependencies": {
-    "conjure-js": "file:../../packages/conjure-js",
+    "@regibyte/cljam": "file:../../packages/cljam",
     "date-fns": "^4.1.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"

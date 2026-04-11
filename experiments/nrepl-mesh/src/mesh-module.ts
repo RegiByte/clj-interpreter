@@ -3,7 +3,7 @@
  * Conjure session under the `mesh` namespace.
  *
  * Isolation guarantee: this file is the only coupling point between the mesh
- * experiment and the conjure-js interpreter. It imports from 'conjure-js' (the
+ * experiment and the conjure-js interpreter. It imports from '@regibyte/cljam' (the
  * public API only) and from the local broker/node layer. The core interpreter
  * never imports from here.
  *
@@ -35,14 +35,14 @@ import {
   cljPending,
   printString,
   readString,
-} from 'conjure-js'
+} from '@regibyte/cljam'
 import type {
   RuntimeModule,
   VarMap,
   CljValue,
   EvaluationContext,
   Env,
-} from 'conjure-js'
+} from '@regibyte/cljam'
 import type { MeshNode } from './mesh-node.js'
 import type { NodeInfo } from './broker.js'
 

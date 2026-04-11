@@ -1,6 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import { cljPlugin } from 'conjure-js/vite-plugin'
+import { cljPlugin } from 'cljam/vite-plugin'
 
 // https://vite.dev/config/
 export default defineConfig({

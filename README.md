@@ -1,11 +1,11 @@
-# Conjure
+# Cljam
 
-[![npm](https://img.shields.io/npm/v/conjure-js)](https://www.npmjs.com/package/conjure-js)
-[![license](https://img.shields.io/npm/l/conjure-js)](LICENSE)
+[![npm](https://img.shields.io/npm/v/%40regibyte%2Fcljam)](https://www.npmjs.com/package/@regibyte/cljam)
+[![license](https://img.shields.io/npm/l/%40regibyte%2Fcljam)](LICENSE)
 
 A Clojure interpreter written in TypeScript. Runs on Bun as a standalone CLI, embeds in any JS/TS project as a library, and exposes a full nREPL server compatible with Calva, Cursive, and CIDER.
 
-**[Try it in the browser →](https://regibyte.github.io/conjure-js/)**
+**[Try it in the browser →](https://regibyte.github.io/cljam/)**
 
 ***
 
@@ -18,11 +18,11 @@ Or even better, contribute to the project, open an issue or a pull request and I
 
 ## What it is
 
-Conjure is an **interpreter**. Source code is read, macro-expanded, and evaluated at runtime. There is no compilation step and no bytecode — the evaluator walks the AST directly.
+Cljam is an **interpreter**. Source code is read, macro-expanded, and evaluated at runtime. There is no compilation step and no bytecode — the evaluator walks the AST directly.
 
 It is designed to be embedded. The core session API is a plain TypeScript object: create a session, inject host functions, evaluate strings. The CLI and nREPL server are thin wrappers around the same session.
 
-It is **not** a compiler. There is no Clojure → JavaScript code generation today. That is a long-horizon goal described in the roadmap.
+An incremental compiler is built in — hot-path forms compile to native closures at definition time, giving a meaningful speed-up over pure tree-walking. There is no Clojure → JavaScript file output today; the compiler is an internal optimization, not a code generator.
 
 ***
 
@@ -93,6 +93,24 @@ Full TCP nREPL server with bencode transport. Supports `eval`, `load-file`, `com
 
 Writes `.nrepl-port` on startup for auto-connect.
 
+### JS Interop
+
+Call any JavaScript value from Clojure using the `js/` namespace. Host values cross the boundary wrapped in `CljJsValue` — no implicit coercion.
+
+```clojure
+;; Global objects
+(. js/Math pow 2 10)              ;; => 1024.0
+(. js/console log "hello")
+
+;; Constructors
+(def now (js/new js/Date))
+(. now toISOString)               ;; => "2026-04-11T..."
+
+;; Values from importMap (configured in SessionOptions)
+;; Given importMap: { path: require('node:path') }
+(. js/path join "a" "b" "c")     ;; => "a/b/c"
+```
+
 ### Host I/O
 
 `slurp`, `spit`, and `load` are available in both the CLI and nREPL sessions.
@@ -101,9 +119,9 @@ Writes `.nrepl-port` on startup for auto-connect.
 
 ## Key Differences from JVM Clojure
 
-Conjure is semantically close to Clojure but runs on a JavaScript host. The following are not implemented and are not planned for the interpreter phase:
+Cljam is semantically close to Clojure but runs on a JavaScript host. The following are not implemented and are not planned for the interpreter phase:
 
-| JVM Clojure | Conjure |
+| JVM Clojure | Cljam |
 |---|---|
 | Java interop (`.method`, `new Foo`, `java.lang.*`) | Not available |
 | `deftype`, `defrecord`, `defprotocol` | Not available |
@@ -120,9 +138,9 @@ The core data model, namespace system, macro system, and standard library semant
 ## Installation
 
 ```bash
-npm install -g conjure-js
-# or 
-bun install -g conjure-js
+npm install -g @regibyte/cljam
+# or
+bun install -g @regibyte/cljam
 ```
 
 The main host environment is Bun's runtime
@@ -135,11 +153,11 @@ You may need to install [Bun](https://bun.sh) for certain features.
 ### Interactive REPL
 
 ```bash
-conjure-js repl
+cljam repl
 ```
 
 ```
-Conjure 0.0.1
+Cljam 0.0.1
 Type (exit) to exit the REPL.
 user=> (map #(* % %) [1 2 3 4 5])
 (1 4 9 16 25)
@@ -153,20 +171,20 @@ user=> (exit)
 ### Run a File
 
 ```bash
-conjure-js run my-script.clj
+cljam run my-script.clj
 ```
 
 ### nREPL Server
 
 ```bash
-conjure-js nrepl-server
-# Conjure nREPL server 0.0.1 started on port 7888
+cljam nrepl-server
+# Cljam nREPL server 0.0.1 started on port 7888
 ```
 
 Options:
 
 ```bash
-conjure-js nrepl-server --port 7889 --host 0.0.0.0
+cljam nrepl-server --port 7889 --host 0.0.0.0
 ```
 
 #### Connecting with Calva (VS Code)
@@ -177,7 +195,7 @@ Add to `.vscode/settings.json` in your project:
 {
   "calva.replConnectSequences": [
     {
-      "name": "Conjure nREPL",
+      "name": "Cljam nREPL",
       "projectType": "generic",
       "nReplPortFile": [".nrepl-port"]
     }
@@ -185,7 +203,7 @@ Add to `.vscode/settings.json` in your project:
 }
 ```
 
-Then: **Calva: Connect to Running REPL Server in Project** → select `Conjure nREPL`.
+Then: **Calva: Connect to Running REPL Server in Project** → select `Cljam nREPL`.
 
 #### Connecting with CIDER (Emacs)
 
@@ -202,27 +220,27 @@ Run → Edit Configurations → `+` → Clojure REPL → Remote → host `localh
 ### Embed as a Library
 
 ```typescript
-import { createSession, printString } from 'conjure-js/src/core'
+import { createSession, printString, nodePreset } from '@regibyte/cljam'
 
 const session = createSession({
-  output: (text) => console.log(text),
-  sourceRoots: ['src/clojure'],
-  readFile: (path) => fs.readFileSync(path, 'utf8'),
+  ...nodePreset(),
 })
 
 const result = session.evaluate('(map inc [1 2 3])')
-console.log(printString(result)) // (2 3 4)
+console.log(printString(result)) // => (2 3 4)
 ```
+
+`nodePreset()` wires up Node.js filesystem and standard I/O. Use `sandboxPreset()` for an isolated context with no host access.
 
 ***
 
 ## Source Root Discovery
 
-When running `conjure-js nrepl-server` or `conjure-js run`, Conjure looks for source roots by reading the `conjure.sourceRoots` field in `package.json`:
+When running `cljam nrepl-server` or `cljam run`, Cljam looks for source roots by reading the `cljam.sourceRoots` field in `package.json`:
 
 ```json
 {
-  "conjure": {
+  "cljam": {
     "sourceRoots": ["src/clojure"]
   }
 }
@@ -244,20 +262,16 @@ Full bencode op coverage: symbol info, docstring lookup, source location, cross-
 
 ### Browser nREPL Bridge
 
-The Vite plugin (`vite-plugin-conjure`) will spawn a WebSocket nREPL endpoint alongside the dev server. A small runtime injected into the browser page connects to the WebSocket and acts as the nREPL evaluation target. Any compatible nREPL client — Calva, Cursive, CIDER — will be able to evaluate Clojure code that runs live in the browser, with full access to the DOM and the running application state.
+The Vite plugin (`vite-plugin-cljam`) will spawn a WebSocket nREPL endpoint alongside the dev server. A small runtime injected into the browser page connects to the WebSocket and acts as the nREPL evaluation target. Any compatible nREPL client — Calva, Cursive, CIDER — will be able to evaluate Clojure code that runs live in the browser, with full access to the DOM and the running application state.
 
 ```typescript
 // vite.config.ts
 cljPlugin({ sourceRoots: ['src'], nreplPort: 7889 })
 ```
 
-### JS Interop
+### Compiler
 
-A minimal, explicit host interface for calling JavaScript from Clojure: `js/box`, `js/get`, `js/call`, `js/invoke`. Values cross the boundary explicitly — no implicit coercion.
-
-### Compiler (Long Horizon)
-
-Clojure → JavaScript/TypeScript code generation, built on the existing macro expansion layer. The long-term goal is a self-hosting compiler: the compiler written in Conjure and compiled with itself.
+An incremental compiler covering all hot-path forms is already built in. The next phase is full `def`, `binding`, and tail-call self-recursion support. The long-term goal is a self-hosting compiler: the compiler written in cljam and compiled with itself.
 
 ***
 

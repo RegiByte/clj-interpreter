@@ -9,7 +9,7 @@ import {
   jsToClj,
   cljToJs,
   printString,
-} from 'conjure-js'
+} from '@regibyte/cljam'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 

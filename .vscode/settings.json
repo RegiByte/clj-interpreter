@@ -5,11 +5,11 @@
   },
   "calva.replConnectSequences": [
     {
-      "name": "Conjure nREPL",
+      "name": "cljam nREPL",
       "projectType": "generic",
       "nReplPortFile": [".nrepl-port"],
-      "afterPrimaryReplConnectedCode": "(println \"Connected to Conjure nREPL\")",
-      "customJackInCommandLine": "conjure-js nrepl-server",
+      "afterPrimaryReplConnectedCode": "(println \"Connected to cljam nREPL\")",
+      "customJackInCommandLine": "cljam nrepl-server",
     }
   ],
   "calva.showCalvaSaysOnConnect": false

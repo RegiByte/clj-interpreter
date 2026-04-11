@@ -2,7 +2,7 @@
 
 // Virtual module provided by vite-plugin-clj
 declare module 'virtual:clj-session' {
-  import type { Session } from 'conjure-js'
+  import type { Session } from '@regibyte/cljam'
   export function getSession(): Session
 }
 

@@ -1,7 +1,7 @@
 /**
  * Node/Bun JS Interop Experiment
  *
- * Experimenting with conjure-js + native ESM dynamic imports.
+ * Experimenting with cljam + native ESM dynamic imports.
  * No bundler — just Bun
  *
  *   bun run main.ts
@@ -14,8 +14,9 @@
  */
 
 import { readFileSync } from 'node:fs'
-import { createSession, printString } from 'conjure-js'
-import { startNreplServer } from 'conjure-js/nrepl'
+import { createSession, printString } from '@regibyte/cljam'
+import { startNreplServer } from 'cljam/nrepl'
+import { library as dateLib } from '@regibyte/cljam-date'
 
 const session = createSession({
   output: (text) => process.stdout.write(text),
@@ -23,6 +24,9 @@ const session = createSession({
   hostBindings: { Math, console },
   sourceRoots: ['src'],
   readFile: (filePath) => readFileSync(filePath, 'utf-8'),
+  libraries: [dateLib],
+  allowedPackages: ['cljam.date'],
+  allowedHostModules: ['node:'],
 })
 
 function section(title: string) {
@@ -44,7 +48,10 @@ const result1 = await session.evaluateAsync(`
   ; call node path method  
   (. path join "src" "components" "App.tsx")
 `)
-console.log('(. path join "src" "components" "App.tsx") =>', printString(result1))
+console.log(
+  '(. path join "src" "components" "App.tsx") =>',
+  printString(result1)
+)
 
 // ── 2. After the module is loaded, sync evaluate() works fine ───────────────
 //
@@ -56,7 +63,10 @@ section('2. Sync evaluate after require')
 const result2 = session.evaluate(`
   (. path dirname "/usr/local/bin/conjure")
 `)
-console.log('(. path dirname "/usr/local/bin/conjure") =>', printString(result2))
+console.log(
+  '(. path dirname "/usr/local/bin/conjure") =>',
+  printString(result2)
+)
 
 // ── 3. Compose with Clojure higher-order functions ──────────────────────────
 //

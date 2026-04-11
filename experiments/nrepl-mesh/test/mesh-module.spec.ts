@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, test } from 'vitest'
-import { createSession, printString } from 'conjure-js'
+import { createSession, printString } from '@regibyte/cljam'
 import { makeMeshModule } from '../src/mesh-module.js'
 import type { MeshNode } from '../src/mesh-node.js'
 import type { NodeInfo } from '../src/broker.js'

@@ -10,7 +10,7 @@
     "test": "vitest"
   },
   "dependencies": {
-    "conjure-js": "workspace:*"
+    "@regibyte/cljam": "workspace:*"
   },
   "devDependencies": {
     "@bithero/monaco-editor-vite-plugin": "^1.0.3",

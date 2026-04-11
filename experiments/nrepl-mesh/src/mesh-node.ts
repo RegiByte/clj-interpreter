@@ -17,7 +17,7 @@
  *   - Async forms (async ...) are evaluated transparently via evaluateAsync.
  */
 
-import { type Session, printString } from 'conjure-js'
+import { type Session, printString } from '@regibyte/cljam'
 import type { MeshBroker, NodeInfo, Unsubscribe } from './broker.js'
 import type { EvalReply, EvalRequest, MeshStreamChunk } from './protocol.js'
 

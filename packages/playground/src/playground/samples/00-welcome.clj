@@ -1,7 +1,7 @@
 (ns user
   (:require [clojure.string :as str]))
 
-;; Welcome to the Conjure Web REPL!
+;; Welcome to the Cljam Web REPL!
 ;;
 ;;   ⌘+Enter  (Ctrl+Enter)  — evaluate the form under/before the cursor
 ;;   Shift+⌘+Enter          — evaluate the entire file

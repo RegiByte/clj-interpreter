@@ -1,0 +1,72 @@
+{
+  "name": "@regibyte/cljam",
+  "private": false,
+  "version": "0.0.15",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RegiByte/cljam.git"
+  },
+  "author": "Regibyte",
+  "homepage": "https://github.com/RegiByte/cljam",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/core/index.ts",
+    "./nrepl": "./src/bin/nrepl.ts",
+    "./vite-plugin": {
+      "bun": "./src/vite-plugin-cljam/index.ts",
+      "default": "./dist-vite-plugin/index.mjs"
+    },
+    "./scripts/gen-library-sources": "./scripts/gen-library-sources.mjs"
+  },
+  "files": [
+    "dist-vite-plugin/**/*",
+    "src/**/*.ts",
+    "src/**/*.clj",
+    "scripts/gen-library-sources.mjs",
+    "!src/**/__tests__/**",
+    "!src/**/*.spec.ts",
+    "!src/**/*.test.ts",
+    "!src/demo-entry.ts",
+    "!src/bin/__fixtures__/**",
+    "!src/clojure/demo/**",
+    "tsconfig.json",
+    "tsconfig.build.json",
+    "README.md"
+  ],
+  "keywords": [
+    "clojure",
+    "lisp",
+    "interpreter",
+    "nrepl",
+    "repl"
+  ],
+  "scripts": {
+    "repl": "bun run src/bin/cli.ts repl",
+    "run": "bun run src/bin/cli.ts run",
+    "nrepl": "bun run src/bin/cli.ts nrepl-server",
+    "build-cli": "node scripts/gen-version.mjs && bun build --compile src/bin/cli.ts --outfile cljam",
+    "build-npm-bin": "node scripts/gen-version.mjs && node scripts/build-npm-bin.mjs",
+    "build-vite-plugin": "node scripts/build-vite-plugin.mjs",
+    "prepublishOnly": "bun run gen:core-source && node scripts/build-vite-plugin.mjs && node scripts/gen-version.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest",
+    "gen:core-source": "bun run scripts/gen-core-source.mjs",
+    "gen:version": "node scripts/gen-version.mjs"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.10",
+    "@types/node": "^25.3.5",
+    "@vitest/coverage-v8": "^4.0.18",
+    "@vitest/ui": "^4.0.18",
+    "prettier": "^3.8.1",
+    "typescript": "~5.9.3",
+    "vite": "^7.3.1",
+    "vitest": "^4.0.18"
+  },
+  "cljam": {
+    "sourceRoots": [
+      "src/clojure"
+    ]
+  }
+}

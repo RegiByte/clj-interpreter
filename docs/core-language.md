@@ -1,6 +1,6 @@
-# Conjure Core Language
+# cljam Core Language
 
-> This document defines the **minimal post-expansion language** — the set of forms that survive macro expansion and reach the evaluator. This is the **compilation target**: what a compiler must handle to compile all valid Conjure programs.
+> This document defines the **minimal post-expansion language** — the set of forms that survive macro expansion and reach the evaluator. This is the **compilation target**: what a compiler must handle to compile all valid cljam programs.
 >
 > Everything above this level is syntax sugar, macros, or reader transforms that reduce to these forms before evaluation begins.
 
@@ -8,7 +8,7 @@
 
 ## Overview
 
-The Conjure evaluator pipeline:
+The cljam evaluator pipeline:
 
 ```
 Source (.clj)
@@ -219,7 +219,7 @@ Returns the `CljVar` object for `sym` without dereferencing it. Reader sugar: `#
 (binding [^:dynamic sym1 val1  ^:dynamic sym2 val2  ...] body*)
 ```
 
-Establishes dynamic var bindings for the duration of `body`. Thread-local in JVM Clojure; call-stack-scoped in Conjure. All vars must be declared `^:dynamic`.
+Establishes dynamic var bindings for the duration of `body`. Thread-local in JVM Clojure; call-stack-scoped in cljam. All vars must be declared `^:dynamic`.
 
 Used for `*out*`, `*err*`, `*print-length*`, and user-defined dynamic vars.
 
@@ -281,7 +281,7 @@ Calls a JS constructor. Equivalent to `new Constructor(args...)`. Returns a `Clj
 
 Creates an async evaluation boundary. Evaluates `body` in an async context where `@` can be used to await `CljPending` values. Returns a `CljPending`.
 
-The `async` form is Conjure-specific. It is **not** equivalent to a JS `async` function — it is an explicit opt-in to async evaluation. The sync evaluator stays sync; `async` is the boundary.
+The `async` form is cljam-specific. It is **not** equivalent to a JS `async` function — it is an explicit opt-in to async evaluation. The sync evaluator stays sync; `async` is the boundary.
 
 ---
 
@@ -384,7 +384,7 @@ Key properties of compiled expressions:
 
 ## Intentional Divergences from JVM Clojure
 
-Conjure-JS is not a port — it's an independent implementation that targets the same semantics where they make sense, and improves on them where it doesn't. The divergences below are deliberate.
+cljam-JS is not a port — it's an independent implementation that targets the same semantics where they make sense, and improves on them where it doesn't. The divergences below are deliberate.
 
 ### `:or` defaults in destructuring are evaluated lazily
 
@@ -400,11 +400,11 @@ is always evaluated as an argument to `get` — even when `k` is already present
 ;; => true  (default expression ran)
 ```
 
-Conjure-JS generates `(if (contains? m k) (get m k) default-expr)` instead. The
+cljam-JS generates `(if (contains? m k) (get m k) default-expr)` instead. The
 default expression is only evaluated when the key is absent.
 
 ```clojure
-;; Conjure-JS — default-expr only runs when :x is missing
+;; cljam-JS — default-expr only runs when :x is missing
 (let [called (atom false)]
   (let [{:keys [x] :or {x (do (reset! called true) 99)}} {:x 42}]
     @called))
@@ -417,7 +417,7 @@ natural primitive — it encodes the concept of "value or default" directly. The
 evaluation of the default is an artifact of how function calls work in Clojure, not a
 deliberate semantic choice about destructuring.
 
-**Why Conjure-JS diverges:** The generated code should accurately represent the user's
+**Why cljam-JS diverges:** The generated code should accurately represent the user's
 intent — "use this default *if* the key is missing." Emitting `if/contains?` makes the
 code generator's output match the construct's meaning, rather than leaking the
 implementation detail of which function was used to produce it.

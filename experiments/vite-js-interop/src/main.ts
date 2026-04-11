@@ -1,5 +1,5 @@
 import { getSession } from 'virtual:clj-session'
-import { printString } from 'conjure-js'
+import { printString } from '@regibyte/cljam'
 // Side-effect imports: load the Clojure namespaces into the session.
 // Dep order matters: utils and format must be loaded before pipeline.
 import './clojure/demo/utils.clj'

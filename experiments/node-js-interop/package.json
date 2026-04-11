@@ -7,6 +7,7 @@
     "start": "bun run main.ts"
   },
   "dependencies": {
-    "conjure-js": "file:../../packages/conjure-js"
+    "@regibyte/cljam": "file:../../packages/cljam",
+    "@regibyte/cljam-date": "file:../../packages/cljam-date"
   }
 }
