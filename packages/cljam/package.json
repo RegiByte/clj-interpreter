@@ -1,7 +1,7 @@
 {
   "name": "@regibyte/cljam",
   "private": false,
-  "version": "0.0.16",
+  "version": "0.0.17",
   "type": "module",
   "repository": {
     "type": "git",
@@ -10,6 +10,9 @@
   "author": "Regibyte",
   "homepage": "https://github.com/RegiByte/cljam",
   "license": "MIT",
+  "bin": {
+    "cljam": "./scripts/cljam-bin.mjs"
+  },
   "exports": {
     ".": "./src/core/index.ts",
     "./nrepl": "./src/bin/nrepl.ts",
@@ -24,6 +27,7 @@
     "src/**/*.ts",
     "src/**/*.clj",
     "scripts/gen-library-sources.mjs",
+    "scripts/cljam-bin.mjs",
     "!src/**/__tests__/**",
     "!src/**/*.spec.ts",
     "!src/**/*.test.ts",

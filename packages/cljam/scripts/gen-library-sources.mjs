@@ -2,11 +2,13 @@
 /**
  * gen-library-sources.mjs — generate a TypeScript sources map from a directory of .clj files.
  *
- * Usage (from a library package root):
- *   node ../cljam/scripts/gen-library-sources.mjs <sourceRoot> <outputFile>
+ * Callable as a module:
+ *   import { genLibrarySources } from '@regibyte/cljam/scripts/gen-library-sources'
+ *   await genLibrarySources('src/clojure', 'src/generated/sources.ts')
  *
- * Example:
- *   node ../cljam/scripts/gen-library-sources.mjs src/clojure src/generated/sources.ts
+ * Or invoked directly:
+ *   node node_modules/@regibyte/cljam/scripts/gen-library-sources.mjs <sourceRoot> <outputFile>
+ *   cljam gen-lib-source <sourceRoot> <outputFile>
  *
  * Each .clj file must begin with an (ns <namespace-name> ...) declaration.
  * The output is a TypeScript module exporting a `sources` Record<string, string>.
@@ -17,16 +19,7 @@
 
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
-
-const [, , sourceRootArg, outputFileArg] = process.argv
-if (!sourceRootArg || !outputFileArg) {
-  console.error('Usage: gen-library-sources.mjs <sourceRoot> <outputFile>')
-  process.exit(1)
-}
-
-const cwd = process.cwd()
-const sourceRoot = resolve(cwd, sourceRootArg)
-const outputFile = resolve(cwd, outputFileArg)
+import { fileURLToPath } from 'node:url'
 
 function collectCljFiles(dir) {
   const files = []
@@ -66,43 +59,65 @@ function writeIfChanged(path, content) {
   return true
 }
 
-// Collect all .clj files and parse their namespaces
-const entries = []
-for (const filePath of collectCljFiles(sourceRoot)) {
-  const source = readFileSync(filePath, 'utf-8')
-  const nsName = extractNsName(source)
-  if (!nsName) {
-    console.warn(`Warning: no (ns ...) found in ${filePath}, skipping.`)
-    continue
+/**
+ * Generate a TypeScript sources map from a directory of .clj files.
+ *
+ * @param {string} sourceRootArg - Path to the directory containing .clj files (relative to cwd or absolute)
+ * @param {string} outputFileArg - Path to the output .ts file (relative to cwd or absolute)
+ */
+export function genLibrarySources(sourceRootArg, outputFileArg) {
+  const cwd = process.cwd()
+  const sourceRoot = resolve(cwd, sourceRootArg)
+  const outputFile = resolve(cwd, outputFileArg)
+
+  const entries = []
+  for (const filePath of collectCljFiles(sourceRoot)) {
+    const source = readFileSync(filePath, 'utf-8')
+    const nsName = extractNsName(source)
+    if (!nsName) {
+      console.warn(`Warning: no (ns ...) found in ${filePath}, skipping.`)
+      continue
+    }
+    entries.push({ nsName, source })
   }
-  entries.push({ nsName, source })
+
+  entries.sort((a, b) => a.nsName.localeCompare(b.nsName))
+
+  const mapEntries = entries.map(({ nsName, source }) => {
+    const escaped = escapeForTemplateLiteral(source)
+    return `  '${nsName}': \`${escaped}\`,`
+  })
+
+  const relativeSourceRoot = sourceRootArg.replace(/\\/g, '/')
+  const output = [
+    '// Auto-generated from ' + relativeSourceRoot + ' — do not edit directly.',
+    '// Re-generate with: npm run gen:sources',
+    '',
+    'export const sources: Record<string, string> = {',
+    ...mapEntries,
+    '}',
+    '',
+  ].join('\n')
+
+  mkdirSync(dirname(outputFile), { recursive: true })
+
+  const changed = writeIfChanged(outputFile, output)
+  if (changed) {
+    console.log(`Generated ${outputFile} (${entries.length} namespace(s)).`)
+  } else {
+    console.log(`${outputFile} is up to date (${entries.length} namespace(s)).`)
+  }
 }
 
-entries.sort((a, b) => a.nsName.localeCompare(b.nsName))
+// Run directly when invoked as a script
+const __filename = fileURLToPath(import.meta.url)
+const isMain = process.argv[1] === __filename || process.argv[1]?.endsWith('gen-library-sources.mjs')
 
-// Build the output TypeScript file
-const mapEntries = entries.map(({ nsName, source }) => {
-  const escaped = escapeForTemplateLiteral(source)
-  return `  '${nsName}': \`${escaped}\`,`
-})
-
-const relativeSourceRoot = sourceRootArg.replace(/\\/g, '/')
-const output = [
-  '// Auto-generated from ' + relativeSourceRoot + ' — do not edit directly.',
-  '// Re-generate with: npm run gen:sources',
-  '',
-  'export const sources: Record<string, string> = {',
-  ...mapEntries,
-  '}',
-  '',
-].join('\n')
-
-// Ensure the output directory exists
-mkdirSync(dirname(outputFile), { recursive: true })
-
-const changed = writeIfChanged(outputFile, output)
-if (changed) {
-  console.log(`Generated ${outputFile} (${entries.length} namespace(s)).`)
-} else {
-  console.log(`${outputFile} is up to date (${entries.length} namespace(s)).`)
+if (isMain) {
+  const [, , sourceRootArg, outputFileArg] = process.argv
+  if (!sourceRootArg || !outputFileArg) {
+    console.error('Usage: gen-library-sources.mjs <sourceRoot> <outputFile>')
+    process.exit(1)
+  }
+  genLibrarySources(sourceRootArg, outputFileArg)
 }

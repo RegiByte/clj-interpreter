@@ -193,6 +193,51 @@ Call any JavaScript value from Clojure using the `js/` namespace:
 
 ***
 
+## Building Libraries
+
+A cljam library is a TypeScript package that provides a `CljamLibrary` manifest containing Clojure namespaces and/or native runtime modules. The `cljam gen-lib-source` command generates the TypeScript sources map from your `.clj` files.
+
+### Quickstart
+
+```bash
+# devDependency in your library package
+npm install --save-dev @regibyte/cljam
+```
+
+```json
+// package.json
+{
+  "scripts": {
+    "gen:sources": "cljam gen-lib-source src/clojure src/generated/sources.ts",
+    "prepublishOnly": "npm run gen:sources"
+  }
+}
+```
+
+```typescript
+// conjure.ts — the library manifest
+import type { CljamLibrary } from '@regibyte/cljam'
+import { sources } from './src/generated/sources'
+
+export const library: CljamLibrary = {
+  id: 'my-lib',
+  sources,
+}
+```
+
+```clojure
+;; src/clojure/my-lib/core.clj
+(ns my-lib.core)
+
+(defn greet [name] (str "Hello, " name "!"))
+```
+
+Run `npm run gen:sources` to regenerate `sources.ts` whenever you edit `.clj` files. The generated file is checked in — it only rewrites when content changes, so diffs stay clean.
+
+For libraries with native TypeScript modules (wrapping JS APIs), see `@regibyte/cljam-date` as a reference implementation.
+
+***
+
 ## Key Differences from JVM Clojure
 
 | JVM Clojure | cljam |

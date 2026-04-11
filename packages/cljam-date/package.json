@@ -1,6 +1,6 @@
 {
   "name": "@regibyte/cljam-date",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": false,
   "type": "module",
   "description": "Date handling library for cljam",
@@ -36,7 +36,7 @@
   },
   "scripts": {
     "test": "vitest run",
-    "gen:sources": "node ../cljam/scripts/gen-library-sources.mjs src/clojure src/generated/sources.ts",
+    "gen:sources": "cljam gen-lib-source src/clojure src/generated/sources.ts",
     "prepublishOnly": "npm run gen:sources"
   }
 }
