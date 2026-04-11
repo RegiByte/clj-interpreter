@@ -21,6 +21,7 @@ import { utilFunctions } from './stdlib/utils'
 import { lazyFunctions } from './stdlib/lazy'
 import { varFunctions } from './stdlib/vars'
 import { multimethodFunctions } from './stdlib/multimethods'
+import { protocolFunctions } from './stdlib/protocols'
 // --- ASYNC (experimental) ---
 import { asyncFunctions } from './stdlib/async-fns'
 import { printFunctions, printVars } from './stdlib/print'
@@ -85,6 +86,7 @@ const nativeFunctions = {
   ...utilFunctions,
   ...varFunctions,
   ...multimethodFunctions,
+  ...protocolFunctions,
   ...lazyFunctions,
   ...printFunctions,
   // --- ASYNC (experimental) ---

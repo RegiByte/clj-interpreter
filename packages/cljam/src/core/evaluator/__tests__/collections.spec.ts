@@ -326,7 +326,7 @@ describe('cons', () => {
     ['(cons 1 1)', 'cons expects a collection as second argument, got 1'],
     [
       '(cons 1 {:a 2})',
-      'cons on maps and sets is not supported, use vectors instead',
+      'cons on maps, sets, and records is not supported, use vectors instead',
     ],
   ])(
     'cons should throw on invalid arguments: %s should be %s',
@@ -907,8 +907,8 @@ describe('contains?', () => {
   })
 
   it.each([
-    ['(contains? "hello" 0)', "contains? expects a map, set, vector, or nil, got"],
-    ['(contains? 42 0)', "contains? expects a map, set, vector, or nil, got"],
+    ['(contains? "hello" 0)', "contains? expects a map, record, set, vector, or nil, got"],
+    ['(contains? 42 0)', "contains? expects a map, record, set, vector, or nil, got"],
   ])(
     'should throw on invalid contains? arguments: %s → "%s"',
     (code, expected) => {

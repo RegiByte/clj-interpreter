@@ -98,6 +98,21 @@ export const mapsSetsFunctions: Record<string, CljValue> = {
           }
           return v.vector(newValues)
         }
+        // Records: treat like a plain map for assoc (returns plain map or same record)
+        if (is.record(collection)) {
+          const newEntries: [CljValue, CljValue][] = [...collection.fields]
+          for (let i = 0; i < args.length; i += 2) {
+            const key = args[i]
+            const value = args[i + 1]
+            const entryIdx = newEntries.findIndex(([k]) => is.equal(k, key))
+            if (entryIdx === -1) {
+              newEntries.push([key, value])
+            } else {
+              newEntries[entryIdx] = [key, value]
+            }
+          }
+          return v.map(newEntries)
+        }
         if (is.map(collection)) {
           const newEntries: [CljValue, CljValue][] = [...collection.entries]
           // need to find the entry with the same key and replace it, if it doesn't exist, add it
@@ -177,6 +192,16 @@ export const mapsSetsFunctions: Record<string, CljValue> = {
           }
           return v.vector(newValues)
         }
+        // Records: dissoc always returns a plain map
+        if (is.record(collection)) {
+          const newEntries: [CljValue, CljValue][] = [...collection.fields]
+          for (let i = 0; i < args.length; i += 1) {
+            const key = args[i]
+            const entryIdx = newEntries.findIndex(([k]) => is.equal(k, key))
+            if (entryIdx !== -1) newEntries.splice(entryIdx, 1)
+          }
+          return v.map(newEntries)
+        }
         if (is.map(collection)) {
           if (collection.entries.length === 0) {
             return collection // return the empty map
@@ -237,37 +262,31 @@ export const mapsSetsFunctions: Record<string, CljValue> = {
 
   keys: v
     .nativeFn('keys', function keysImpl(m: CljValue) {
-      if (m === undefined || !is.map(m)) {
+      if (m === undefined || (!is.map(m) && !is.record(m))) {
         throw EvaluationError.atArg(
-          `keys expects a map${m !== undefined ? `, got ${printString(m)}` : ''}`,
+          `keys expects a map or record${m !== undefined ? `, got ${printString(m)}` : ''}`,
           { m },
           0
         )
       }
-      return v.vector(
-        m.entries.map(function extractKey([k]) {
-          return k
-        })
-      )
+      const entries = is.record(m) ? m.fields : m.entries
+      return v.vector(entries.map(function extractKey([k]) { return k }))
     })
-    .doc('Returns a vector of the keys of the given map.', [['m']]),
+    .doc('Returns a vector of the keys of the given map or record.', [['m']]),
 
   vals: v
     .nativeFn('vals', function valsImpl(m: CljValue) {
-      if (m === undefined || !is.map(m)) {
+      if (m === undefined || (!is.map(m) && !is.record(m))) {
         throw EvaluationError.atArg(
-          `vals expects a map${m !== undefined ? `, got ${printString(m)}` : ''}`,
+          `vals expects a map or record${m !== undefined ? `, got ${printString(m)}` : ''}`,
           { m },
           0
         )
       }
-      return v.vector(
-        m.entries.map(function extractVal([, v]) {
-          return v
-        })
-      )
+      const entries = is.record(m) ? m.fields : m.entries
+      return v.vector(entries.map(function extractVal([, val]) { return val }))
     })
-    .doc('Returns a vector of the values of the given map.', [['m']]),
+    .doc('Returns a vector of the values of the given map or record.', [['m']]),
 
   'hash-set': v
     .nativeFn('hash-set', function hashSetImpl(...args: CljValue[]) {

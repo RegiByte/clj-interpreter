@@ -247,6 +247,14 @@ function printStringImpl(value: CljValue, depth: number): string {
     }
     case valueKeywords.namespace:
       return `#namespace[${value.name}]`
+    case valueKeywords.protocol:
+      return `#protocol[${value.ns}/${value.name}]`
+    case valueKeywords.record: {
+      const entries = value.fields
+        .map(([k, v]) => `${printString(k, depth + 1)} ${printString(v, depth + 1)}`)
+        .join(' ')
+      return `#${value.recordType}{${entries}}`
+    }
     // --- ASYNC (experimental) ---
     case 'pending':
       if (value.resolved && value.resolvedValue !== undefined)

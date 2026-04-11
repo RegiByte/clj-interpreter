@@ -15,7 +15,9 @@ import {
   type CljNativeFunction,
   type CljNumber,
   type CljPending,
+  type CljProtocol,
   type CljReduced,
+  type CljRecord,
   type CljRegex,
   type CljSet,
   type CljString,
@@ -71,6 +73,7 @@ export const isCallable = (value: CljValue): boolean =>
   isAFunction(value) ||
   isKeyword(value) ||
   isMap(value) ||
+  isRecord(value) ||
   isSet(value) ||
   isVar(value) ||
   (isJsValue(value) && typeof value.value === 'function')
@@ -95,11 +98,16 @@ export const isCons = (value: CljValue): value is CljCons =>
   value.kind === 'cons'
 export const isNamespace = (value: CljValue): value is CljNamespace =>
   value.kind === 'namespace'
+export const isProtocol = (value: CljValue): value is CljProtocol =>
+  value.kind === 'protocol'
+export const isRecord = (value: CljValue): value is CljRecord =>
+  value.kind === 'record'
 export const isCollection = (
   value: CljValue
-): value is CljList | CljVector | CljMap | CljSet | CljCons =>
+): value is CljList | CljVector | CljMap | CljRecord | CljSet | CljCons =>
   isVector(value) ||
   isMap(value) ||
+  isRecord(value) ||
   isList(value) ||
   isSet(value) ||
   isCons(value)
@@ -110,6 +118,7 @@ export const isSeqable = (
   | CljList
   | CljVector
   | CljMap
+  | CljRecord
   | CljSet
   | CljString
   | CljLazySeq
@@ -198,6 +207,16 @@ const equalityHandlers = {
   [valueKeywords.cons]: (a: CljCons, b: CljCons) =>
     isEqual(a.head, b.head) && isEqual(a.tail, b.tail),
   [valueKeywords.namespace]: (a: CljNamespace, b: CljNamespace) => a === b,
+  // Records are equal when they share the same qualified type and identical field values.
+  [valueKeywords.record]: (a: CljRecord, b: CljRecord) => {
+    if (a.ns !== b.ns || a.recordType !== b.recordType) return false
+    if (a.fields.length !== b.fields.length) return false
+    // Field order is canonical (set by the constructor) — compare positionally.
+    return a.fields.every(([k, av], i) => {
+      const [bk, bv] = b.fields[i]
+      return isEqual(k, bk) && isEqual(av, bv)
+    })
+  },
 }
 
 export const isString = (value: CljValue): value is CljString =>
@@ -245,6 +264,8 @@ export const is = {
   lazySeq: isLazySeq,
   cons: isCons,
   namespace: isNamespace,
+  protocol: isProtocol,
+  record: isRecord,
   collection: isCollection,
   seqable: isSeqable,
   cljValue: isCljValue,

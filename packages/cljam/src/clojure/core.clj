@@ -1601,3 +1601,184 @@
      (binding [*err* (fn [s#] (swap! buf# str s#))]
        ~@body)
      @buf#))
+
+;; ---------------------------------------------------------------------------
+;; Protocols and Records
+;; ---------------------------------------------------------------------------
+
+;; Maps Clojure type name symbols to cljam kind strings.
+;; Used by extend-protocol and extend-type to compute type tags at macro time.
+(def ^:private TYPE-NAME-MAP
+  {'nil        "nil"
+   'String     "string"
+   'Number     "number"
+   'Boolean    "boolean"
+   'Keyword    "keyword"
+   'Symbol     "symbol"
+   'List       "list"
+   'Vector     "vector"
+   'Map        "map"
+   'Set        "set"
+   'Function   "function"
+   'NativeFunction "native-function"
+   'Atom       "atom"
+   'LazySeq    "lazy-seq"
+   'Cons       "cons"
+   'Regex      "regex"
+   'Var        "var"
+   'JsValue    "js-value"})
+
+(defn- resolve-type-tag
+  "Returns the type-tag string for a type symbol.
+  Built-in types map to their kind string (e.g. String → 'string').
+  Unknown symbols are treated as record types in the current namespace
+  (e.g. Circle → 'user/Circle')."
+  [type-sym]
+  (or (get TYPE-NAME-MAP type-sym)
+      (str (name (ns-name *ns*)) "/" (name type-sym))))
+
+(defn- parse-method-def
+  "Parses a single protocol method form (name [& params] doc?) into a
+  [name-str arglists doc-str?] triple for make-protocol!."
+  [form]
+  (let [method-name (first form)
+        args        (second form)
+        doc         (when (string? (nth form 2 nil)) (nth form 2 nil))]
+    [(str method-name) [(mapv str args)] doc]))
+
+(defmacro defprotocol
+  "Defines a named protocol. Creates a protocol var and one dispatch
+  function var per method in the current namespace.
+
+  (defprotocol IShape
+    \"doc\"
+    (area [this] \"Compute area.\")
+    (perimeter [this] \"Compute perimeter.\"))"
+  [name & specs]
+  (let [doc        (when (string? (first specs)) (first specs))
+        methods    (if doc (rest specs) specs)
+        method-defs (mapv parse-method-def methods)]
+    `(make-protocol! ~(str name) ~doc ~method-defs)))
+
+(defn- parse-impl-block
+  "Given a flat sequence of (method-name [args] body...) forms, returns a
+  code form (hash-map ...) that evaluates to method-name-string → fn."
+  [method-forms]
+  (let [pairs (mapcat (fn [form]
+                        (let [method-name (first form)
+                              params      (second form)
+                              body        (rest (rest form))]
+                          [(str method-name) `(fn ~params ~@body)]))
+                      method-forms)]
+    `(hash-map ~@pairs)))
+
+(defn- group-by-type
+  "Partitions a flat extend-protocol body into [[type-sym [method ...]] ...].
+  Type symbols and nil (non-list forms) delimit groups."
+  [specs]
+  (let [no-type :__no-type__]
+    (loop [remaining specs
+           current-type no-type
+           current-methods []
+           result []]
+      (if (empty? remaining)
+        (if (not= current-type no-type)
+          (conj result [current-type current-methods])
+          result)
+        (let [form (first remaining)]
+          (if (or (symbol? form) (nil? form))
+            ;; New type block (symbol or nil)
+            (recur (rest remaining)
+                   form
+                   []
+                   (if (not= current-type no-type)
+                     (conj result [current-type current-methods])
+                     result))
+            ;; Method form — add to current block
+            (recur (rest remaining)
+                   current-type
+                   (conj current-methods form)
+                   result)))))))
+
+(defmacro extend-protocol
+  "Extends a protocol to one or more types.
+
+  (extend-protocol IShape
+    nil
+    (area [_] 0)
+    String
+    (area [s] (count s)))"
+  [proto-sym & specs]
+  (let [groups (group-by-type specs)]
+    `(do
+       ~@(map (fn [[type-sym method-forms]]
+                (let [type-tag  (resolve-type-tag type-sym)
+                      impl-map  (parse-impl-block method-forms)]
+                  `(extend-protocol! ~proto-sym ~type-tag ~impl-map)))
+              groups))))
+
+(defmacro extend-type
+  "Extends a type to implement one or more protocols.
+
+  (extend-type Circle
+    IShape
+    (area [this] ...)
+    ISerializable
+    (to-json [this] ...))"
+  [type-sym & specs]
+  (let [type-tag (resolve-type-tag type-sym)
+        groups   (group-by-type specs)]
+    `(do
+       ~@(map (fn [[proto-sym method-forms]]
+                (let [impl-map (parse-impl-block method-forms)]
+                  `(extend-protocol! ~proto-sym ~type-tag ~impl-map)))
+              groups))))
+
+(defn- bind-fields
+  "Wraps a method body in a let that binds each field name to (:field this).
+  (bind-fields '[radius] 'this '[(* radius radius)])
+   => (let [radius (:radius this)] (* radius radius))"
+  [fields this-sym body]
+  (let [bindings (vec (mapcat (fn [f] [f `(~(keyword (name f)) ~this-sym)]) fields))]
+    `(let ~bindings ~@body)))
+
+(defmacro defrecord
+  "Defines a record type: a named, typed persistent map.
+  Creates ->Name (positional) and map->Name (map-based) constructors.
+  Optionally implements protocols inline.
+
+  (defrecord Circle [radius]
+    IShape
+    (area [this] (* js/Math.PI radius radius)))"
+  [type-name fields & specs]
+  (let [ns-str           (str (ns-name *ns*))
+        type-str         (str type-name)
+        constructor      (symbol (str "->" type-name))
+        map-constructor  (symbol (str "map->" type-name))
+        field-keys       (mapv (fn [f] (keyword (name f))) fields)
+        field-map-pairs  (vec (mapcat (fn [f] [(keyword (name f)) f]) fields))
+        groups           (when (seq specs) (group-by-type specs))
+        type-tag         (str ns-str "/" type-str)
+        extend-calls     (map (fn [[proto-sym method-forms]]
+                                (let [impl-map
+                                      (let [pairs (mapcat (fn [form]
+                                                            (let [mname  (first form)
+                                                                  params (second form)
+                                                                  this   (first params)
+                                                                  rest-p (vec (rest params))
+                                                                  body   (rest (rest form))
+                                                                  bound  (bind-fields fields this body)]
+                                                              [(str mname)
+                                                               `(fn ~(vec (cons this rest-p)) ~bound)]))
+                                                          method-forms)]
+                                        `(hash-map ~@pairs))]
+                                  `(extend-protocol! ~proto-sym ~type-tag ~impl-map)))
+                              groups)]
+    `(do
+       (defn ~constructor ~fields
+         (make-record! ~type-str ~ns-str (hash-map ~@field-map-pairs)))
+       (defn ~map-constructor [m#]
+         (make-record! ~type-str ~ns-str (select-keys m# ~field-keys)))
+       ~@extend-calls)))
+
+; reify — deferred to Phase B

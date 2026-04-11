@@ -101,6 +101,14 @@ export function valueToString(value: CljValue): string {
     }
     case valueKeywords.namespace:
       return `#namespace[${value.name}]`
+    case valueKeywords.protocol:
+      return `#protocol[${value.ns}/${value.name}]`
+    case valueKeywords.record: {
+      const entries = value.fields
+        .map(([k, val]) => `${valueToString(k)} ${valueToString(val)}`)
+        .join(' ')
+      return `#${value.recordType}{${entries}}`
+    }
     case 'pending':
       if (value.resolved && value.resolvedValue !== undefined)
         return `#<Pending @${valueToString(value.resolvedValue)}>`
@@ -150,6 +158,9 @@ export const toSeq = (collection: CljValue): CljValue[] => {
   }
   if (is.map(collection)) {
     return collection.entries.map(([key, value]) => v.vector([key, value]))
+  }
+  if (is.record(collection)) {
+    return collection.fields.map(([key, value]) => v.vector([key, value]))
   }
   if (is.set(collection)) {
     return collection.values
