@@ -58,6 +58,9 @@ export const valueKeywords = {
   namespace: 'namespace',
   // Boxed JS values, Interop containers
   jsValue: 'js-value',
+  // Polymorphism
+  protocol: 'protocol',
+  record: 'record',
 } as const
 /** Tokens */
 export const tokenKeywords = {

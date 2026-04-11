@@ -230,9 +230,9 @@ export const seqFunctions: Record<string, CljValue> = {
           1
         )
       }
-      if (is.map(xs) || is.set(xs)) {
+      if (is.map(xs) || is.set(xs) || is.record(xs)) {
         throw EvaluationError.atArg(
-          'cons on maps and sets is not supported, use vectors instead',
+          'cons on maps, sets, and records is not supported, use vectors instead',
           { xs },
           1
         )
@@ -260,6 +260,12 @@ export const seqFunctions: Record<string, CljValue> = {
               if (is.equal(k, key)) {
                 return v
               }
+            }
+            return defaultValue
+          }
+          case valueKeywords.record: {
+            for (const [k, val] of target.fields) {
+              if (is.equal(k, key)) return val
             }
             return defaultValue
           }
@@ -422,6 +428,9 @@ export const seqFunctions: Record<string, CljValue> = {
             })
           )
         }
+        if (is.record(coll)) {
+          return v.boolean(coll.fields.some(([k]) => is.equal(k, key)))
+        }
         if (is.vector(coll)) {
           if (key.kind !== 'number') return v.boolean(false)
           return v.boolean(key.value >= 0 && key.value < coll.value.length)
@@ -430,7 +439,7 @@ export const seqFunctions: Record<string, CljValue> = {
           return v.boolean(coll.values.some((v) => is.equal(v, key)))
         }
         throw EvaluationError.atArg(
-          `contains? expects a map, set, vector, or nil, got ${printString(coll)}`,
+          `contains? expects a map, record, set, vector, or nil, got ${printString(coll)}`,
           { coll },
           0
         )
@@ -559,6 +568,7 @@ export const seqFunctions: Record<string, CljValue> = {
             valueKeywords.list,
             valueKeywords.vector,
             valueKeywords.map,
+            valueKeywords.record,
             valueKeywords.set,
             valueKeywords.string,
           ] as string[]
@@ -578,6 +588,8 @@ export const seqFunctions: Record<string, CljValue> = {
           return v.number((countable as CljVector).value.length)
         case valueKeywords.map:
           return v.number((countable as CljMap).entries.length)
+        case valueKeywords.record:
+          return v.number(countable.fields.length)
         case valueKeywords.set:
           return v.number((countable as CljSet).values.length)
         case valueKeywords.string:

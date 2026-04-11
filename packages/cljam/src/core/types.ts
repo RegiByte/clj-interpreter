@@ -105,6 +105,31 @@ export type CljMultiMethod = {
   defaultMethod?: CljFunction | CljNativeFunction
 }
 
+export type CljProtocolMethod = {
+  name: string
+  arglists: string[][]
+  doc?: string
+}
+
+export type CljProtocol = {
+  kind: 'protocol'
+  name: string
+  ns: string
+  fns: CljProtocolMethod[]
+  doc?: string
+  /** type-tag → { method-name → implementation } */
+  impls: Map<string, Record<string, CljFunction | CljNativeFunction>>
+  meta?: CljMap
+}
+
+export type CljRecord = {
+  kind: 'record'
+  recordType: string           // unqualified: 'Circle'
+  ns: string                   // defining namespace: 'my.shapes'
+  fields: [CljValue, CljValue][] // same structure as CljMap.entries
+  meta?: CljMap
+}
+
 /**
  * IO channels for a session. stdout is the primary output channel (println,
  * print, pr, prn, pprint, newline). stderr is available for error output.
@@ -133,6 +158,11 @@ export type EvaluationContext = {
    * Wired by the session/runtime after context creation; defaults to no-op null.
    */
   resolveNs: (name: string) => CljNamespace | null
+  /**
+   * Returns all loaded namespaces across the session's registry.
+   * Wired by buildSessionFacade. Use for cross-namespace scanning (e.g. protocol discovery).
+   */
+  allNamespaces: () => CljNamespace[]
   /**
    * IO channels — set by the session in buildSessionFacade.
    * IO native functions (println, print, pr, prn, pprint, newline) read
@@ -235,6 +265,8 @@ export type CljValue =
   | CljNamespace
   | CljPending
   | CljJsValue
+  | CljProtocol
+  | CljRecord
 
 export type Cursor = {
   line: number

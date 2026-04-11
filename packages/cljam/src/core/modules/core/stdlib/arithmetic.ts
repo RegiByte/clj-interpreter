@@ -449,6 +449,19 @@ export const arithmeticFunctions: Record<string, CljValue> = {
     })
     .doc('Returns the absolute value of a.', [['a']]),
 
+  sqrt: v
+    .nativeFn('sqrt', function sqrtImpl(n: CljValue) {
+      if (n === undefined || n.kind !== 'number') {
+        throw EvaluationError.atArg(
+          `sqrt expects a number${n !== undefined ? `, got ${printString(n)}` : ''}`,
+          { n },
+          0
+        )
+      }
+      return v.number(Math.sqrt((n as CljNumber).value))
+    })
+    .doc('Returns the square root of n.', [['n']]),
+
   quot: v
     .nativeFn('quot', function quotImpl(num: CljValue, div: CljValue) {
       if (num === undefined || num.kind !== 'number') {

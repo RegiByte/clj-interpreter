@@ -18,6 +18,9 @@ import type {
   CljNil,
   CljNumber,
   CljPending,
+  CljProtocol,
+  CljProtocolMethod,
+  CljRecord,
   CljReduced,
   CljRegex,
   CljSet,
@@ -164,6 +167,31 @@ export const cljNamespace = (name: string): CljNamespace => ({
 export const cljJsValue = (value: unknown): CljJsValue => ({
   kind: 'js-value',
   value,
+})
+
+export const cljProtocol = (
+  name: string,
+  ns: string,
+  fns: CljProtocolMethod[],
+  doc?: string
+): CljProtocol => ({
+  kind: 'protocol',
+  name,
+  ns,
+  fns,
+  doc,
+  impls: new Map(),
+})
+
+export const cljRecord = (
+  recordType: string,
+  ns: string,
+  fields: [CljValue, CljValue][]
+): CljRecord => ({
+  kind: 'record',
+  recordType,
+  ns,
+  fields,
 })
 
 // --- ASYNC (experimental) ---
@@ -335,4 +363,6 @@ export const v = {
   namespace: cljNamespace,
   pending: cljPending,
   jsValue: cljJsValue,
+  protocol: cljProtocol,
+  record: cljRecord,
 }

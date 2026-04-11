@@ -133,7 +133,23 @@ export function applyCallableWithContext(
       const entry = target.entries.find(([k]) => is.equal(k, fn))
       return entry ? entry[1] : defaultVal
     }
+    if (is.record(target)) {
+      const entry = target.fields.find(([k]) => is.equal(k, fn))
+      return entry ? entry[1] : defaultVal
+    }
     return defaultVal
+  }
+  if (is.record(fn)) {
+    if (args.length === 0) {
+      throw new EvaluationError(
+        'Record used as function requires at least one argument',
+        { fn, args }
+      )
+    }
+    const key = args[0]
+    const defaultVal = args.length > 1 ? args[1] : cljNil()
+    const entry = fn.fields.find(([k]) => is.equal(k, key))
+    return entry ? entry[1] : defaultVal
   }
   if (is.map(fn)) {
     if (args.length === 0) {

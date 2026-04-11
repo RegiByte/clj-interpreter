@@ -155,6 +155,13 @@ function buildSessionFacade(
   // One shared evaluation context for the lifetime of this session.
   const ctx = createEvaluationContext()
   ctx.resolveNs = (name: string) => runtime.getNs(name)
+  ctx.allNamespaces = () => {
+    const namespaces: CljNamespace[] = []
+    for (const env of runtime.registry.values()) {
+      if (env.ns) namespaces.push(env.ns)
+    }
+    return namespaces
+  }
   ctx.io = {
     stdout: options?.output ?? ((text) => console.log(text)),
     stderr: options?.stderr ?? ((text) => console.error(text)),

@@ -40,6 +40,7 @@ export function createEvaluationContext(): EvaluationContext {
     expandAll: (form: CljValue, env: Env) =>
       macroExpandAllWithContext(form, env, ctx),
     resolveNs: (_name: string) => null as null,
+    allNamespaces: () => [],
     // IO defaults — overwritten by buildSessionFacade with session-specific channels.
     io: {
       stdout: (text: string) => console.log(text),

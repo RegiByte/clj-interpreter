@@ -101,14 +101,49 @@ See `docs/core-language.md` for the compilation target. See `docs/compiler-imple
 - [ ] **Phase 9: `def`** — compile top-level var definitions; intern result returned as var object.
 - [ ] **Phase 10: `binding`** — compile dynamic var scoping; push/pop binding stack in compiled closures.
 
-### Level 5 — Pre-release
+### Level 5 — Polymorphism and Discoverability
 
-These are the gates before public release. Work on these after Level 1 + Level 2 are complete and most compiler phases are done.
+Full design in `docs/polymorphism-spec.md`. These features are the next major push after documentation is stable.
+
+**Phase A — Protocols + Records (target: Session 147)**
+- [ ] `CljProtocol`, `CljRecord` types in `types.ts`
+- [ ] `defprotocol`, `extend-protocol`, `extend-type` macros + native backing fns (`make-protocol!`, `extend-protocol!`)
+- [ ] `defrecord` — typed persistent map with inline protocol implementation
+- [ ] `satisfies?`, `protocols`, `extenders` introspection functions
+- [ ] `describe` — returns plain map describing any value (record, protocol, namespace, fn, multimethod)
+
+**Phase B — Printer protocol (target: Session 147–148)**
+- [ ] `IPrintable` bootstrap protocol with native implementations for all built-in types
+- [ ] `defrecord` auto-extends `IPrintable` with default `#RecordType{...}` renderer
+- [ ] `str` routes through `IPrintable/print-str`
+- [ ] Users can override print format per record type
+
+**Phase C — Keyword hierarchy (target: Session 149)**
+- [ ] `make-hierarchy`, `derive`, `underive`, `isa?`, `ancestors`, `descendants`, `parents`
+- [ ] Global `*hierarchy*` atom
+- [ ] Multimethod dispatch checks `isa?` after exact-match failure
+
+### Level 6 — Standard Library Expansion
+
+- [ ] `clojure.test` — `deftest`, `is`, `testing`, `run-tests`. Enables library authors to write tests in cljam.
+- [ ] `clojure.edn` — `edn/read-string`, `edn/pr-str`. Makes cljam data interoperable with JVM Clojure servers.
+- [ ] `clojure.math` — wrap `js/Math`. `PI`, `sin`, `cos`, `floor`, `ceil`, `pow`.
+- [ ] `clojure.data` — `diff` function for change tracking.
+- [ ] `clojure.pprint` — pretty printer for REPL output quality.
+- [ ] `clojure.repl` — `doc`, `dir`, `find-doc` — REPL quality of life.
+
+### Level 7 — New Libraries
+
+- [ ] **`cljam-schema`** — Zod-backed schema validation. `s/string`, `s/number`, `s/object`, `s/enum`, `s/array`. `safe-parse` → `{:ok true/false :value/:issues}`.
+- [ ] **`cljam-ring`** — Ring-style HTTP server around Node's `http` module (Bun-compatible). Async handler model. Compose with `cljam-integrant` — boot/halt server from nREPL.
+
+### Level 8 — Pre-release
+
+These are the gates before public release.
 
 - [ ] **Documentation and integration guides** — clear setup guides for Node, Bun, Deno, browser, Vite. The experiments folder becomes `examples/` with runnable, documented setups.
 - [ ] **Update `compiler-implementation-guide.md`** — add Phase 4b (fn param slots), Phase 6 (qualified symbols), Phase 7 (collection literals) sections.
 - [ ] **Public API review** — verify all exported types + functions are intentional; add JSDoc to public surface.
-- [ ] **Library distribution strategy** — decide how `.clj` libraries ship via npm (see Level 3).
 - [ ] **Self-hosting milestones** — gradually implement more of the evaluator in Clojure itself, using the compiler infrastructure.
 
 ---
@@ -135,10 +170,13 @@ These are the rules that must not be broken as the codebase evolves:
 
 Once the architecture cleanup is complete and the compiler covers the remaining hot-path forms, the project's major effort shifts to:
 
-1. **Documentation and integration guides** — clear setup guides for Node, Bun, Deno, browser, Vite. The experiments folder becomes `examples/` with runnable, documented setups.
-2. **Library distribution** — a path for sharing Clojure namespaces via npm.
-3. **Self-hosting milestones** — gradually implement more of the evaluator in Clojure itself, using the compiler infrastructure.
+1. **Polymorphism** — protocols, records, keyword hierarchy. The extensibility story that serious projects need.
+2. **Discoverability** — `describe`, `protocols`, `extenders`, `IPrintable`. A legible runtime for humans and LLM agents.
+3. **Standard library expansion** — `clojure.test`, `clojure.edn`, `clojure.math`, `clojure.data`, `clojure.pprint`.
+4. **New libraries** — `cljam-schema` (Zod-backed validation), `cljam-ring` (HTTP server composing with cljam-integrant).
+5. **Documentation and integration guides** — clear setup guides for Node, Bun, Deno, browser, Vite.
+6. **MCP server** — give an LLM agent a live cljam session it can explore and evolve. The discoverability layer makes this possible.
 
-The dream: a project where you can write Clojure in any JavaScript environment, share libraries via npm, inject domain capabilities as namespaces, and have a live REPL anywhere — with performance good enough for production use cases.
+The dream: a project where you can write Clojure in any JavaScript environment, share libraries via npm, inject domain capabilities as namespaces, have a live REPL anywhere — and have a runtime legible enough that LLM agents can use it as a first-class programming environment.
 
 **We have already proven this is achievable. The architecture works. The path is clear.**
