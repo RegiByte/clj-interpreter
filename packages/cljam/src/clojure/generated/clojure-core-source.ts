@@ -30,7 +30,7 @@ export const clojure_coreSource = `\
                     (reduce (fn [acc arity] (conj acc (first arity))) [] rest-decl))
         meta-map  (let [m (if doc {:doc doc :arglists arglists} {:arglists arglists})]
                     (if (:private (meta name)) (assoc m :private true) m))]
-    \`(def ~(with-meta name meta-map) (fn ~@rest-decl))))
+    \`(def ~(with-meta name meta-map) (fn ~name ~@rest-decl))))
 
 (defmacro defn-
   "Same as defn, but marks the var as private."
@@ -1605,6 +1605,12 @@ export const clojure_coreSource = `\
        ~@body)
      @buf#))
 
+(defn pprint-str
+  "Returns the pretty-printed string representation of x, optionally
+  limiting line width to max-width (default 80)."
+  ([x] (with-out-str (pprint x)))
+  ([x max-width] (with-out-str (pprint x max-width))))
+
 ;; ---------------------------------------------------------------------------
 ;; Protocols and Records
 ;; ---------------------------------------------------------------------------
@@ -1770,4 +1776,86 @@ export const clojure_coreSource = `\
        ~@extend-calls)))
 
 ; reify — deferred to Phase B
+
+;; ---------------------------------------------------------------------------
+;; describe — introspection for any value
+;; ---------------------------------------------------------------------------
+
+;; ─── Keyword Hierarchy ───────────────────────────────────────────────────────
+
+(defn make-hierarchy
+  "Returns a new, empty hierarchy."
+  []
+  {:parents {} :ancestors {} :descendants {}})
+
+(def ^:dynamic *hierarchy*
+  (make-hierarchy))
+
+(defn parents
+  "Returns the immediate parents of tag in the hierarchy (default: *hierarchy*),
+  or nil if tag has no parents."
+  ([tag]   (hierarchy-parents-global tag))
+  ([h tag] (get (:parents h) tag)))
+
+(defn ancestors
+  "Returns the set of all ancestors of tag in the hierarchy (default: *hierarchy*),
+  or nil if tag has no ancestors."
+  ([tag]   (hierarchy-ancestors-global tag))
+  ([h tag] (get (:ancestors h) tag)))
+
+(defn descendants
+  "Returns the set of all descendants of tag in the hierarchy (default: *hierarchy*),
+  or nil if tag has no descendants."
+  ([tag]   (hierarchy-descendants-global tag))
+  ([h tag] (get (:descendants h) tag)))
+
+(defn isa?
+  "Returns true if child is either identical to parent, or child derives from
+  parent in the given hierarchy (default: *hierarchy*)."
+  ([child parent]   (hierarchy-isa?-global child parent))
+  ([h child parent] (hierarchy-isa?* h child parent)))
+
+(defn derive
+  "Establishes a parent/child relationship between child and parent.
+
+  2-arity: mutates the global *hierarchy* via session-safe native.
+  3-arity: pure — returns a new hierarchy map without side effects."
+  ([child parent]
+   (hierarchy-derive-global! child parent))
+  ([h child parent]
+   (hierarchy-derive* h child parent)))
+
+(defn underive
+  "Removes the parent/child relationship between child and parent.
+
+  2-arity: mutates the global *hierarchy* via session-safe native.
+  3-arity: pure — returns a new hierarchy map without side effects."
+  ([child parent]
+   (hierarchy-underive-global! child parent))
+  ([h child parent]
+   (hierarchy-underive* h child parent)))
+
+;; Maximum number of vars shown in (describe namespace).
+;; Bind to nil for unlimited output: (binding [*describe-limit* nil] (describe ...))
+(def ^:dynamic *describe-limit* 50)
+
+(defn describe
+  "Returns a plain map describing any cljam value.
+
+  Works on protocols, records, functions, namespaces, multimethods,
+  vars, and all primitive types. Output is always a plain Clojure map —
+  composable with get, get-in, filter, and any other map operation.
+
+  For namespaces, the number of vars shown is capped by *describe-limit*
+  (default 50). Bind *describe-limit* to nil for unlimited output.
+
+  Examples:
+    (describe (->Circle 5))        ;; record
+    (describe IShape)              ;; protocol
+    (describe area)                ;; protocol dispatch fn
+    (describe println)             ;; native fn
+    (describe (find-ns 'user))     ;; namespace
+    (describe #'my-fn)             ;; var"
+  ([x] (describe* x *describe-limit*))
+  ([x limit] (describe* x limit)))
 `

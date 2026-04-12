@@ -13,6 +13,7 @@
  * - Phase 6: qualified symbols (ns/sym)
  * - Phase 7: collection literals ([...], {...}, #{...})
  * - Phase 8: try/catch/finally
+ * - Phase 9: binding (dynamic var push/pop)
  *
  * Returns null for unsupported forms (fallback to interpreter).
  * See ./evaluate.ts:evaluateWithContext for the entry point.
@@ -34,7 +35,7 @@ import {
 } from '../types.ts'
 import { getPos } from '../positions.ts'
 import { jsToClj } from '../evaluator/js-interop.ts'
-import { compileFnBody, compileLet, compileLoop, compileRecur } from './binding.ts'
+import { compileBinding, compileFnBody, compileLet, compileLoop, compileRecur } from './binding.ts'
 import { compileCall } from './callable.ts'
 import { compileMap, compileSet, compileVector } from './collections.ts'
 import { findSlot } from './compile-env.ts'
@@ -45,7 +46,7 @@ import { compileDo, compileIf, compileTry } from './control-flow.ts'
  * Ideally external consumers should only use the compile function,
  * not it's children!
  */
-export { compileDo, compileIf, compileLet, compileLoop, compileRecur, compileFnBody, compileTry }
+export { compileBinding, compileDo, compileIf, compileLet, compileLoop, compileRecur, compileFnBody, compileTry }
 
 function compileList(
   node: CljList,
@@ -69,6 +70,8 @@ function compileList(
         return compileRecur(node, compileEnv, compile)
       case specialFormKeywords.try:
         return compileTry(node, compileEnv, compile)
+      case specialFormKeywords.binding:
+        return compileBinding(node, compileEnv, compile)
     }
   }
 

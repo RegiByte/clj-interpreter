@@ -186,11 +186,11 @@ describe('defrecord', () => {
     expect(sess.evaluate('(:color d "unknown")')).toEqual(cljString('unknown'))
   })
 
-  it('record prints as #TypeName{:field val ...}', () => {
+  it('record prints as #ns/TypeName{:field val ...}', () => {
     const sess = s()
     sess.evaluate('(defrecord Circle [radius])')
     const c = sess.evaluate('(->Circle 5)')
-    expect(printString(c)).toBe('#Circle{:radius 5}')
+    expect(printString(c)).toBe('#user/Circle{:radius 5}')
   })
 
   it('record? predicate', () => {
@@ -451,11 +451,12 @@ describe('extenders', () => {
     `)
     const ext = sess.evaluate('(extenders IFoo)')
     expect(ext.kind).toBe('vector')
-    const tags = (ext as { kind: 'vector'; value: { kind: string; value: string }[] }).value
-      .map((t) => t.value)
-    expect(tags).toContain('string')
-    expect(tags).toContain('number')
-    expect(tags).toContain('nil')
+    // extenders now returns keyword type tags matching (type x) vocabulary
+    const tags = (ext as { kind: 'vector'; value: { kind: string; name: string }[] }).value
+      .map((t) => t.name)
+    expect(tags).toContain(':string')
+    expect(tags).toContain(':number')
+    expect(tags).toContain(':nil')
   })
 
   it('extenders includes record type tags', () => {
@@ -465,9 +466,10 @@ describe('extenders', () => {
       (defrecord MyRec [v] IFoo (foo [this] v))
     `)
     const ext = sess.evaluate('(extenders IFoo)')
-    const tags = (ext as { kind: 'vector'; value: { kind: string; value: string }[] }).value
-      .map((t) => t.value)
-    expect(tags).toContain('user/MyRec')
+    // record type tags are namespaced keywords: :user/MyRec
+    const tags = (ext as { kind: 'vector'; value: { kind: string; name: string }[] }).value
+      .map((t) => t.name)
+    expect(tags).toContain(':user/MyRec')
   })
 })
 

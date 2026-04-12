@@ -86,6 +86,7 @@ export const tokenKeywords = {
   VarQuote: 'VarQuote',
   Meta: 'Meta',
   SetStart: 'SetStart',
+  NsMapPrefix: 'NsMapPrefix',
 } as const
 export const tokenSymbols = {
   Quote: 'quote',

@@ -1,5 +1,5 @@
 import { EvaluationError } from './errors'
-import type { CljCons, CljLazySeq } from './types'
+import type { CljCons, CljKeyword, CljLazySeq } from './types'
 import {
   type CljMultiMethod,
   type CljValue,
@@ -130,6 +130,39 @@ export function printString(value: CljValue, _depth = 0): string {
   return printStringImpl(value, _depth)
 }
 
+// --- Namespace-map helpers ---
+
+/**
+ * If every key in `entries` is a qualified keyword sharing the same namespace,
+ * returns that namespace string. Otherwise returns null.
+ * Used by both the flat printer and pprint to emit #:ns{...} compact form.
+ */
+function getSharedNs(entries: [CljValue, CljValue][]): string | null {
+  if (entries.length === 0) return null
+  let ns: string | null = null
+  for (const [key] of entries) {
+    if (key.kind !== 'keyword') return null
+    const localName = key.name.slice(1) // strip ':'
+    const slashIdx = localName.indexOf('/')
+    if (slashIdx === -1) return null // unqualified keyword — no shared ns
+    const kwNs = localName.slice(0, slashIdx)
+    if (ns === null) ns = kwNs
+    else if (ns !== kwNs) return null
+  }
+  return ns
+}
+
+/**
+ * Prints a qualified keyword in its short form within a #:ns{...} map.
+ * :car/make → :make
+ */
+function printShortKey(key: CljKeyword, depth: number): string {
+  const localName = key.name.slice(1) // strip ':'
+  const slashIdx = localName.indexOf('/')
+  const shortName = slashIdx === -1 ? localName : localName.slice(slashIdx + 1)
+  return printString(v.keyword(`:${shortName}`), depth)
+}
+
 function printStringImpl(value: CljValue, depth: number): string {
   switch (value.kind) {
     case valueKeywords.number:
@@ -190,6 +223,16 @@ function printStringImpl(value: CljValue, depth: number): string {
           : value.entries
       const suffix =
         printLength !== null && value.entries.length > printLength ? ' ...' : ''
+      const sharedNs = getSharedNs(entries)
+      if (sharedNs !== null) {
+        const pairs = entries
+          .map(
+            ([key, v]) =>
+              `${printShortKey(key as CljKeyword, depth + 1)} ${printString(v, depth + 1)}`
+          )
+          .join(' ')
+        return `#:${sharedNs}{${pairs}${suffix}}`
+      }
       return `{${entries.map(([key, v]) => `${printString(key, depth + 1)} ${printString(v, depth + 1)}`).join(' ')}${suffix}}`
     }
     case valueKeywords.function: {
@@ -253,7 +296,7 @@ function printStringImpl(value: CljValue, depth: number): string {
       const entries = value.fields
         .map(([k, v]) => `${printString(k, depth + 1)} ${printString(v, depth + 1)}`)
         .join(' ')
-      return `#${value.recordType}{${entries}}`
+      return `#${value.ns}/${value.recordType}{${entries}}`
     }
     // --- ASYNC (experimental) ---
     case 'pending':
@@ -371,6 +414,8 @@ function pp(value: CljValue, col: number, maxWidth: number): string {
       return ppMap(value.entries, col, maxWidth)
     case valueKeywords.set:
       return ppSet(value.values, col, maxWidth)
+    case valueKeywords.record:
+      return ppRecord(value.fields, value.ns, value.recordType, col, maxWidth)
     case valueKeywords.lazySeq:
     case valueKeywords.cons:
       // Flat representation is already computed above; no deeper pretty-print needed
@@ -378,6 +423,24 @@ function pp(value: CljValue, col: number, maxWidth: number): string {
     default:
       return flat
   }
+}
+
+function ppRecord(
+  fields: [CljValue, CljValue][],
+  ns: string,
+  recordType: string,
+  col: number,
+  maxWidth: number
+): string {
+  if (fields.length === 0) return `#${ns}/${recordType}{}`
+  const prefix = `#${ns}/${recordType}{`
+  const innerCol = col + prefix.length
+  const pairs = fields.map(([k, v], i) => {
+    const kStr = printString(k)
+    const vStr = pp(v, innerCol + kStr.length + 1, maxWidth)
+    return (i === 0 ? '' : sp(innerCol)) + kStr + ' ' + vStr
+  })
+  return prefix + pairs.join('\n') + '}'
 }
 
 function ppList(items: CljValue[], col: number, maxWidth: number): string {
@@ -509,6 +572,18 @@ function ppMap(
   maxWidth: number
 ): string {
   if (entries.length === 0) return '{}'
+  const sharedNs = getSharedNs(entries)
+  if (sharedNs !== null) {
+    // Compact form: #:car{\n :make 1\n :model "foo"}
+    const prefix = `#:${sharedNs}{`
+    const innerCol = col + prefix.length
+    const pairs = entries.map(([k, v], i) => {
+      const kStr = printShortKey(k as CljKeyword, 0)
+      const vStr = pp(v, innerCol + kStr.length + 1, maxWidth)
+      return (i === 0 ? '' : sp(innerCol)) + kStr + ' ' + vStr
+    })
+    return prefix + pairs.join('\n') + '}'
+  }
   const innerCol = col + 1
   const pairs = entries.map(([k, v], i) => {
     const kStr = printString(k)

@@ -640,6 +640,8 @@ function readForm(ctx: ReaderCtx): CljValue {
       return readMeta(ctx)
     case tokenKeywords.Regex:
       return readRegex(ctx)
+    case tokenKeywords.NsMapPrefix:
+      return readNsMap(ctx)
     default:
       throw new ReaderError(
         `Unexpected token: ${getTokenValue(token)} at line ${token.start.line} column ${token.start.col}`,
@@ -647,6 +649,63 @@ function readForm(ctx: ReaderCtx): CljValue {
         { start: token.start.offset, end: token.end.offset }
       )
   }
+}
+
+// Resolves a #:ns{...} prefix string to its canonical namespace name.
+// ':car'   → 'car'           (literal namespace name)
+// '::car'  → aliases['car']  (same alias resolution as ::kw)
+// '::'     → ctx.namespace   (current namespace)
+function resolveNsMapNs(prefix: string, ctx: ReaderCtx, token: Token): string {
+  if (prefix.startsWith('::')) {
+    const alias = prefix.slice(2)
+    if (!alias) return ctx.namespace
+    const resolved = ctx.aliases.get(alias)
+    if (!resolved) {
+      throw new ReaderError(
+        `No namespace alias '${alias}' found for #${prefix}{...}`,
+        token,
+        { start: token.start.offset, end: token.end.offset }
+      )
+    }
+    return resolved
+  }
+  return prefix.slice(1) // strip leading ':'
+}
+
+const readNsMap = (ctx: ReaderCtx): CljValue => {
+  const scanner = ctx.scanner
+  const prefixToken = scanner.peek()
+  if (!prefixToken || prefixToken.kind !== tokenKeywords.NsMapPrefix) {
+    throw new ReaderError('Expected namespace map prefix', scanner.position())
+  }
+  scanner.advance() // consume NsMapPrefix token
+
+  const ns = resolveNsMapNs(prefixToken.value, ctx, prefixToken)
+
+  // Read the following form — must be a map literal {}.
+  const mapForm = readForm(ctx)
+  if (mapForm.kind !== 'map') {
+    throw new ReaderError(
+      `#:${ns}{...} requires a map literal, got ${mapForm.kind}`,
+      prefixToken,
+      { start: prefixToken.start.offset, end: prefixToken.end.offset }
+    )
+  }
+
+  // Qualify all unqualified keyword keys with the resolved namespace.
+  const qualifiedEntries: [CljValue, CljValue][] = mapForm.entries.map(
+    ([key, val]) => {
+      if (key.kind === 'keyword') {
+        const localName = key.name.slice(1) // strip ':'
+        if (!localName.includes('/')) {
+          return [v.keyword(`:${ns}/${localName}`), val] as [CljValue, CljValue]
+        }
+      }
+      return [key, val] as [CljValue, CljValue]
+    }
+  )
+
+  return v.map(qualifiedEntries)
 }
 
 type ReaderCtx = {

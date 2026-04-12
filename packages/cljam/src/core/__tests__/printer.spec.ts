@@ -12,10 +12,12 @@ import {
   cljMap,
   cljFunction,
   cljAtom,
+  cljRecord,
 } from '../factories'
 import { tokenize } from '../tokenizer'
 import { readForms } from '../reader'
 import { makeEnv } from '../env'
+import { createSession } from '../session'
 
 describe('printer', () => {
   it('should print numbers', () => {
@@ -253,4 +255,143 @@ describe('printer', () => {
       expect(printString(parsed[0])).toBe(input)
     }
   )
+
+  describe('record printing', () => {
+    it('includes qualified ns/TypeName in the tag', () => {
+      const rec = cljRecord('Circle', 'user', [
+        [cljKeyword(':radius'), cljNumber(5)],
+      ])
+      expect(printString(rec)).toBe('#user/Circle{:radius 5}')
+    })
+
+    it('uses the actual defining namespace, not user', () => {
+      const rec = cljRecord('Point', 'geometry', [
+        [cljKeyword(':x'), cljNumber(1)],
+        [cljKeyword(':y'), cljNumber(2)],
+      ])
+      expect(printString(rec)).toBe('#geometry/Point{:x 1 :y 2}')
+    })
+
+    it('prints an empty record', () => {
+      const rec = cljRecord('Tag', 'user', [])
+      expect(printString(rec)).toBe('#user/Tag{}')
+    })
+  })
+
+  describe('namespaced map (compact) printing', () => {
+    it('emits #:ns{...} when all keys share the same namespace', () => {
+      const m = cljMap([
+        [cljKeyword(':car/make'), cljString('Toyota')],
+        [cljKeyword(':car/model'), cljString('Camry')],
+        [cljKeyword(':car/year'), cljNumber(2024)],
+      ])
+      expect(printString(m)).toBe('#:car{:make "Toyota" :model "Camry" :year 2024}')
+    })
+
+    it('does NOT compact when keys span multiple namespaces', () => {
+      const m = cljMap([
+        [cljKeyword(':car/make'), cljString('Toyota')],
+        [cljKeyword(':bike/model'), cljString('Trek')],
+      ])
+      expect(printString(m)).toBe('{:car/make "Toyota" :bike/model "Trek"}')
+    })
+
+    it('does NOT compact when any key is unqualified', () => {
+      const m = cljMap([
+        [cljKeyword(':car/make'), cljString('Toyota')],
+        [cljKeyword(':model'), cljString('Camry')],
+      ])
+      expect(printString(m)).toBe('{:car/make "Toyota" :model "Camry"}')
+    })
+
+    it('does NOT compact an empty map', () => {
+      expect(printString(cljMap([]))).toBe('{}')
+    })
+
+    it('round-trips: reader → printer → same compact form', () => {
+      const src = '#:car{:make "Toyota" :model "Camry"}'
+      const parsed = readForms(tokenize(src))[0]
+      expect(printString(parsed)).toBe(src)
+    })
+  })
+
+  describe('pprint — records and ns-maps', () => {
+    function parse(src: string) {
+      return readForms(tokenize(src))[0]
+    }
+
+    it('pretty-prints a record flat when it fits', () => {
+      const rec = cljRecord('Circle', 'user', [
+        [cljKeyword(':radius'), cljNumber(5)],
+      ])
+      expect(prettyPrintString(rec, 80)).toBe('#user/Circle{:radius 5}')
+    })
+
+    it('pretty-prints a record with line breaks when fields overflow', () => {
+      const rec = cljRecord('Vehicle', 'fleet', [
+        [cljKeyword(':make'), cljString('Toyota')],
+        [cljKeyword(':model'), cljString('Camry')],
+        [cljKeyword(':year'), cljNumber(2024)],
+      ])
+      const result = prettyPrintString(rec, 30)
+      expect(result).toContain('\n')
+      expect(result).toMatch(/^#fleet\/Vehicle\{/)
+      expect(result).toContain(':make "Toyota"')
+      expect(result).toContain(':model "Camry"')
+      expect(result).toContain(':year 2024')
+      expect(result).toMatch(/\}$/)
+    })
+
+    it('pretty-prints a ns-map flat when it fits', () => {
+      const result = prettyPrintString(parse('#:car{:make "Toyota" :year 2024}'), 80)
+      expect(result).toBe('#:car{:make "Toyota" :year 2024}')
+    })
+
+    it('pretty-prints a ns-map with line breaks when it overflows', () => {
+      const result = prettyPrintString(
+        parse('#:car{:make "Toyota" :model "Camry" :year 2024}'),
+        30
+      )
+      expect(result).toContain('\n')
+      expect(result).toMatch(/^#:car\{/)
+      expect(result).toContain(':make "Toyota"')
+      expect(result).toContain(':model "Camry"')
+      expect(result).toContain(':year 2024')
+      expect(result).toMatch(/\}$/)
+    })
+  })
+
+  describe('pprint-str', () => {
+    function s() {
+      return createSession()
+    }
+
+    it('returns pretty-printed string with trailing newline', () => {
+      const sess = s()
+      const result = sess.evaluate('(pprint-str {:a 1 :b 2})')
+      expect(result.kind).toBe('string')
+      if (result.kind === 'string') {
+        expect(result.value).toBe('{:a 1 :b 2}\n')
+      }
+    })
+
+    it('accepts explicit width', () => {
+      const sess = s()
+      const result = sess.evaluate('(pprint-str {:name "Alice" :age 30 :city "Wonderland"} 25)')
+      expect(result.kind).toBe('string')
+      if (result.kind === 'string') {
+        expect(result.value).toContain('\n')
+        expect(result.value).toContain(':name "Alice"')
+      }
+    })
+
+    it('works for ns-maps', () => {
+      const sess = s()
+      const result = sess.evaluate('(pprint-str {:car/make "Toyota" :car/model "Camry"})')
+      expect(result.kind).toBe('string')
+      if (result.kind === 'string') {
+        expect(result.value).toBe('#:car{:make "Toyota" :model "Camry"}\n')
+      }
+    })
+  })
 })

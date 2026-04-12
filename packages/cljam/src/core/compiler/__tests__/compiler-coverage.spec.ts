@@ -411,6 +411,97 @@ describe('Compiler Coverage — compiles → non-null', () => {
       expect(() => session().evaluate('(try (throw {:type :uncaught}))')).toThrow()
     })
   })
+  // -------------------------------------------------------------------------
+  // Phase 9 — binding (dynamic var push/pop)
+  //
+  // compileBinding compiles both the init expressions and the body.
+  // At runtime it pushes new values onto each CljVar's bindingStack,
+  // runs the body, then pops all values in a finally block so bindings
+  // are restored even when the body throws.
+  //
+  // Bails if the binding vector is malformed, any LHS is non-symbol,
+  // any RHS cannot be compiled, or the body cannot be compiled.
+  // -------------------------------------------------------------------------
+  describe('Phase 9 — binding', () => {
+    it('(binding [...] ...) compiles to a non-null closure', () => {
+      // With Phase 9, compile() returns a closure instead of null.
+      // This means any fn body containing binding now gets compiledBody set.
+      const s = session()
+      s.evaluate('(def ^:dynamic *x* 0)')
+      expect(compileForm('(binding [*x* 1] *x*)')).not.toBeNull()
+    })
+
+    it('basic: bound value is visible inside body', () => {
+      const s = session()
+      s.evaluate('(def ^:dynamic *x* 0)')
+      expect(s.evaluate('(binding [*x* 42] *x*)')).toEqual(v.number(42))
+    })
+
+    it('binding restores root value after body returns', () => {
+      const s = session()
+      s.evaluate('(def ^:dynamic *x* :root)')
+      s.evaluate('(binding [*x* :bound] nil)')
+      expect(s.evaluate('*x*')).toEqual(v.keyword(':root'))
+    })
+
+    it('binding restores root value even when body throws', () => {
+      const s = session()
+      s.evaluate('(def ^:dynamic *x* :root)')
+      try {
+        s.evaluate('(binding [*x* :bound] (throw {:type :oops}))')
+      } catch { /* expected */ }
+      expect(s.evaluate('*x*')).toEqual(v.keyword(':root'))
+    })
+
+    it('nested bindings: inner shadows outer, both restore', () => {
+      const s = session()
+      s.evaluate('(def ^:dynamic *x* 0)')
+      expect(
+        s.evaluate('(binding [*x* 1] (binding [*x* 2] *x*))')
+      ).toEqual(v.number(2))
+      expect(s.evaluate('*x*')).toEqual(v.number(0))
+    })
+
+    it('multiple vars bound in one form', () => {
+      const s = session()
+      s.evaluate('(def ^:dynamic *a* 0)')
+      s.evaluate('(def ^:dynamic *b* 0)')
+      expect(
+        s.evaluate('(binding [*a* 1 *b* 2] (+ *a* *b*))')
+      ).toEqual(v.number(3))
+      expect(s.evaluate('[*a* *b*]')).toEqual(toCljValue([0, 0]))
+    })
+
+    it('fn body containing binding gets compiledBody set (Phase 9 proof)', () => {
+      // Before Phase 9, any fn* with a binding form in its body could not be
+      // compiled — compiledBody would be undefined. After Phase 9 it is defined.
+      const s = session()
+      s.evaluate('(def ^:dynamic *x* 0)')
+      const fn = s.evaluate('(fn [] (binding [*x* 99] *x*))')
+      expect(fn.kind).toBe('function')
+      if (fn.kind === 'function') {
+        expect(fn.arities[0].compiledBody).toBeDefined()
+      }
+    })
+
+    it('compiled fn calling another compiled fn respects binding from call site', () => {
+      // The key real-world scenario: caller sets up a binding, then calls a
+      // compiled fn whose body reads the dynamic var. derefValue checks bindingStack.
+      const s = session()
+      s.evaluate('(def ^:dynamic *x* :root)')
+      s.evaluate('(defn get-x [] *x*)')
+      expect(s.evaluate('(binding [*x* :bound] (get-x))')).toEqual(v.keyword(':bound'))
+      expect(s.evaluate('*x*')).toEqual(v.keyword(':root'))
+    })
+
+    it('binding inside let inside compiled fn works end-to-end', () => {
+      const s = session()
+      s.evaluate('(def ^:dynamic *factor* 1)')
+      s.evaluate('(defn scale [n] (binding [*factor* 10] (* n *factor*)))')
+      expect(s.evaluate('(scale 5)')).toEqual(v.number(50))
+      expect(s.evaluate('*factor*')).toEqual(v.number(1))
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -518,14 +609,11 @@ describe('Compiler Coverage — bails → null', () => {
   })
 
   // -------------------------------------------------------------------------
-  // Special forms — dynamic vars / mutation
+  // Special forms — mutation (set!)
   // -------------------------------------------------------------------------
-  describe('Special forms — dynamic vars and mutation (binding, set!)', () => {
-    it.each([
-      ['binding', '(binding [*out* nil] :ok)'],
-      ['set!', '(set! x 1)'],
-    ])('%s: %s → null', (_, code) => {
-      expect(compileForm(code)).toBeNull()
+  describe('Special forms — mutation (set!)', () => {
+    it('set!: (set! x 1) → null', () => {
+      expect(compileForm('(set! x 1)')).toBeNull()
     })
   })
 
@@ -656,6 +744,10 @@ describe('Compiler Coverage — bails → null', () => {
       ['loop with uncompilable init', '(loop [i (def x 1)] i)'],
       // loop bails if body bails
       ['loop with uncompilable body', '(loop [i 0] (def x i))'],
+      // binding bails if init bails
+      ['binding with uncompilable init', '(binding [*out* (def x 1)] nil)'],
+      // binding bails if body bails
+      ['binding with uncompilable body', '(binding [*out* nil] (def x 1))'],
     ])('%s: %s → null', (_, code) => {
       expect(compileForm(code)).toBeNull()
     })

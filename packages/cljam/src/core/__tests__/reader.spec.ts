@@ -617,4 +617,69 @@ describe('readString', () => {
       expect(printString(readString(src))).toBe(src)
     }
   })
+
+  describe('#:ns{...} namespaced map literals', () => {
+    function read(src: string, ns = 'user', aliases: Map<string, string> = new Map()) {
+      return readForms(tokenize(src), ns, aliases)[0]
+    }
+
+    it('qualifies unqualified keys with the explicit namespace', () => {
+      expect(read('#:car{:make 1 :model "Toyota"}')).toEqual(
+        cljMap([
+          [cljKeyword(':car/make'), cljNumber(1)],
+          [cljKeyword(':car/model'), cljString('Toyota')],
+        ])
+      )
+    })
+
+    it('leaves already-qualified keys untouched', () => {
+      expect(read('#:car{:car/make 1 :model "Toyota"}')).toEqual(
+        cljMap([
+          [cljKeyword(':car/make'), cljNumber(1)],
+          [cljKeyword(':car/model'), cljString('Toyota')],
+        ])
+      )
+    })
+
+    it('#:: qualifies with current namespace', () => {
+      expect(read('#::{:name "foo" :age 30}', 'my.domain')).toEqual(
+        cljMap([
+          [cljKeyword(':my.domain/name'), cljString('foo')],
+          [cljKeyword(':my.domain/age'), cljNumber(30)],
+        ])
+      )
+    })
+
+    it('#::alias qualifies with resolved alias', () => {
+      const aliases = new Map([['car', 'vehicles.car']])
+      expect(read('#::car{:make 1 :model "foo"}', 'user', aliases)).toEqual(
+        cljMap([
+          [cljKeyword(':vehicles.car/make'), cljNumber(1)],
+          [cljKeyword(':vehicles.car/model'), cljString('foo')],
+        ])
+      )
+    })
+
+    it('handles an empty map', () => {
+      expect(read('#:car{}')).toEqual(cljMap([]))
+    })
+
+    it('handles non-keyword values including nested maps', () => {
+      expect(read('#:car{:make "Toyota" :year 2024}')).toEqual(
+        cljMap([
+          [cljKeyword(':car/make'), cljString('Toyota')],
+          [cljKeyword(':car/year'), cljNumber(2024)],
+        ])
+      )
+    })
+
+    it('throws on unknown alias', () => {
+      expect(() => read('#::unknown{:name "foo"}')).toThrow(/No namespace alias/)
+    })
+
+    it('round-trips with printString', () => {
+      const form = read('#:car{:make 1 :model "Toyota"}')
+      expect(printString(form)).toBe('#:car{:make 1 :model "Toyota"}')
+    })
+  })
 })

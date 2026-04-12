@@ -307,6 +307,12 @@ function parseDispatch(ctx: TokenizationContext): Token {
     scanner.advance() // consume '{'
     return { kind: tokenKeywords.SetStart, start, end: scanner.position() }
   }
+  if (next === ':') {
+    // #:ns{...} or #::alias{...} or #::{...} — namespaced map literal.
+    // Consume the prefix (everything from ':' up to but not including '{').
+    const prefix = scanner.consumeWhile((c) => c !== '{' && c !== ' ' && c !== '\n' && c !== '\t' && c !== ',')
+    return { kind: tokenKeywords.NsMapPrefix, value: prefix, start, end: scanner.position() }
+  }
   throw new TokenizerError(
     `Unknown dispatch character: #${next ?? 'EOF'}`,
     start

@@ -366,6 +366,10 @@ export type TokenMeta = {
 export type TokenSetStart = {
   kind: 'SetStart'
 }
+export type TokenNsMapPrefix = {
+  kind: 'NsMapPrefix'
+  value: string // raw prefix: ':car', '::car', or '::'
+}
 export type Token = (
   | TokenLParen
   | TokenRParen
@@ -389,6 +393,7 @@ export type Token = (
   | TokenVarQuote
   | TokenMeta
   | TokenSetStart
+  | TokenNsMapPrefix
 ) & { start: Cursor; end: Cursor }
 
 /** Compiler */

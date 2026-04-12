@@ -1,10 +1,13 @@
 import { is } from '../assertions.ts'
+import { lookupVar } from '../env.ts'
+import { EvaluationError } from '../errors.ts'
 import { assertRecurInTailPosition } from '../evaluator/recur-check.ts'
 import { v } from '../factories.ts'
 import type {
   CljList,
   CljSymbol,
   CljValue,
+  CljVar,
   CompiledExpr,
   CompileEnv,
   CompileFn,
@@ -161,6 +164,70 @@ export function compileRecur(
     recurTarget.args = newArgs
     // return value ignored, loop checks recurTarget.args
     return v.nil()
+  }
+}
+
+/**
+ * Compiles a (binding [*var* val ...] body...) form.
+ *
+ * At compile time: validates the binding vector shape and compiles all
+ * init expressions and the body. Bails (returns null) if any sub-form
+ * cannot be compiled.
+ *
+ * At runtime: evaluates each init, pushes the result onto the dynamic
+ * var's bindingStack, executes the body, then pops all pushed values in
+ * a finally block so bindings are restored even when the body throws.
+ */
+export function compileBinding(
+  node: CljList,
+  compileEnv: CompileEnv | null,
+  compile: CompileFn
+): CompiledExpr | null {
+  const bindings = node.value[1]
+  if (!is.vector(bindings) || bindings.value.length % 2 !== 0) return null
+
+  // Collect (varName, compiledInit) pairs — bail if any RHS can't compile
+  const pairs: Array<[string, CompiledExpr]> = []
+  for (let i = 0; i < bindings.value.length; i += 2) {
+    const sym = bindings.value[i]
+    if (!is.symbol(sym)) return null
+    const compiledInit = compile(bindings.value[i + 1], compileEnv)
+    if (compiledInit === null) return null
+    pairs.push([sym.name, compiledInit])
+  }
+
+  const body = node.value.slice(2)
+  const compiledBody = compileDo(body, compileEnv, compile)
+  if (compiledBody === null) return null
+
+  return (env, ctx) => {
+    const boundVars: CljVar[] = []
+    for (const [name, compiledInit] of pairs) {
+      const newVal = compiledInit(env, ctx)
+      const varObj = lookupVar(name, env)
+      if (!varObj) {
+        throw new EvaluationError(
+          `No var found for symbol '${name}' in binding form`,
+          { name }
+        )
+      }
+      if (!varObj.dynamic) {
+        throw new EvaluationError(
+          `Cannot use binding with non-dynamic var ${varObj.ns}/${varObj.name}. Mark it dynamic with (def ^:dynamic ${varObj.name} ...)`,
+          { name }
+        )
+      }
+      varObj.bindingStack ??= []
+      varObj.bindingStack.push(newVal)
+      boundVars.push(varObj)
+    }
+    try {
+      return compiledBody(env, ctx)
+    } finally {
+      for (const varObj of boundVars) {
+        varObj.bindingStack!.pop()
+      }
+    }
   }
 }
 
