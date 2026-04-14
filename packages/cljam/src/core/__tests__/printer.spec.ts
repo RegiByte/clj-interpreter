@@ -7,6 +7,55 @@ import { makeEnv } from '../env'
 import { createSession } from '../session'
 
 describe('printer', () => {
+  describe('character literals', () => {
+    it('prints a regular character as \\X', () => {
+      expect(printString(v.char('a'))).toBe('\\a')
+      expect(printString(v.char('Z'))).toBe('\\Z')
+      expect(printString(v.char('1'))).toBe('\\1')
+      expect(printString(v.char('!'))).toBe('\\!')
+    })
+
+    it('prints space as \\space', () => {
+      expect(printString(v.char(' '))).toBe('\\space')
+    })
+
+    it('prints newline as \\newline', () => {
+      expect(printString(v.char('\n'))).toBe('\\newline')
+    })
+
+    it('prints tab as \\tab', () => {
+      expect(printString(v.char('\t'))).toBe('\\tab')
+    })
+
+    it('prints return as \\return', () => {
+      expect(printString(v.char('\r'))).toBe('\\return')
+    })
+
+    it('prints backspace as \\backspace', () => {
+      expect(printString(v.char('\b'))).toBe('\\backspace')
+    })
+
+    it('prints formfeed as \\formfeed', () => {
+      expect(printString(v.char('\f'))).toBe('\\formfeed')
+    })
+
+    it('round-trips: tokenize → read → print for all named chars', () => {
+      const cases: [string, string][] = [
+        ['\\space', '\\space'],
+        ['\\newline', '\\newline'],
+        ['\\tab', '\\tab'],
+        ['\\a', '\\a'],
+        ['\\Z', '\\Z'],
+        ['\\u0041', '\\A'], // unicode 'A' prints as \A (single char form)
+      ]
+      for (const [input, expected] of cases) {
+        const tokens = tokenize(input)
+        const [form] = readForms(tokens, 'user', new Map())
+        expect(printString(form)).toBe(expected)
+      }
+    })
+  })
+
   it('should print numbers', () => {
     expect(printString(v.number(1))).toBe('1')
     expect(printString(v.number(1.23))).toBe('1.23')

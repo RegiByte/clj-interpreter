@@ -68,6 +68,51 @@ export const predicateFunctions: Record<string, CljValue> = {
       'Returns true if any two adjacent arguments are not equal, false otherwise.',
       [['&', 'vals']]
     ),
+  'char?': v
+    .nativeFn('char?', function charPredImpl(x: CljValue) {
+      return v.boolean(x !== undefined && is.char(x))
+    })
+    .doc('Returns true if the value is a character, false otherwise.', [['x']]),
+
+  char: v
+    .nativeFn('char', function charImpl(n: CljValue) {
+      if (n === undefined || n.kind !== 'number') {
+        throw new EvaluationError(
+          `char expects a number, got ${n !== undefined ? printString(n) : 'nothing'}`,
+          { n }
+        )
+      }
+      const cp = Math.trunc(n.value)
+      if (cp < 0 || cp > 0x10ffff) {
+        throw new EvaluationError(
+          `char: code point ${cp} is out of Unicode range`,
+          { n }
+        )
+      }
+      return v.char(String.fromCodePoint(cp))
+    })
+    .doc('Returns the character at the given Unicode code point.', [['n']]),
+
+  int: v
+    .nativeFn('int', function intImpl(x: CljValue) {
+      if (x === undefined) {
+        throw new EvaluationError('int expects one argument', {})
+      }
+      if (x.kind === 'character') {
+        return v.number(x.value.codePointAt(0)!)
+      }
+      if (x.kind === 'number') {
+        return v.number(Math.trunc(x.value))
+      }
+      throw new EvaluationError(
+        `int expects a number or character, got ${printString(x)}`,
+        { x }
+      )
+    })
+    .doc('Coerces x to int. For characters, returns the Unicode code point.', [
+      ['x'],
+    ]),
+
   'number?': v
     .nativeFn('number?', function numberPredImpl(x: CljValue) {
       return v.boolean(x !== undefined && x.kind === 'number')
@@ -337,6 +382,9 @@ export const predicateFunctions: Record<string, CljValue> = {
           )
         }
         if (is.string(x) && is.string(y)) {
+          return v.number(x.value < y.value ? -1 : x.value > y.value ? 1 : 0)
+        }
+        if (is.char(x) && is.char(y)) {
           return v.number(x.value < y.value ? -1 : x.value > y.value ? 1 : 0)
         }
         if (is.keyword(x) && is.keyword(y)) {

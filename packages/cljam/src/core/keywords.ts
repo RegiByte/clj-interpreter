@@ -29,6 +29,7 @@ export const specialFormKeywords = {
 export const valueKeywords = {
   // Core values
   boolean: 'boolean',
+  character: 'character',
   function: 'function',
   nativeFunction: 'native-function',
   keyword: 'keyword',
@@ -89,6 +90,7 @@ export const tokenKeywords = {
   NsMapPrefix: 'NsMapPrefix',
   Discard: 'Discard',
   ReaderTag: 'ReaderTag',
+  Character: 'Character',
 } as const
 export const tokenSymbols = {
   Quote: 'quote',

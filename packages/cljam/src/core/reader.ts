@@ -144,6 +144,12 @@ function readAtom(ctx: ReaderCtx): CljValue {
       setPos(val, { start: token.start.offset, end: token.end.offset })
       return val
     }
+    case tokenKeywords.Character: {
+      scanner.advance()
+      const val: CljValue = v.char(token.value)
+      setPos(val, { start: token.start.offset, end: token.end.offset })
+      return val
+    }
     case tokenKeywords.Keyword: {
       scanner.advance()
       const kwName = token.value
@@ -799,6 +805,7 @@ function readForm(ctx: ReaderCtx): CljValue {
     case tokenKeywords.Number:
     case tokenKeywords.Keyword:
     case tokenKeywords.Symbol:
+    case tokenKeywords.Character:
       return readAtom(ctx)
     case tokenKeywords.LParen:
       return readList(ctx)

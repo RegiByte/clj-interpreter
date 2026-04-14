@@ -14,6 +14,8 @@ export function valueToString(value: CljValue): string {
   switch (value.kind) {
     case valueKeywords.string:
       return value.value
+    case valueKeywords.character:
+      return value.value // raw JS character — (str \a \b) → "ab"
     case valueKeywords.number:
       return value.value.toString()
     case valueKeywords.boolean:

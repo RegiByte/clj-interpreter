@@ -1,6 +1,7 @@
 import {
   type CljAtom,
   type CljBoolean,
+  type CljChar,
   type CljCons,
   type CljDelay,
   type CljFunction,
@@ -33,6 +34,8 @@ import { specialFormKeywords, valueKeywords } from './keywords.ts'
 export const isNil = (value: CljValue): boolean => value.kind === 'nil'
 export const isBoolean = (value: CljValue): value is CljBoolean =>
   value.kind === 'boolean'
+export const isChar = (value: CljValue): value is CljChar =>
+  value.kind === 'character'
 export const isFalsy = (value: CljValue): boolean => {
   if (value.kind === 'nil') return true
   if (isBoolean(value)) return !value.value
@@ -157,6 +160,7 @@ function realizeLazySeqForEquality(ls: CljLazySeq): CljValue {
 const equalityHandlers = {
   [valueKeywords.number]: (a: CljNumber, b: CljNumber) => a.value === b.value,
   [valueKeywords.string]: (a: CljString, b: CljString) => a.value === b.value,
+  [valueKeywords.character]: (a: CljChar, b: CljChar) => a.value === b.value,
   [valueKeywords.boolean]: (a: CljBoolean, b: CljBoolean) =>
     a.value === b.value,
   [valueKeywords.nil]: () => true,
@@ -240,6 +244,7 @@ export const is = {
   number: isNumber,
   string: isString,
   boolean: isBoolean,
+  char: isChar,
   falsy: isFalsy,
   truthy: isTruthy,
   specialForm: isSpecialForm,
