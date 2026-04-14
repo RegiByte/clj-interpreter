@@ -24,6 +24,7 @@ import { multimethodFunctions } from './stdlib/multimethods'
 import { protocolFunctions } from './stdlib/protocols'
 import { hierarchyFunctions } from './stdlib/hierarchy'
 import { ednFunctions, ednDynamicVars } from './stdlib/edn'
+import { mathFunctions } from './stdlib/math'
 // --- ASYNC (experimental) ---
 import { asyncFunctions } from './stdlib/async-fns'
 import { printFunctions, printVars } from './stdlib/print'
@@ -91,6 +92,7 @@ const nativeFunctions = {
   ...protocolFunctions,
   ...hierarchyFunctions,
   ...ednFunctions,
+  ...mathFunctions,
   ...lazyFunctions,
   ...printFunctions,
   // --- ASYNC (experimental) ---

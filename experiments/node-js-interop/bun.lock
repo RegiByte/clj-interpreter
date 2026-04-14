@@ -5,8 +5,8 @@
     "": {
       "name": "node-js-interop",
       "dependencies": {
-        "cljam": "file:../../packages/cljam",
-        "cljam-date": "file:../../packages/cljam-date",
+        "@regibyte/cljam": "file:../../packages/cljam",
+        "@regibyte/cljam-date": "file:../../packages/cljam-date",
       },
     },
   },
@@ -80,6 +80,10 @@
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
     "@polka/url": ["@polka/url@1.0.0-next.29", "", {}, "sha512-wwQAWhWSuHaag8c4q/KN/vCoeOJYshAIvMQwD4GpSb3OiZklFfvAgmj0VCBBImRpuF/aFgIRzllXlVX93Jevww=="],
+
+    "@regibyte/cljam": ["@regibyte/cljam@file:../../packages/cljam", { "devDependencies": { "@types/bun": "^1.3.10", "@types/node": "^25.3.5", "@vitest/coverage-v8": "^4.0.18", "@vitest/ui": "^4.0.18", "prettier": "^3.8.1", "typescript": "~5.9.3", "vite": "^7.3.1", "vitest": "^4.0.18" }, "bin": { "cljam": "./scripts/cljam-bin.mjs" } }],
+
+    "@regibyte/cljam-date": ["@regibyte/cljam-date@file:../../packages/cljam-date", { "devDependencies": { "@regibyte/cljam": "file:../cljam", "@types/node": "^25.3.5", "typescript": "~5.9.3", "vitest": "^4.0.18" }, "peerDependencies": { "@regibyte/cljam": ">=0.0.16" } }],
 
     "@rollup/rollup-android-arm-eabi": ["@rollup/rollup-android-arm-eabi@4.59.0", "", { "os": "android", "cpu": "arm" }, "sha512-upnNBkA6ZH2VKGcBj9Fyl9IGNPULcjXRlg0LLeaioQWueH30p6IXtJEbKAgvyv+mJaMxSm1l6xwDXYjpEMiLMg=="],
 
@@ -169,10 +173,6 @@
 
     "chai": ["chai@6.2.2", "", {}, "sha512-NUPRluOfOiTKBKvWPtSD4PhFvWCqOi0BGStNWs57X9js7XGTprSmFoz5F0tWhR4WPjNeR9jXqdC7/UpSJTnlRg=="],
 
-    "cljam": ["cljam@file:../../packages/cljam", { "devDependencies": { "@types/bun": "^1.3.10", "@types/node": "^25.3.5", "@vitest/coverage-v8": "^4.0.18", "@vitest/ui": "^4.0.18", "prettier": "^3.8.1", "typescript": "~5.9.3", "vite": "^7.3.1", "vitest": "^4.0.18" }, "bin": { "cljam": "./dist-cli/cljam.mjs" } }],
-
-    "cljam-date": ["cljam-date@file:../../packages/cljam-date", { "dependencies": { "cljam": "file:../cljam" }, "devDependencies": { "@types/node": "^25.3.5", "typescript": "~5.9.3", "vitest": "^4.0.18" } }],
-
     "convert-source-map": ["convert-source-map@2.0.0", "", {}, "sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg=="],
 
     "es-module-lexer": ["es-module-lexer@2.0.0", "", {}, "sha512-5POEcUuZybH7IdmGsD8wlf0AI55wMecM9rVBTI/qEAy2c1kTOm3DjFYjrBdI2K3BaJjJYfYFeRtM0t9ssnRuxw=="],
@@ -261,6 +261,6 @@
 
     "why-is-node-running": ["why-is-node-running@2.3.0", "", { "dependencies": { "siginfo": "^2.0.0", "stackback": "0.0.2" }, "bin": { "why-is-node-running": "cli.js" } }, "sha512-hUrmaWBdVDcxvYqnyh09zunKzROWjbZTiNy8dBEjkS7ehEDQibXJ7XvlmtbwuTclUiIyN+CyXQD4Vmko8fNm8w=="],
 
-    "cljam-date/cljam": ["cljam@file:../../packages/cljam", {}],
+    "@regibyte/cljam-date/@regibyte/cljam": ["@regibyte/cljam@file:../../packages/cljam", {}],
   }
 }

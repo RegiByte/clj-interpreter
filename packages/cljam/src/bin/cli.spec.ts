@@ -42,7 +42,7 @@ describe('bun cli', () => {
       'Usage:',
       '  cljam repl',
       '  cljam run <file.clj>',
-      '  cljam nrepl-server [--port <number>] [--host <string>]',
+      '  cljam nrepl-server [--port <number>] [--host <string>] [--root-dir <path>]',
     ])
   })
 

@@ -198,6 +198,7 @@ export function compile(
     case valueKeywords.nil:
     case valueKeywords.boolean:
     case valueKeywords.regex:
+    case valueKeywords.character:
       return () => node
     case valueKeywords.symbol: {
       return compileSymbol(node, compileEnv)

@@ -35,6 +35,7 @@ const isDot = (char: string) => char === '.'
 const isKeywordStart = (char: string) => char === ':'
 const isHash = (char: string) => char === '#'
 const isCaret = (char: string) => char === '^'
+const isBackslash = (char: string) => char === '\\'
 
 const isDelimiter = (char: string) =>
   isLParen(char) ||
@@ -285,6 +286,88 @@ const parseRegexLiteral = (
   }
 }
 
+// Named character literals: \space \newline \tab \return \backspace \formfeed
+const NAMED_CHARS: Record<string, string> = {
+  space: ' ',
+  newline: '\n',
+  tab: '\t',
+  return: '\r',
+  backspace: '\b',
+  formfeed: '\f',
+}
+
+// Parses Clojure character literals: \a  \space  \newline  \uXXXX
+//
+// Algorithm:
+//   1. Consume the backslash.
+//   2. Read exactly one character (required).
+//   3. If that character is a letter, keep reading letters/digits until a
+//      delimiter — this allows \space, \newline, \uD0B5, etc.
+//   4. If the result is a single character → literal of that character.
+//   5. If it matches a named char → that character.
+//   6. If it matches uXXXX (4 hex digits) → unicode code point.
+//   7. Otherwise → TokenizerError.
+const parseCharacterLiteral = (ctx: TokenizationContext): Token => {
+  const scanner = ctx.scanner
+  const start = scanner.position()
+  scanner.advance() // consume '\'
+
+  if (scanner.isAtEnd()) {
+    throw new TokenizerError(
+      'Unexpected end of input after \\',
+      scanner.position()
+    )
+  }
+
+  // Read the first character (required)
+  const firstChar = scanner.advance()!
+
+  // If the first char is a letter, keep reading to capture named chars / unicode escapes
+  let name = firstChar
+  if (/[a-zA-Z]/.test(firstChar)) {
+    name += scanner.consumeWhile(
+      (c) => !isWhitespace(c) && !isDelimiter(c) && !isComment(c) && c !== '"'
+    )
+  }
+
+  // Single character (includes \\ \( \) \space-via-literal, etc.)
+  if (name.length === 1) {
+    return {
+      kind: tokenKeywords.Character,
+      value: name,
+      start,
+      end: scanner.position(),
+    }
+  }
+
+  // Named character: \space \newline \tab \return \backspace \formfeed
+  const namedChar = NAMED_CHARS[name]
+  if (namedChar !== undefined) {
+    return {
+      kind: tokenKeywords.Character,
+      value: namedChar,
+      start,
+      end: scanner.position(),
+    }
+  }
+
+  // Unicode escape: \uXXXX (exactly 4 hex digits)
+  if (/^u[0-9a-fA-F]{4}$/.test(name)) {
+    const codePoint = parseInt(name.slice(1), 16)
+    return {
+      kind: tokenKeywords.Character,
+      value: String.fromCodePoint(codePoint),
+      start,
+      end: scanner.position(),
+    }
+  }
+
+  throw new TokenizerError(
+    `Unknown character literal: \\${name} at line ${start.line} column ${start.col}`,
+    start
+  )
+}
+
 // Single routing point for all # dispatch characters.
 // Add new dispatch forms here as they are supported.
 function parseDispatch(ctx: TokenizationContext): Token {
@@ -404,6 +487,7 @@ const tokenParseEntries: TokenParseEntry[] = [
   [isAt, parseDerefToken],
   [isCaret, parseMetaToken],
   [isHash, parseDispatch],
+  [isBackslash, parseCharacterLiteral],
 ]
 
 function parseNextToken(ctx: TokenizationContext): Token {

@@ -207,9 +207,7 @@ describe('describe — fn', () => {
     expect(m[':kind']).toEqual(v.keyword(':fn'))
     expect(m[':name']).toEqual(v.string('greet'))
     expect(m[':arglists'].kind).toBe('vector')
-    // Doc lives on the Var (CljVar.meta), not on the CljFunction value.
-    // (describe #'greet) shows it; (describe greet) returns nil for :doc.
-    expect(m[':doc']).toEqual(v.nil())
+    expect(m[':doc']).toEqual(v.string('Greets someone.'))
   })
 
   it('multi-arity function shows all arglists', () => {
@@ -475,13 +473,13 @@ describe('describe — var', () => {
     expect(inner[':kind']).toEqual(v.keyword(':fn'))
   })
 
-  it('doc is accessible via the var path (describe #\'name), not via (describe fn)', () => {
+  it('doc is visible on both (describe fn) and (describe #\'name)', () => {
     const sess = s()
     sess.evaluate('(defn greet "Greets someone." [name] name)')
-    // Doc lives on the Var, not on the function value
+    // Doc is propagated from var meta to the function value at def-time
     const fnDesc = mapToObj(sess.evaluate('(describe greet)'))
-    expect(fnDesc[':doc']).toEqual(v.nil())
-    // But the var wraps the fn and carries meta — future: (describe #'greet) shows :doc
+    expect(fnDesc[':doc']).toEqual(v.string('Greets someone.'))
+    // The var path also works
     const varDesc = mapToObj(sess.evaluate('(describe (var greet))'))
     expect(varDesc[':kind']).toEqual(v.keyword(':var'))
   })

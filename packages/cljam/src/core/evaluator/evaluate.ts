@@ -39,6 +39,7 @@ export function evaluateWithContext(
     // self-evaluating forms
     case valueKeywords.number:
     case valueKeywords.string:
+    case valueKeywords.character:
     case valueKeywords.keyword:
     case valueKeywords.nil:
     case valueKeywords.function:

@@ -23,8 +23,8 @@
  *   - `defmacro`, `defmulti`, `defmethod`, `letfn`, `delay`, `lazy-seq`,
  *     `quasiquote` — create thunks or install definitions; content is
  *     evaluated lazily or later.
- *   - `binding` — V1 limitation: async-computed binding values are not
- *     supported. Bind the var before the async block and use set! if needed.
+ *   - `binding` — body runs async (see evaluateBindingAsync); binding VALUES
+ *     are still evaluated synchronously (same as the sync evaluator).
  *   - `.`, `js/new` — JS interop is sync; args are NOT awaited before the
  *     call (V1 limitation: deref @ pending values explicitly before the form).
  *   - `async` — nested async blocks create a new CljPending via the sync path.
@@ -43,16 +43,18 @@
 import { is } from '../assertions'
 import { extend } from '../env'
 import { CljThrownSignal, EvaluationError } from '../errors'
-import { cljNil, v } from '../factories'
+import { v } from '../factories'
 import { specialFormKeywords, valueKeywords } from '../keywords'
 import type { CljList, CljValue, Env, EvaluationContext } from '../types'
 import { bindParams, RecurSignal, resolveArity } from './arity'
+import { setupBindingVars } from './binding-setup'
 import { destructureBindings } from './destructure'
 import {
   matchesDiscriminator,
   parseTryStructure,
   validateBindingVector,
 } from './form-parsers'
+import { dispatchMultiMethod } from './multimethod-dispatch'
 
 // ---- AsyncEvalCtx ----
 // A parallel evaluation context where all dispatch methods are async.
@@ -434,13 +436,17 @@ async function evaluateBindingAsync(
   env: Env,
   asyncCtx: AsyncEvalCtx
 ): Promise<CljValue> {
-  // Delegate to sync evaluator's binding form, but evaluate the binding values async.
-  // The sync binding handler re-evaluates the binding forms — we need to pre-evaluate
-  // them and pass them quoted. For V1, delegate to sync (binding values are usually
-  // simple expressions; async binding values are an edge case).
-  // This means dynamic bindings with async-computed values don't work in V1.
-  // They can be assigned with set! after the binding is established.
-  return asyncCtx.syncCtx.evaluate(list, env)
+  // setupBindingVars handles validation, var-resolution, and the PUSH phase.
+  // Binding values are evaluated synchronously (via syncCtx) — the same as the
+  // sync evaluator. Only the body runs async, matching the pattern of evaluateLetAsync.
+  const { body, boundVars } = setupBindingVars(list, env, asyncCtx.syncCtx)
+  try {
+    return await evaluateFormsAsync(body, env, asyncCtx)
+  } finally {
+    for (const v of boundVars) {
+      v.bindingStack!.pop()
+    }
+  }
 }
 
 async function evaluateTryAsync(
@@ -547,6 +553,14 @@ async function applyCallableAsync(
         throw e
       }
     }
+  }
+
+  if (is.multiMethod(fn)) {
+    // Dispatch function and method bodies are always synchronous (they don't
+    // produce CljPending). Delegate to dispatchMultiMethod via syncCtx so the
+    // full dispatch logic (exact match → hierarchy fallback → :default) runs
+    // correctly. Any CljPending the method body returns will bubble up as-is.
+    return dispatchMultiMethod(fn, args, asyncCtx.syncCtx, callEnv)
   }
 
   // keyword, map, and other callables: delegate to sync

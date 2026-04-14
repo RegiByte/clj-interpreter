@@ -548,4 +548,89 @@ bar"`,
       expect(tokens[0].kind).not.toBe('ReaderTag')
     })
   })
+
+  describe('character literals', () => {
+    it('tokenizes a single letter: \\a', () => {
+      const tokens = tokenize('\\a')
+      expect(tokens).toMatchObject([{ kind: 'Character', value: 'a' }])
+    })
+
+    it('tokenizes a single digit: \\1', () => {
+      const tokens = tokenize('\\1')
+      expect(tokens).toMatchObject([{ kind: 'Character', value: '1' }])
+    })
+
+    it('tokenizes a punctuation char: \\!', () => {
+      const tokens = tokenize('\\!')
+      expect(tokens).toMatchObject([{ kind: 'Character', value: '!' }])
+    })
+
+    it('tokenizes \\space → space character', () => {
+      const tokens = tokenize('\\space')
+      expect(tokens).toMatchObject([{ kind: 'Character', value: ' ' }])
+    })
+
+    it('tokenizes \\newline → newline character', () => {
+      const tokens = tokenize('\\newline')
+      expect(tokens).toMatchObject([{ kind: 'Character', value: '\n' }])
+    })
+
+    it('tokenizes \\tab → tab character', () => {
+      const tokens = tokenize('\\tab')
+      expect(tokens).toMatchObject([{ kind: 'Character', value: '\t' }])
+    })
+
+    it('tokenizes \\return → carriage return', () => {
+      const tokens = tokenize('\\return')
+      expect(tokens).toMatchObject([{ kind: 'Character', value: '\r' }])
+    })
+
+    it('tokenizes \\backspace → backspace character', () => {
+      const tokens = tokenize('\\backspace')
+      expect(tokens).toMatchObject([{ kind: 'Character', value: '\b' }])
+    })
+
+    it('tokenizes \\formfeed → form feed character', () => {
+      const tokens = tokenize('\\formfeed')
+      expect(tokens).toMatchObject([{ kind: 'Character', value: '\f' }])
+    })
+
+    it('tokenizes \\uXXXX unicode escape', () => {
+      const tokens = tokenize('\\u0041') // 'A'
+      expect(tokens).toMatchObject([{ kind: 'Character', value: 'A' }])
+    })
+
+    it('tokenizes \\u03BB (lambda)', () => {
+      const tokens = tokenize('\\u03BB')
+      expect(tokens).toMatchObject([{ kind: 'Character', value: 'λ' }])
+    })
+
+    it('tokenizes character literals inside a list', () => {
+      const tokens = tokenize('(\\a \\space \\newline)')
+      expect(tokens).toMatchObject([
+        { kind: 'LParen' },
+        { kind: 'Character', value: 'a' },
+        { kind: 'Character', value: ' ' },
+        { kind: 'Character', value: '\n' },
+        { kind: 'RParen' },
+      ])
+    })
+
+    it('tokenizes character immediately followed by closing paren', () => {
+      const tokens = tokenize('[\\a]')
+      expect(tokens).toMatchObject([
+        { kind: 'LBracket' },
+        { kind: 'Character', value: 'a' },
+        { kind: 'RBracket' },
+      ])
+    })
+
+    it('throws on unknown named character literal', () => {
+      expect(() => tokenize('\\unknown')).toThrow()
+    })
+
+    it('throws on EOF immediately after backslash', () => {
+      expect(() => tokenize('\\')).toThrow()
+    })
+  })
 })

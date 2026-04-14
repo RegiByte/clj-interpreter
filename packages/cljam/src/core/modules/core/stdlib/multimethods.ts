@@ -41,7 +41,8 @@ export const multimethodFunctions: Record<string, CljValue> = {
         _ctx,
         callEnv,
         nameVal: CljValue,
-        dispatchFnVal: CljValue
+        dispatchFnVal: CljValue,
+        ...opts: CljValue[]
       ) {
         if (!is.string(nameVal)) {
           throw new EvaluationError(
@@ -68,14 +69,21 @@ export const multimethodFunctions: Record<string, CljValue> = {
             { dispatchFnVal }
           )
         }
-        const mm = v.multiMethod(name, dispatchFn, [])
+        // Parse optional flat keyword-value pairs: :default <sentinel-val>
+        let defaultDispatchVal: CljValue | undefined
+        for (let i = 0; i + 1 < opts.length; i += 2) {
+          if (is.keyword(opts[i]) && (opts[i] as CljKeyword).name === ':default') {
+            defaultDispatchVal = opts[i + 1]
+          }
+        }
+        const mm = v.multiMethod(name, dispatchFn, [], undefined, defaultDispatchVal)
         internVar(name, mm, nsEnv)
         return v.nil()
       }
     )
     .doc(
-      'Creates a multimethod with the given name and dispatch-fn in the current namespace. No-op if already a multimethod (re-eval safe).',
-      [['name', 'dispatch-fn']]
+      'Creates a multimethod with the given name and dispatch-fn in the current namespace. Accepts optional :default <sentinel-val> to customize the fallback sentinel. No-op if already a multimethod (re-eval safe).',
+      [['name', 'dispatch-fn', '& opts']]
     ),
 
   /**
@@ -112,24 +120,30 @@ export const multimethodFunctions: Record<string, CljValue> = {
           )
         }
         const existing = varVal.value as CljMultiMethod
-        const isDefault =
-          is.keyword(dispatchVal) && dispatchVal.name === ':default'
+        // The sentinel is the custom defaultDispatchVal if set, otherwise :default.
+        const sentinel: CljValue =
+          existing.defaultDispatchVal ?? v.keyword(':default')
+        const isDefault = is.equal(dispatchVal, sentinel)
         let updated: CljMultiMethod
         if (isDefault) {
           updated = v.multiMethod(
             existing.name,
             existing.dispatchFn,
             existing.methods,
-            methodFn
+            methodFn,
+            existing.defaultDispatchVal
           )
         } else {
           const filtered = existing.methods.filter(
             (m) => !is.equal(m.dispatchVal, dispatchVal)
           )
-          updated = v.multiMethod(existing.name, existing.dispatchFn, [
-            ...filtered,
-            { dispatchVal, fn: methodFn },
-          ], existing.defaultMethod)
+          updated = v.multiMethod(
+            existing.name,
+            existing.dispatchFn,
+            [...filtered, { dispatchVal, fn: methodFn }],
+            existing.defaultMethod,
+            existing.defaultDispatchVal
+          )
         }
         varVal.value = updated
         return v.nil()

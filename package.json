@@ -3,13 +3,12 @@
   "workspaces": [
     "packages/*"
   ],
-  "cljam": {
-    "sourceRoots": [
-      "packages/cljam/src/clojure"
-    ]
-  },
   "scripts": {
-    "test": "bun run --filter '@regibyte/cljam' test && bun run --filter '@regibyte/cljam-date' test && bun run --filter '@regibyte/cljam-integrant' test",
+    "test:cljam": "bun run --filter '@regibyte/cljam' test",
+    "test:cljam-date": "bun run --filter '@regibyte/cljam-date' test",
+    "test:cljam-integrant": "bun run --filter '@regibyte/cljam-integrant' test",
+    "test:cljam-schema": "bun run --filter '@regibyte/cljam-schema' test",
+    "test": "bun run test:cljam && bun run test:cljam-date && bun run test:cljam-integrant && bun run test:cljam-schema",
     "build": "bun run --filter '@regibyte/cljam' build-vite-plugin",
     "dev": "bun run --filter 'playground' dev",
     "repl": "bun run --filter 'cljam' repl",

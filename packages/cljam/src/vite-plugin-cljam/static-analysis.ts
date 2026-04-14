@@ -187,6 +187,46 @@ function parseDeclare(form: CljList): VarDescriptor | null {
 }
 
 // ---------------------------------------------------------------------------
+// deftest name extraction
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse Clojure source and return the names of all top-level deftest forms.
+ * Used by the vitest integration to generate one test() call per deftest.
+ * Pure function — no session, no execution, no side effects.
+ *
+ * Recognises all three common spellings:
+ *   - `(deftest foo ...)` — bare, after `:refer [deftest]` or `:use`
+ *   - `(t/deftest foo ...)` — alias-qualified, after `:require [clojure.test :as t]`
+ *   - `(clojure.test/deftest foo ...)` — fully qualified namespace ref
+ */
+export function readDeftestNames(source: string): string[] {
+  const forms = readForms(tokenize(source))
+  const names: string[] = []
+  for (const form of forms) {
+    if (!isList(form) || form.value.length < 2) continue
+    const head = form.value[0]
+    if (!isSymbol(head) || !isDeftestHead(head.name)) continue
+    const nameSym = form.value[1]
+    if (isSymbol(nameSym)) names.push(nameSym.name)
+  }
+  return names
+}
+
+/**
+ * Returns true if `name` is a reference to `clojure.test/deftest` in any form:
+ *   - `"deftest"` (bare)
+ *   - `"t/deftest"` (alias-qualified — any alias prefix)
+ *   - `"clojure.test/deftest"` (fully qualified)
+ *
+ * The reader stores the entire raw symbol text in `CljSymbol.name`, so a
+ * qualified symbol like `t/deftest` arrives as the string `"t/deftest"`.
+ */
+function isDeftestHead(name: string): boolean {
+  return name === 'deftest' || name.endsWith('/deftest')
+}
+
+// ---------------------------------------------------------------------------
 // (fn ...) extraction for def with inline function
 // ---------------------------------------------------------------------------
 

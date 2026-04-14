@@ -1,6 +1,6 @@
 import { resolve } from 'node:path'
 import { describe, expect, it, beforeEach } from 'vitest'
-import { cljPlugin, safeJsIdentifier, generateModuleCode, generateDts } from '../index'
+import { cljPlugin, safeJsIdentifier, generateModuleCode, generateDts, generateTestModuleCode } from '../index'
 import type { CodegenContext } from '../codegen'
 import type { Plugin, ResolvedConfig } from 'vite'
 
@@ -416,5 +416,113 @@ describe('generateDts', () => {
     const dts = generateDts(ctx, 'empty.ns', '(ns empty.ns)')
 
     expect(dts).toBe('')
+  })
+})
+
+describe('generateTestModuleCode', () => {
+  it('generates one test() call per deftest', () => {
+    const ctx = makeCodegenCtx()
+    const source = [
+      '(ns test.suite (:require [clojure.test :refer [deftest is]]))',
+      '(deftest first-test (is (= 1 1)))',
+      '(deftest second-test (is (= 2 2)))',
+    ].join('\n')
+    const code = generateTestModuleCode(ctx, 'test.suite', source)
+
+    expect(code).toContain('test("first-test",')
+    expect(code).toContain('test("second-test",')
+  })
+
+  it('uses async test callbacks', () => {
+    const ctx = makeCodegenCtx()
+    const source = '(ns t (:require [clojure.test :refer [deftest is]]))\n(deftest my-test (is true))'
+    const code = generateTestModuleCode(ctx, 't', source)
+
+    // Every test callback must be async so CljPending results from (async ...) blocks are awaited
+    expect(code).toContain('async () => {')
+    expect(code).not.toContain(', () => {')
+  })
+
+  it('calls evaluateAsync for each deftest invocation', () => {
+    const ctx = makeCodegenCtx()
+    const source = '(ns t (:require [clojure.test :refer [deftest is]]))\n(deftest my-test (is true))'
+    const code = generateTestModuleCode(ctx, 't', source)
+
+    // evaluateAsync handles both sync and async (CljPending) returns transparently
+    expect(code).toContain('await __session.evaluateAsync(')
+    expect(code).not.toContain('__session.evaluate("(my-test)")')
+  })
+
+  it('imports from vitest by default', () => {
+    const ctx = makeCodegenCtx()
+    const source = '(ns t (:require [clojure.test :refer [deftest is]]))\n(deftest t (is true))'
+    const code = generateTestModuleCode(ctx, 't', source)
+
+    expect(code).toContain("import { test } from 'vitest'")
+    expect(code).not.toContain("bun:test")
+  })
+
+  it('imports from bun:test when testFramework is bun:test', () => {
+    const ctx = makeCodegenCtx()
+    const source = '(ns t (:require [clojure.test :refer [deftest is]]))\n(deftest t (is true))'
+    const code = generateTestModuleCode(ctx, 't', source, { testFramework: 'bun:test' })
+
+    expect(code).toContain("import { test } from 'bun:test'")
+    expect(code).not.toContain("'vitest'")
+  })
+
+  it('checks __vt_failures after awaiting the test invocation', () => {
+    const ctx = makeCodegenCtx()
+    const source = '(ns t (:require [clojure.test :refer [deftest is]]))\n(deftest my-test (is true))'
+    const code = generateTestModuleCode(ctx, 't', source)
+
+    // The await must come before the failure check
+    const awaitIdx = code.indexOf('await __session.evaluateAsync(')
+    const failIdx = code.indexOf('@__vt_failures')
+    expect(awaitIdx).toBeGreaterThan(-1)
+    expect(failIdx).toBeGreaterThan(awaitIdx)
+  })
+})
+
+describe('generateTestModuleCode — use-fixtures :each', () => {
+  it('emits __vt_each_fixture setup using join-fixtures and fixture-registry', () => {
+    const ctx = makeCodegenCtx()
+    const source = '(ns my.suite (:require [clojure.test :refer [deftest is]]))\n(deftest t (is true))'
+    const code = generateTestModuleCode(ctx, 'my.suite', source)
+
+    // Must define __vt_each_fixture using join-fixtures and fixture-registry
+    expect(code).toContain('__vt_each_fixture')
+    expect(code).toContain('clojure.test/join-fixtures')
+    expect(code).toContain('clojure.test/fixture-registry')
+    // The ns name must appear in the fixture-registry lookup key
+    expect(code).toContain('"my.suite"')
+  })
+
+  it('wraps each test invocation with __vt_each_fixture', () => {
+    const ctx = makeCodegenCtx()
+    const source = [
+      '(ns t (:require [clojure.test :refer [deftest is]]))',
+      '(deftest first-test (is true))',
+      '(deftest second-test (is true))',
+    ].join('\n')
+    const code = generateTestModuleCode(ctx, 't', source)
+
+    // Each test is called via (__vt_each_fixture (fn [] (test-name)))
+    expect(code).toContain('(__vt_each_fixture (fn [] (first-test)))')
+    expect(code).toContain('(__vt_each_fixture (fn [] (second-test)))')
+    // The bare (test-name) form must NOT appear as the direct evaluateAsync argument
+    expect(code).not.toContain('evaluateAsync("(first-test)")')
+  })
+
+  it('defines __vt_each_fixture before the first test() call', () => {
+    const ctx = makeCodegenCtx()
+    const source = '(ns t (:require [clojure.test :refer [deftest is]]))\n(deftest my-test (is true))'
+    const code = generateTestModuleCode(ctx, 't', source)
+
+    // fixture setup must precede the first test() registration
+    const fixtureIdx = code.indexOf('__vt_each_fixture')
+    const testCallIdx = code.indexOf('test("my-test"')
+    expect(fixtureIdx).toBeGreaterThan(-1)
+    expect(testCallIdx).toBeGreaterThan(fixtureIdx)
   })
 })

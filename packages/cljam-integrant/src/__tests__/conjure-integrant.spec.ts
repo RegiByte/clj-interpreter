@@ -9,7 +9,7 @@ import { library as integrantLib } from '../../conjure'
 function makeSession() {
   return createSession({
     libraries: [integrantLib],
-    allowedPackages: ['cljam-integrant', 'cljam.integrant'],
+    allowedPackages: ['cljam.integrant'],
   })
 }
 
@@ -152,9 +152,7 @@ describe('cljam-integrant — ig/init basic', () => {
     // server value should have {:started true, :db :db-connection}
     const serverVal = entry[1]
     expect(serverVal.kind).toBe('map')
-    const dbEntry = serverVal.entries.find(
-      ([k]: any[]) => k.name === ':db'
-    )
+    const dbEntry = serverVal.entries.find(([k]: any[]) => k.name === ':db')
     expect(dbEntry[1]).toEqual({ kind: 'keyword', name: ':db-connection' })
   })
 
@@ -165,7 +163,7 @@ describe('cljam-integrant — ig/init basic', () => {
       (defmethod ig/init-key :t/x [_ _] :started)
       (ig/init {:t/x {}})
     `)
-    const system = await resolve(pending) as any
+    const system = (await resolve(pending)) as any
     expect(system.meta).toBeDefined()
     const originEntry = system.meta.entries.find(
       ([k]: any[]) => k.name === ':integrant.core/origin'
@@ -188,8 +186,10 @@ describe('cljam-integrant — async init-key', () => {
         (promise-of val))
       (ig/init {:t/async-thing {:val :resolved}})
     `)
-    const system = await resolve(pending) as any
-    const entry = system.entries.find(([k]: any[]) => k.name === ':t/async-thing')
+    const system = (await resolve(pending)) as any
+    const entry = system.entries.find(
+      ([k]: any[]) => k.name === ':t/async-thing'
+    )
     expect(entry[1]).toEqual({ kind: 'keyword', name: ':resolved' })
   })
 })
@@ -222,7 +222,7 @@ describe('cljam-integrant — dependency ordering', () => {
                     :t/c {:b (ig/ref :t/b)}})
           (then (fn [_] @*order)))
     `)
-    const order = await resolve(pending) as any
+    const order = (await resolve(pending)) as any
     expect(order.kind).toBe('vector')
     const names = order.value.map((v: any) => v.name)
     // :a must come before :b, :b must come before :c
@@ -246,7 +246,7 @@ describe('cljam-integrant — ig/halt!', () => {
           (then ig/halt!))
     `)
     const result = await resolve(pending)
-    expect((result as any)).toEqual({ kind: 'nil', value: null })
+    expect(result as any).toEqual({ kind: 'nil', value: null })
   })
 
   it('halts in reverse dependency order', async () => {
@@ -265,7 +265,7 @@ describe('cljam-integrant — ig/halt!', () => {
           (then #(ig/halt! %))
           (then (fn [_] @*halt-order)))
     `)
-    const order = await resolve(pending) as any
+    const order = (await resolve(pending)) as any
     expect(order.kind).toBe('vector')
     const names = order.value.map((v: any) => v.name)
     // :b (dependent) must be halted before :a (dependency)
@@ -341,9 +341,13 @@ describe('cljam-integrant — resolve-key', () => {
       (ig/init {:t/db {}
                 :t/server {:db (ig/ref :t/db)}})
     `)
-    const system = await resolve(pending) as any
-    const serverEntry = system.entries.find(([k]: any[]) => k.name === ':t/server')
-    const dbInServer = serverEntry[1].entries.find(([k]: any[]) => k.name === ':db')
+    const system = (await resolve(pending)) as any
+    const serverEntry = system.entries.find(
+      ([k]: any[]) => k.name === ':t/server'
+    )
+    const dbInServer = serverEntry[1].entries.find(
+      ([k]: any[]) => k.name === ':db'
+    )
     // Default resolve-key returns the full value
     expect(dbInServer[1].kind).toBe('map')
   })
@@ -360,9 +364,13 @@ describe('cljam-integrant — resolve-key', () => {
       (ig/init {:t/db {}
                 :t/server {:db (ig/ref :t/db)}})
     `)
-    const system = await resolve(pending) as any
-    const serverEntry = system.entries.find(([k]: any[]) => k.name === ':t/server')
-    const dbInServer = serverEntry[1].entries.find(([k]: any[]) => k.name === ':db')
+    const system = (await resolve(pending)) as any
+    const serverEntry = system.entries.find(
+      ([k]: any[]) => k.name === ':t/server'
+    )
+    const dbInServer = serverEntry[1].entries.find(
+      ([k]: any[]) => k.name === ':db'
+    )
     // resolve-key projected :conn value
     expect(dbInServer[1]).toEqual({ kind: 'keyword', name: ':db-conn' })
   })
@@ -505,7 +513,7 @@ describe('cljam-integrant — partial init/halt', () => {
       (defmethod ig/init-key :t/b [_ _] :b-started)
       (ig/init {:t/a {} :t/b {}} [:t/a])
     `)
-    const system = await resolve(pending) as any
+    const system = (await resolve(pending)) as any
     expect(system.kind).toBe('map')
     // Should contain :t/a but not :t/b
     const aEntry = system.entries.find(([k]: any[]) => k.name === ':t/a')
@@ -524,7 +532,7 @@ describe('cljam-integrant — partial init/halt', () => {
       ; init only :t/b — :t/a should be included (dep), :t/c should not
       (ig/init {:t/a {} :t/b {:a (ig/ref :t/a)} :t/c {}} [:t/b])
     `)
-    const system = await resolve(pending) as any
+    const system = (await resolve(pending)) as any
     const aEntry = system.entries.find(([k]: any[]) => k.name === ':t/a')
     const bEntry = system.entries.find(([k]: any[]) => k.name === ':t/b')
     const cEntry = system.entries.find(([k]: any[]) => k.name === ':t/c')
@@ -547,7 +555,7 @@ describe('cljam-integrant — partial init/halt', () => {
                   (-> (ig/halt! sys [:t/b])
                       (then (fn [_] @*halted))))))
     `)
-    const halted = await resolve(pending) as any
+    const halted = (await resolve(pending)) as any
     const names = halted.value.map((v: any) => v.name)
     expect(names).toContain(':b')
     expect(names).not.toContain(':a')
@@ -569,7 +577,7 @@ describe('cljam-integrant — refset', () => {
       (ig/init {:t/store {}
                 :t/consumer {:stores (ig/refset :t/store)}})
     `)
-    const system = await resolve(pending) as any
+    const system = (await resolve(pending)) as any
     const consumerEntry = system.entries.find(
       ([k]: any[]) => k.name === ':t/consumer'
     )
@@ -579,7 +587,10 @@ describe('cljam-integrant — refset', () => {
     // refset returns a vector
     expect(storesVal[1].kind).toBe('vector')
     expect(storesVal[1].value).toHaveLength(1)
-    expect(storesVal[1].value[0]).toEqual({ kind: 'keyword', name: ':store-val' })
+    expect(storesVal[1].value[0]).toEqual({
+      kind: 'keyword',
+      name: ':store-val',
+    })
   })
 
   it('refset with no matching key returns empty vector', async () => {
@@ -590,7 +601,7 @@ describe('cljam-integrant — refset', () => {
         {:stores stores})
       (ig/init {:t/consumer {:stores (ig/refset :t/no-store)}})
     `)
-    const system = await resolve(pending) as any
+    const system = (await resolve(pending)) as any
     const consumerEntry = system.entries.find(
       ([k]: any[]) => k.name === ':t/consumer'
     )

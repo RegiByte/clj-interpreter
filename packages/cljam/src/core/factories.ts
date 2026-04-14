@@ -3,6 +3,7 @@ import type {
   Arity,
   CljAtom,
   CljBoolean,
+  CljChar,
   CljCons,
   CljDelay,
   CljFunction,
@@ -39,6 +40,7 @@ export const cljNumber = <T extends number>(value: T) =>
   ({ kind: 'number', value }) as const satisfies CljNumber
 export const cljString = <T extends string>(value: T) =>
   ({ kind: 'string', value }) as const satisfies CljString
+export const cljChar = (value: string): CljChar => ({ kind: 'character', value })
 export const cljBoolean = <T extends boolean>(value: T) =>
   ({ kind: 'boolean', value }) as const satisfies CljBoolean
 export const cljKeyword = <T extends string>(name: T) =>
@@ -288,13 +290,15 @@ export const cljMultiMethod = (
     dispatchVal: CljValue
     fn: CljFunction | CljNativeFunction
   }>,
-  defaultMethod?: CljFunction | CljNativeFunction
+  defaultMethod?: CljFunction | CljNativeFunction,
+  defaultDispatchVal?: CljValue
 ): CljMultiMethod => ({
   kind: 'multi-method',
   name,
   dispatchFn,
   methods,
   defaultMethod,
+  defaultDispatchVal,
 })
 
 // ---------------------------------------------------------------------------
@@ -309,6 +313,7 @@ export const v = {
   // primitives
   number: cljNumber,
   string: cljString,
+  char: cljChar,
   boolean: cljBoolean,
   keyword: cljKeyword,
   nil: cljNil,

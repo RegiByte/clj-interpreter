@@ -1,5 +1,6 @@
 export type CljNumber = { kind: 'number'; value: number }
 export type CljString = { kind: 'string'; value: string }
+export type CljChar = { kind: 'character'; value: string }
 export type CljBoolean = { kind: 'boolean'; value: boolean }
 export type CljKeyword = { kind: 'keyword'; name: string }
 export type CljNil = { kind: 'nil'; value: null }
@@ -103,6 +104,8 @@ export type CljMultiMethod = {
   dispatchFn: CljFunction | CljNativeFunction
   methods: Array<{ dispatchVal: CljValue; fn: CljFunction | CljNativeFunction }>
   defaultMethod?: CljFunction | CljNativeFunction
+  /** Custom sentinel for the "no method found" fallback. Defaults to :default. */
+  defaultDispatchVal?: CljValue
 }
 
 export type CljProtocolMethod = {
@@ -242,6 +245,7 @@ export type CljPending = {
 export type CljValue =
   | CljNumber
   | CljString
+  | CljChar
   | CljBoolean
   | CljKeyword
   | CljNil
@@ -377,6 +381,10 @@ export type TokenReaderTag = {
   kind: 'ReaderTag'
   value: string // the tag identifier, e.g. "inst", "uuid", "myapp/Foo"
 }
+export type TokenCharacter = {
+  kind: 'Character'
+  value: string // resolved JS character, e.g. ' ' for \space, '\n' for \newline
+}
 export type Token = (
   | TokenLParen
   | TokenRParen
@@ -403,6 +411,7 @@ export type Token = (
   | TokenNsMapPrefix
   | TokenDiscard
   | TokenReaderTag
+  | TokenCharacter
 ) & { start: Cursor; end: Cursor }
 
 /** Compiler */

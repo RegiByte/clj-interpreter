@@ -100,6 +100,8 @@ export type Session = {
   /** Passthrough to runtime.registry. Used by nREPL and tooling for namespace lookup. */
   readonly registry: Runtime['registry']
   readonly currentNs: string
+  /** Libraries installed into this session. Preserved in snapshots so cloned sessions re-apply the same setup. */
+  readonly libraries: CljamLibrary[]
   setNs: (namespace: string) => void
   getNs: (namespace: string) => CljNamespace | null
   loadFile: (source: string, nsName?: string, filePath?: string) => string
@@ -138,6 +140,8 @@ export type Session = {
 export type SessionSnapshot = {
   runtimeSnapshot: RuntimeSnapshot
   currentNs: string
+  /** Libraries to re-apply when restoring — ensures native modules + source registrations survive cloning. */
+  libraries: CljamLibrary[]
 }
 
 // ---------------------------------------------------------------------------
@@ -198,6 +202,10 @@ function buildSessionFacade(
 
     get currentNs() {
       return currentNs
+    },
+
+    get libraries() {
+      return options?.libraries ?? []
     },
 
     setNs(name: string) {
@@ -518,6 +526,7 @@ export function snapshotSession(session: Session): SessionSnapshot {
   return {
     runtimeSnapshot: session.runtime.snapshot(),
     currentNs: session.currentNs,
+    libraries: session.libraries,
   }
 }
 
@@ -526,16 +535,43 @@ export function snapshotSession(session: Session): SessionSnapshot {
  * Skips the core.clj bootstrap — the cloned registry already contains the
  * fully-expanded core environment. Re-wires all registry-dependent closures
  * (resolveNs, require, IO fns) to the new registry instance.
+ *
+ * Libraries from the snapshot are re-applied fresh (both registeredSources and
+ * native installModules), exactly as createSession does — so cloned sessions get
+ * the full library setup regardless of which options the caller passes.
  */
 export function createSessionFromSnapshot(
   snapshot: SessionSnapshot,
   options?: SessionOptions
 ): Session {
+  // Merge snapshot libraries with any caller-supplied libraries (caller wins on conflict)
+  const libraries = [
+    ...snapshot.libraries,
+    ...(options?.libraries ?? []),
+  ]
+
+  // Re-build registeredSources from the library set
+  const registeredSources = new Map<string, string>()
+  for (const lib of libraries) {
+    for (const [nsName, source] of Object.entries(lib.sources ?? {})) {
+      registeredSources.set(nsName, source)
+    }
+  }
+
   const runtime = restoreRuntime(snapshot.runtimeSnapshot, {
     sourceRoots: options?.sourceRoots,
     readFile: options?.readFile,
+    registeredSources: registeredSources.size > 0 ? registeredSources : undefined,
   })
-  const session = buildSessionFacade(runtime, snapshot.currentNs, options)
+
+  // Re-install native library modules into the restored runtime
+  const libraryModules = libraries.flatMap((lib) => (lib.module ? [lib.module] : []))
+  if (libraryModules.length > 0) {
+    runtime.installModules(libraryModules)
+  }
+
+  const mergedOptions: SessionOptions = { ...options, libraries }
+  const session = buildSessionFacade(runtime, snapshot.currentNs, mergedOptions)
   for (const source of options?.entries ?? []) {
     session.loadFile(source)
   }

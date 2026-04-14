@@ -4,111 +4,17 @@ import { printString } from '../printer'
 import { getLineCol, getPos, maybeHydrateErrorPos } from '../positions'
 import type {
   CljList,
-  CljMap,
-  CljSet,
   CljValue,
   Env,
   EvaluationContext,
-  CljMultiMethod,
   StackFrame,
 } from '../types'
 
 import { evaluateSpecialForm } from './special-forms'
+import { dispatchMultiMethod } from './multimethod-dispatch'
 
 const LIST_HEAD_POS = 0
 const LIST_BODY_POS = 1
-
-// ─── Hierarchy helpers ────────────────────────────────────────────────────────
-// These are inlined in the evaluator layer to avoid importing from the stdlib
-// module layer (dependency direction: stdlib → core, not core → stdlib).
-
-/**
- * Read the current value of *hierarchy* from clojure.core, respecting any
- * active binding (so (binding [*hierarchy* custom-h] ...) works in TypeScript
- * dispatch even before Phase 10 of the compiler).
- */
-function getCurrentHierarchy(ctx: EvaluationContext): CljMap | null {
-  const coreNs = ctx.allNamespaces().find((ns) => ns.name === 'clojure.core')
-  if (!coreNs) return null
-  const hVar = coreNs.vars.get('*hierarchy*')
-  if (!hVar) return null
-  const val =
-    hVar.dynamic && hVar.bindingStack && hVar.bindingStack.length > 0
-      ? hVar.bindingStack[hVar.bindingStack.length - 1]
-      : hVar.value
-  return is.map(val) ? (val as CljMap) : null
-}
-
-/**
- * O(1) isa? check directly against the precomputed hierarchy map.
- * Reflexive: child isa? child is always true.
- */
-function isAInHierarchy(h: CljMap, child: CljValue, parent: CljValue): boolean {
-  if (is.equal(child, parent)) return true
-  // Find {:ancestors <map>} in the hierarchy
-  for (const [k, subMap] of h.entries) {
-    if (k.kind !== 'keyword' || k.name !== ':ancestors') continue
-    if (!is.map(subMap)) return false
-    // Find the ancestor-set for child
-    for (const [ck, cv] of (subMap as CljMap).entries) {
-      if (!is.equal(ck, child)) continue
-      if (!is.set(cv)) return false
-      return (cv as CljSet).values.some((x) => is.equal(x, parent))
-    }
-    return false
-  }
-  return false
-}
-
-export function dispatchMultiMethod(
-  mm: CljMultiMethod,
-  args: CljValue[],
-  ctx: EvaluationContext,
-  env: Env,
-  callSite?: CljList
-): CljValue {
-  const dispatchVal = ctx.applyFunction(mm.dispatchFn, args, env)
-
-  // 1. Exact match (fast path)
-  const exactMethod = mm.methods.find(({ dispatchVal: dv }) => is.equal(dv, dispatchVal))
-  if (exactMethod) return ctx.applyFunction(exactMethod.fn, args, env)
-
-  // 2. Hierarchy fallback — check isa? for each registered dispatch value
-  const h = getCurrentHierarchy(ctx)
-  if (h) {
-    const matches = mm.methods.filter(({ dispatchVal: dv }) =>
-      isAInHierarchy(h, dispatchVal, dv)
-    )
-    if (matches.length === 1) {
-      return ctx.applyFunction(matches[0].fn, args, env)
-    }
-    if (matches.length > 1) {
-      throw new EvaluationError(
-        `Multiple methods in multimethod '${mm.name}' match dispatch value ` +
-          `${printString(dispatchVal)}: ` +
-          matches.map((m) => printString(m.dispatchVal)).join(', '),
-        { mm, dispatchVal },
-        callSite ? getPos(callSite) : undefined
-      )
-    }
-  }
-
-  // 3. :default fallback
-  // TODO: Clojure supports a custom default-dispatch-val per multimethod:
-  //   (defmulti foo identity :default ::no-match)
-  // This lets :default be a real dispatchable value while ::no-match is the
-  // fallback sentinel. Currently :default is hardcoded as the only sentinel,
-  // making it impossible to dispatch on the literal value :default while also
-  // having a catch-all. Low priority — add CljMultiMethod.defaultDispatchVal
-  // and thread it through defmulti, defmethod detection, and here.
-  if (mm.defaultMethod) return ctx.applyFunction(mm.defaultMethod, args, env)
-
-  throw new EvaluationError(
-    `No method in multimethod '${mm.name}' for dispatch value ${printString(dispatchVal)}`,
-    { mm, dispatchVal },
-    callSite ? getPos(callSite) : undefined
-  )
-}
 
 export function evaluateList(
   list: CljList,
@@ -140,19 +46,23 @@ export function evaluateList(
 
   if (!is.callable(evaledHead)) {
     const name = is.symbol(head) ? head.name : printString(head)
-    throw new EvaluationError(`${name} is not callable`, { list, env }, getPos(list))
+    throw new EvaluationError(
+      `${name} is not callable`,
+      { list, env },
+      getPos(list)
+    )
   }
 
   const args = list.value
     .slice(LIST_BODY_POS)
     .map((arg) => ctx.evaluate(arg, env))
   const rawPos = getPos(list)
-  let line = null as null | number
-  let col = null as null | number
+  let line: null | number = null
+  let col: null | number = null
   if (rawPos && ctx.currentSource) {
     const lc = getLineCol(ctx.currentSource, rawPos.start)
     line = lc.line
-    col = lc.col + 1  // 1-indexed
+    col = lc.col + 1 // 1-indexed
   }
   const frame: StackFrame = {
     fnName: is.symbol(head) ? head.name : null,

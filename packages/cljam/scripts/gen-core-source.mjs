@@ -74,7 +74,7 @@ for (const filePath of collectCljFiles(cljDir)) {
   const source = readFileSync(filePath, 'utf-8')
   const nsName = extractNsName(source)
   if (!nsName) continue
-  if (!(nsName === 'clojure.core' || nsName.startsWith('clojure.'))) continue
+  if (!(nsName === 'clojure.core' || nsName.startsWith('clojure.') || nsName.startsWith('cljam.'))) continue
 
   const suffix = toModuleSuffix(nsName)
   const varName = toVarName(nsName)

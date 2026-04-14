@@ -129,7 +129,8 @@ function done(
 
 function handleClone(
   msg: NreplMessage,
-  sessions: Map<string, ManagedSession>,
+  serverSessions: Map<string, ManagedSession>,
+  connectionSessionIds: Set<string>,
   snapshot: SessionSnapshot,
   encoder: BEncoderStream,
   sourceRoots?: string[],
@@ -139,7 +140,11 @@ function handleClone(
   const id = (msg['id'] as string) ?? ''
   const newId = makeSessionId()
   const managed = createManagedSession(newId, snapshot, encoder, sourceRoots, onOutput, importModule)
-  sessions.set(newId, managed)
+  // Register in the server-wide map (visible to all connections via ls-sessions)
+  // and in the per-connection set (for cleanup on socket close)
+  serverSessions.set(newId, managed)
+  connectionSessionIds.add(newId)
+  process.stderr.write(`[nREPL] New session: ${newId}\n`)
   done(encoder, id, undefined, { 'new-session': newId })
 }
 
@@ -157,6 +162,7 @@ function handleDescribe(msg: NreplMessage, encoder: BEncoderStream) {
       info: {},
       lookup: {},
       'load-file': {},
+      'ls-sessions': {},
     },
     versions: {
       conjure: { 'version-string': CONJURE_VERSION },
@@ -523,6 +529,25 @@ function handleEldoc(
   })
 }
 
+function handleLsSessions(
+  msg: NreplMessage,
+  serverSessions: Map<string, ManagedSession>,
+  encoder: BEncoderStream
+) {
+  const id = (msg['id'] as string) ?? ''
+  const sessionId = msg['session'] as string | undefined
+  const ids: string[] = []
+  const namespaces: string[] = []
+  for (const [sid, m] of serverSessions) {
+    ids.push(sid)
+    namespaces.push(m.session.currentNs)
+  }
+  done(encoder, id, sessionId, {
+    'session-ids': ids,
+    'session-namespaces': namespaces,
+  })
+}
+
 function handleUnknown(msg: NreplMessage, encoder: BEncoderStream) {
   const id = (msg['id'] as string) ?? ''
   send(encoder, { id, status: ['unknown-op', 'done'] })
@@ -534,7 +559,8 @@ function handleUnknown(msg: NreplMessage, encoder: BEncoderStream) {
 
 function handleMessage(
   msg: NreplMessage,
-  sessions: Map<string, ManagedSession>,
+  serverSessions: Map<string, ManagedSession>,
+  connectionSessionIds: Set<string>,
   snapshot: SessionSnapshot,
   encoder: BEncoderStream,
   defaultSession: ManagedSession,
@@ -546,12 +572,12 @@ function handleMessage(
   const op = msg['op'] as string
   const sessionId = msg['session'] as string | undefined
   const managed = sessionId
-    ? (sessions.get(sessionId) ?? defaultSession)
+    ? (serverSessions.get(sessionId) ?? defaultSession)
     : defaultSession
 
   switch (op) {
     case 'clone':
-      handleClone(msg, sessions, snapshot, encoder, sourceRoots, onOutput, importModule)
+      handleClone(msg, serverSessions, connectionSessionIds, snapshot, encoder, sourceRoots, onOutput, importModule)
       break
     case 'describe':
       handleDescribe(msg, encoder)
@@ -582,7 +608,10 @@ function handleMessage(
       handleComplete(msg, managed, encoder)
       break
     case 'close':
-      handleClose(msg, sessions, encoder)
+      handleClose(msg, serverSessions, encoder)
+      break
+    case 'ls-sessions':
+      handleLsSessions(msg, serverSessions, encoder)
       break
     case 'info':
       handleInfo(msg, managed, encoder)
@@ -647,6 +676,11 @@ export function startNreplServer(options: NreplServerOptions = {}): net.Server {
 
   const { meshNode, onOutput, importModule } = options
 
+  // Server-wide session registry — visible to all connections via ls-sessions.
+  // Moving this outside the per-socket callback is what makes cross-client
+  // session discovery possible (e.g. listing Calva's session from cljam-mcp).
+  const serverSessions = new Map<string, ManagedSession>()
+
   const server = net.createServer((socket) => {
     const encoder = new BEncoderStream()
     const decoder = new BDecoderStream()
@@ -654,7 +688,9 @@ export function startNreplServer(options: NreplServerOptions = {}): net.Server {
     encoder.pipe(socket)
     socket.pipe(decoder)
 
-    const sessions = new Map<string, ManagedSession>()
+    // Track which sessions belong to THIS connection so we can clean them up
+    // when the socket closes without touching other connections' sessions.
+    const connectionSessionIds = new Set<string>()
 
     // A default session for session-less messages (e.g. Calva's initial eval)
     const defaultId = makeSessionId()
@@ -666,12 +702,14 @@ export function startNreplServer(options: NreplServerOptions = {}): net.Server {
       onOutput,
       importModule
     )
-    sessions.set(defaultId, defaultSession)
+    serverSessions.set(defaultId, defaultSession)
+    connectionSessionIds.add(defaultId)
 
     decoder.on('data', (msg: NreplMessage) => {
       handleMessage(
         msg,
-        sessions,
+        serverSessions,
+        connectionSessionIds,
         snapshot,
         encoder,
         defaultSession,
@@ -687,7 +725,11 @@ export function startNreplServer(options: NreplServerOptions = {}): net.Server {
     })
 
     socket.on('close', () => {
-      sessions.clear()
+      // Remove only this connection's sessions from the shared registry
+      for (const id of connectionSessionIds) {
+        serverSessions.delete(id)
+      }
+      connectionSessionIds.clear()
     })
   })
 

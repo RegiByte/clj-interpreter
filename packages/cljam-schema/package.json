@@ -1,0 +1,50 @@
+{
+  "name": "@regibyte/cljam-schema",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "Data-driven schema validation and JSON Schema generation for cljam (malli-inspired)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RegiByte/cljam.git"
+  },
+  "author": "Regibyte",
+  "homepage": "https://github.com/RegiByte/cljam",
+  "license": "MIT",
+  "exports": {
+    ".": "./schema.ts"
+  },
+  "files": [
+    "schema.ts",
+    "src/**/*.ts",
+    "src/**/*.clj",
+    "src/generated/**",
+    "!src/**/__tests__/**",
+    "!src/**/*.spec.ts",
+    "!src/**/*.test.ts",
+    "tsconfig.json",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@regibyte/cljam": ">=0.0.17"
+  },
+  "devDependencies": {
+    "@regibyte/cljam": "file:../cljam",
+    "vitest": "^4.0.18",
+    "typescript": "~5.9.3",
+    "@types/node": "^25.3.5"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "gen:sources": "cljam gen-lib-source src/clojure src/generated/sources.ts",
+    "prepublishOnly": "npm run gen:sources"
+  },
+  "cljam": {
+    "sourceRoots": [
+      "src/clojure"
+    ],
+    "libraries": [
+      "."
+    ]
+  }
+}

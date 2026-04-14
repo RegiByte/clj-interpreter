@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { createSession } from '../../session'
-import { freshSession, expectError } from '../../evaluator/__tests__/evaluator-test-utils'
+import { freshSession } from '../../evaluator/__tests__/evaluator-test-utils'
 
 function jsSession(bindings: Record<string, unknown>) {
   return createSession({ hostBindings: bindings })

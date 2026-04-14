@@ -46,6 +46,9 @@ export const arithmeticFunctions: Record<string, CljValue> = {
           badIdx
         )
       }
+      if (nums.length === 1) {
+        return v.number(-(nums[0] as CljNumber).value)
+      }
       return nums.slice(1).reduce(function subtractNumbers(acc, arg) {
         return v.number((acc as CljNumber).value - (arg as CljNumber).value)
       }, nums[0] as CljNumber)

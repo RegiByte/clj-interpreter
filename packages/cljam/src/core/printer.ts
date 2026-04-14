@@ -163,8 +163,23 @@ function printShortKey(key: CljKeyword, depth: number): string {
   return printString(v.keyword(`:${shortName}`), depth)
 }
 
+// Reverse map of named character literals for the printer.
+// Printable chars that have a canonical name use \name form; others use \X.
+const CHAR_NAMES: Record<string, string> = {
+  ' ': 'space',
+  '\n': 'newline',
+  '\t': 'tab',
+  '\r': 'return',
+  '\b': 'backspace',
+  '\f': 'formfeed',
+}
+
 function printStringImpl(value: CljValue, depth: number): string {
   switch (value.kind) {
+    case valueKeywords.character: {
+      const name = CHAR_NAMES[value.value]
+      return name ? `\\${name}` : `\\${value.value}`
+    }
     case valueKeywords.number:
       return value.value.toString()
     case valueKeywords.string:

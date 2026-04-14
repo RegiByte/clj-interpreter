@@ -161,4 +161,42 @@ describe('multimethods', () => {
       v.number(10)
     )
   })
+
+  // ── Custom default-dispatch-val ──────────────────────────────────────────
+
+  it('custom :default sentinel: :default becomes a real dispatch value', () => {
+    const session = freshSession()
+    // ::unclassified is the new fallback sentinel; :default is now a real value
+    session.evaluate('(defmulti classify identity :default ::unclassified)')
+    session.evaluate('(defmethod classify :a [x] "is A")')
+    session.evaluate('(defmethod classify :default [x] "literally default")')
+    session.evaluate('(defmethod classify ::unclassified [x] "fallback")')
+
+    expect(session.evaluate('(classify :a)')).toEqual(v.string('is A'))
+    // :default is dispatched as a normal value — NOT the fallback
+    expect(session.evaluate('(classify :default)')).toEqual(
+      v.string('literally default')
+    )
+    // Any other value hits the custom fallback
+    expect(session.evaluate('(classify :z)')).toEqual(v.string('fallback'))
+  })
+
+  it('custom :default sentinel: throws when no method and no fallback', () => {
+    const session = freshSession()
+    session.evaluate('(defmulti classify identity :default ::unclassified)')
+    session.evaluate('(defmethod classify :a [x] "is A")')
+    // ::unclassified is the sentinel but no method is registered for it
+    expect(() => session.evaluate('(classify :z)')).toThrow(
+      'No method in multimethod'
+    )
+  })
+
+  it('custom :default sentinel is preserved through re-eval guard', () => {
+    const session = freshSession()
+    session.evaluate('(defmulti classify identity :default ::fallback)')
+    session.evaluate('(defmethod classify ::fallback [x] "caught")')
+    // Re-evaluate defmulti — re-eval guard fires; sentinel must be unchanged
+    session.evaluate('(defmulti classify identity :default ::fallback)')
+    expect(session.evaluate('(classify :anything)')).toEqual(v.string('caught'))
+  })
 })

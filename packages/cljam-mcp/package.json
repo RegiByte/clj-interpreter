@@ -1,0 +1,41 @@
+{
+  "name": "@regibyte/cljam-mcp",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "MCP server for cljam — give LLMs a persistent, interactive Clojure REPL",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RegiByte/cljam.git"
+  },
+  "author": "Regibyte",
+  "homepage": "https://github.com/RegiByte/cljam",
+  "license": "MIT",
+  "exports": {
+    ".": "./mcp.ts"
+  },
+  "bin": {
+    "cljam-mcp": "./bin/cljam-mcp.ts"
+  },
+  "files": [
+    "mcp.ts",
+    "src/**/*.ts",
+    "bin/**/*.ts",
+    "tsconfig.json"
+  ],
+  "peerDependencies": {
+    "@regibyte/cljam": ">=0.0.17"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@regibyte/cljam": "file:../cljam",
+    "vitest": "^4.0.18",
+    "typescript": "~5.9.3",
+    "@types/node": "^25.3.5"
+  },
+  "scripts": {
+    "test": "vitest run"
+  }
+}

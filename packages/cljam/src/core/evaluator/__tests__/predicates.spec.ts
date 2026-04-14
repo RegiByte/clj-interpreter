@@ -216,6 +216,146 @@ describe('type', () => {
   })
 })
 
+describe('every? with callable predicates (keywords, sets, maps)', () => {
+  it('keyword predicate works in every?', () => {
+    const session = freshSession()
+    expect(session.evaluate('(every? :active [{:active true} {:active true}])')).toMatchObject(v.boolean(true))
+    expect(session.evaluate('(every? :active [{:active true} {}])')).toMatchObject(v.boolean(false))
+  })
+
+  it('set predicate works in every?', () => {
+    const session = freshSession()
+    expect(session.evaluate('(every? #{1 2 3} [1 2 3])')).toMatchObject(v.boolean(true))
+    expect(session.evaluate('(every? #{1 2 3} [1 4])')).toMatchObject(v.boolean(false))
+  })
+
+  it('map predicate works in every?', () => {
+    const session = freshSession()
+    expect(session.evaluate('(every? {:a 1} [:a])')).toMatchObject(v.boolean(true))
+  })
+})
+
+describe('ident? / simple-ident? / qualified-ident?', () => {
+  it.each([
+    ["(ident? :foo)", true],
+    ["(ident? :ns/foo)", true],
+    ["(ident? 'foo)", true],
+    ["(ident? 'ns/foo)", true],
+    ["(ident? \"foo\")", false],
+    ["(ident? 42)", false],
+    ["(ident? nil)", false],
+  ])('%s → %s', (code, expected) => {
+    expect(freshSession().evaluate(code)).toMatchObject(v.boolean(expected))
+  })
+
+  it.each([
+    ["(simple-ident? :foo)", true],
+    ["(simple-ident? :ns/foo)", false],
+    ["(simple-ident? 'foo)", true],
+    ["(simple-ident? 'ns/foo)", false],
+    ["(simple-ident? \"foo\")", false],
+  ])('%s → %s', (code, expected) => {
+    expect(freshSession().evaluate(code)).toMatchObject(v.boolean(expected))
+  })
+
+  it.each([
+    ["(qualified-ident? :ns/foo)", true],
+    ["(qualified-ident? :foo)", false],
+    ["(qualified-ident? 'ns/foo)", true],
+    ["(qualified-ident? 'foo)", false],
+    ["(qualified-ident? 42)", false],
+  ])('%s → %s', (code, expected) => {
+    expect(freshSession().evaluate(code)).toMatchObject(v.boolean(expected))
+  })
+})
+
+describe('simple-keyword? / simple-symbol?', () => {
+  it.each([
+    ["(simple-keyword? :foo)", true],
+    ["(simple-keyword? :ns/foo)", false],
+    ["(simple-keyword? 'foo)", false],
+    ["(simple-keyword? \"foo\")", false],
+  ])('%s → %s', (code, expected) => {
+    expect(freshSession().evaluate(code)).toMatchObject(v.boolean(expected))
+  })
+
+  it.each([
+    ["(simple-symbol? 'foo)", true],
+    ["(simple-symbol? 'ns/foo)", false],
+    ["(simple-symbol? :foo)", false],
+    ["(simple-symbol? \"foo\")", false],
+  ])('%s → %s', (code, expected) => {
+    expect(freshSession().evaluate(code)).toMatchObject(v.boolean(expected))
+  })
+})
+
+describe('pos-int? / neg-int? / nat-int?', () => {
+  it.each([
+    ["(pos-int? 1)", true],
+    ["(pos-int? 0)", false],
+    ["(pos-int? -1)", false],
+    ["(pos-int? 1.5)", false],
+    ["(pos-int? nil)", false],
+  ])('%s → %s', (code, expected) => {
+    expect(freshSession().evaluate(code)).toMatchObject(v.boolean(expected))
+  })
+
+  it.each([
+    ["(neg-int? -1)", true],
+    ["(neg-int? 0)", false],
+    ["(neg-int? 1)", false],
+    ["(neg-int? -1.5)", false],
+    ["(neg-int? nil)", false],
+  ])('%s → %s', (code, expected) => {
+    expect(freshSession().evaluate(code)).toMatchObject(v.boolean(expected))
+  })
+
+  it.each([
+    ["(nat-int? 0)", true],
+    ["(nat-int? 1)", true],
+    ["(nat-int? -1)", false],
+    ["(nat-int? 0.5)", false],
+    ["(nat-int? nil)", false],
+  ])('%s → %s', (code, expected) => {
+    expect(freshSession().evaluate(code)).toMatchObject(v.boolean(expected))
+  })
+})
+
+describe('NaN? / infinite? — edge cases', () => {
+  it('NaN? is true only for NaN, not Infinity', () => {
+    const s = freshSession()
+    expect(s.evaluate('(require (quote [clojure.math :as m])) (NaN? (m/sqrt -1))')).toMatchObject(v.boolean(true))
+    expect(s.evaluate('(NaN? 1)')).toMatchObject(v.boolean(false))
+    expect(s.evaluate('(NaN? (m/log 0))')).toMatchObject(v.boolean(false))  // -Infinity is not NaN
+  })
+
+  it('infinite? is true for +/-Inf but NOT for NaN', () => {
+    const s = freshSession()
+    s.evaluate('(require (quote [clojure.math :as m]))')
+    expect(s.evaluate('(infinite? (m/log 0))')).toMatchObject(v.boolean(true))   // -Infinity
+    expect(s.evaluate('(infinite? (- (m/log 0)))')).toMatchObject(v.boolean(true)) // +Infinity via unary -
+    expect(s.evaluate('(infinite? 1)')).toMatchObject(v.boolean(false))
+    expect(s.evaluate('(infinite? (m/sqrt -1))')).toMatchObject(v.boolean(false)) // NaN must be false
+  })
+})
+
+describe('unary - (negation)', () => {
+  it.each([
+    ['(- 5)', v.number(-5)],
+    ['(- -3)', v.number(3)],
+    ['(- 1.5)', v.number(-1.5)],
+  ])('%s → %s', (code, expected) => {
+    expect(freshSession().evaluate(code)).toMatchObject(expected)
+  })
+
+  it('(- 0) produces zero (IEEE 754 -0 is still 0)', () => {
+    const result = freshSession().evaluate('(- 0)')
+    expect(result.kind).toBe('number')
+    // -0 === 0 in JS, but toMatchObject distinguishes them; use == 0
+    expect((result as import('../../types').CljNumber).value == 0).toBe(true)
+  })
+})
+
 describe('boolean', () => {
   it.each([
     ['(boolean true)', v.boolean(true)],

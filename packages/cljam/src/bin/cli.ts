@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { createInterface } from 'node:readline/promises'
 import { stdin as input, stdout as output } from 'node:process'
 import { fileURLToPath } from 'node:url'
@@ -7,12 +8,74 @@ import {
   createSession,
   printString,
   type Session,
+  type CljamLibrary,
 } from '../core'
 import { extractNsName } from '../vite-plugin-cljam/namespace-utils'
 import { inferSourceRoot, discoverSourceRoots } from './nrepl-utils'
 import { startNreplServer } from './nrepl'
 import { VERSION } from './version'
 import { makeNodeHostModule } from '../host/node-host-module'
+
+// ---------------------------------------------------------------------------
+// Library loading (mirrors cljam-mcp/src/server.ts — reads cljam.libraries
+// from a root_dir's package.json and dynamically imports each CljamLibrary)
+// ---------------------------------------------------------------------------
+
+function readPackageLibraries(rootDir: string): string[] {
+  try {
+    const content = readFileSync(resolve(rootDir, 'package.json'), 'utf-8')
+    const pkg = JSON.parse(content) as Record<string, unknown>
+    const cljam = pkg?.cljam as Record<string, unknown> | undefined
+    const specs = cljam?.libraries
+    if (!Array.isArray(specs)) return []
+    return specs.filter((s): s is string => typeof s === 'string')
+  } catch {
+    return []
+  }
+}
+
+function resolvePackageEntry(spec: string, rootDir: string): string {
+  const pkgDir = spec.startsWith('.')
+    ? resolve(rootDir, spec)
+    : resolve(rootDir, 'node_modules', spec)
+  const pkgJson = JSON.parse(readFileSync(resolve(pkgDir, 'package.json'), 'utf-8')) as {
+    exports?: string | Record<string, unknown>
+    main?: string
+  }
+  if (pkgJson.exports) {
+    const dot = typeof pkgJson.exports === 'string' ? pkgJson.exports : pkgJson.exports['.']
+    if (typeof dot === 'string') return resolve(pkgDir, dot)
+    if (dot && typeof dot === 'object') {
+      const c = dot as Record<string, unknown>
+      const e = c['import'] ?? c['default'] ?? c['require']
+      if (typeof e === 'string') return resolve(pkgDir, e)
+    }
+  }
+  if (pkgJson.main) return resolve(pkgDir, pkgJson.main)
+  return resolve(pkgDir, 'index.js')
+}
+
+async function loadLibrariesFromRoot(rootDir: string): Promise<CljamLibrary[]> {
+  const specs = readPackageLibraries(rootDir)
+  if (specs.length === 0) return []
+  const libs: CljamLibrary[] = []
+  for (const spec of specs) {
+    try {
+      const entry = resolvePackageEntry(spec, rootDir)
+      const mod = await import(pathToFileURL(entry).href) as Record<string, unknown>
+      const lib = mod.library as CljamLibrary | undefined
+      if (lib && typeof lib.id === 'string') {
+        libs.push(lib)
+        process.stderr.write(`[cljam] loaded library: ${lib.id}\n`)
+      } else {
+        process.stderr.write(`[cljam] warning: ${spec} has no \`library\` export\n`)
+      }
+    } catch (e) {
+      process.stderr.write(`[cljam] warning: could not load library ${spec}: ${e instanceof Error ? e.message : e}\n`)
+    }
+  }
+  return libs
+}
 
 type CliIo = {
   writeLine: (text: string) => void
@@ -49,7 +112,7 @@ function printUsage(io: CliIo) {
   io.writeLine('Usage:')
   io.writeLine('  cljam repl')
   io.writeLine('  cljam run <file.clj>')
-  io.writeLine('  cljam nrepl-server [--port <number>] [--host <string>]')
+  io.writeLine('  cljam nrepl-server [--port <number>] [--host <string>] [--root-dir <path>]')
 }
 
 export function runFile(fileArg: string, io: CliIo = makeCliIo()): number {
@@ -151,17 +214,20 @@ export async function startRepl(io: CliIo = makeCliIo()): Promise<number> {
   return startInteractiveRepl(session, io)
 }
 
-function parseNreplArgs(args: string[]): { port: number; host: string } {
+function parseNreplArgs(args: string[]): { port: number; host: string; rootDir?: string } {
   let port = 7888
   let host = '127.0.0.1'
+  let rootDir: string | undefined
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--port' && args[i + 1]) {
       port = parseInt(args[++i], 10)
     } else if (args[i] === '--host' && args[i + 1]) {
       host = args[++i]
+    } else if (args[i] === '--root-dir' && args[i + 1]) {
+      rootDir = resolve(args[++i])
     }
   }
-  return { port, host }
+  return { port, host, rootDir }
 }
 
 export async function runCli(
@@ -184,9 +250,27 @@ export async function runCli(
   }
 
   if (command === 'nrepl-server') {
-    const { port, host } = parseNreplArgs(rest)
-    const sourceRoots = discoverSourceRoots(process.cwd())
-    startNreplServer({ port, host, sourceRoots })
+    const { port, host, rootDir } = parseNreplArgs(rest)
+    const effectiveRoot = rootDir ?? process.cwd()
+    const sourceRoots = discoverSourceRoots(effectiveRoot)
+
+    // If root-dir is set, load cljam.libraries from its package.json
+    const libraries = await loadLibrariesFromRoot(effectiveRoot)
+
+    if (libraries.length > 0) {
+      // Pre-build a session with the libraries installed; the server snapshots it.
+      const session = createSession({
+        sourceRoots,
+        readFile: (filePath) => readFileSync(filePath, 'utf8'),
+        libraries,
+        output: (text) => process.stdout.write(text),
+      })
+      session.runtime.installModules([makeNodeHostModule(session)])
+      startNreplServer({ port, host, session, onOutput: (t) => process.stdout.write(t) })
+    } else {
+      startNreplServer({ port, host, sourceRoots })
+    }
+
     // Keep the process alive; the TCP server holds the event loop open.
     return new Promise(() => {})
   }

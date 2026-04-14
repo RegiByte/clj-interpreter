@@ -15,7 +15,7 @@
 
 import { readFileSync } from 'node:fs'
 import { createSession, printString } from '@regibyte/cljam'
-import { startNreplServer } from 'cljam/nrepl'
+import { startNreplServer } from '@regibyte/cljam/nrepl'
 import { library as dateLib } from '@regibyte/cljam-date'
 
 const session = createSession({

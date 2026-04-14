@@ -1,6 +1,6 @@
 import type { Arity, DestructurePattern } from '../core/types'
 import { extractNsName, extractNsRequires, extractStringRequires } from './namespace-utils'
-import { readNamespaceVars } from './static-analysis'
+import { readNamespaceVars, readDeftestNames } from './static-analysis'
 
 export interface CodegenContext {
   sourceRoots: string[]
@@ -130,6 +130,154 @@ export function generateDts(
   void nsName
 
   return declarations.join('\n')
+}
+
+/**
+ * Options for {@link generateTestModuleCode}.
+ */
+export interface TestCodegenOptions {
+  /**
+   * Test framework that provides the `test()` function.
+   * - `'vitest'` (default): `import { test } from 'vitest'`
+   * - `'bun:test'`: `import { test } from 'bun:test'`
+   */
+  testFramework?: 'vitest' | 'bun:test'
+  /**
+   * Absolute path to a user-defined session factory module, or `null` (default)
+   * for a pristine session.
+   *
+   * The module must default-export a zero-arg function:
+   *   `() => SessionOptions | null | undefined`
+   *
+   * Its return value is spread into `createSession()`. The `output` callback is
+   * always overridden after the spread so test output stays under plugin control.
+   */
+  entrypointPath?: string | null
+}
+
+/**
+ * Generate a test module for a `.test.clj` / `.spec.clj` file.
+ *
+ * Each top-level `deftest` (in any spelling — bare, `t/deftest`, or
+ * `clojure.test/deftest`) becomes one `test()` call in the target framework.
+ * Failures are captured via a Clojure atom that the `clojure.test/report`
+ * overrides write to — no JS-side concurrency issues because both vitest and
+ * Bun's runner execute tests within a file sequentially.
+ *
+ * Architecture:
+ *  1. Create an isolated cljam session for this file (optionally seeded from
+ *     a user factory so the test session can carry hostBindings, libs, etc.).
+ *  2. Load the Clojure source (registering all deftests as functions).
+ *  3. Install `:fail` / `:error` report overrides that push formatted strings
+ *     into `__vt_failures` atom instead of printing.
+ *  4. For each deftest: reset the atom, call the function, read the atom.
+ *     Failures collected → throw Error with all messages joined.
+ *     Uncaught exceptions bubble directly to the runner (correct behaviour).
+ */
+export function generateTestModuleCode(
+  ctx: CodegenContext,
+  nsNameFromPath: string,
+  source: string,
+  testOptions: TestCodegenOptions = {}
+): string {
+  const { testFramework = 'vitest', entrypointPath = null } = testOptions
+
+  const nsName = extractNsName(source) ?? nsNameFromPath
+  const deftestNames = readDeftestNames(source)
+  const hasStringRequires = extractStringRequires(source).length > 0
+
+  const escapedSource = JSON.stringify(source)
+  const loadCall = hasStringRequires
+    ? `await __session.loadFileAsync(${escapedSource}, ${JSON.stringify(nsName)});`
+    : `__session.loadFile(${escapedSource}, ${JSON.stringify(nsName)});`
+
+  const testImport = testFramework === 'bun:test'
+    ? `import { test } from 'bun:test';`
+    : `import { test } from 'vitest';`
+
+  // Clojure expressions used to install the test-framework failure bridge.
+  // JSON.stringify handles escaping for embedding in JS string literals.
+  const failOverride = [
+    '(defmethod clojure.test/report :fail [m]',
+    '  (swap! __vt_failures conj',
+    '    (str',
+    '      (when (:message m) (str (:message m) "\\n"))',
+    '      "expected: " (pr-str (:expected m)) "\\n"',
+    '      "  actual: " (pr-str (:actual m)))))',
+  ].join(' ')
+
+  const errorOverride = [
+    '(defmethod clojure.test/report :error [m]',
+    '  (swap! __vt_failures conj',
+    '    (str "error: " (pr-str (:actual m)))))',
+  ].join(' ')
+
+  // --- session creation lines (optionally seeded from user factory) ----------
+  const sessionLines: string[] = entrypointPath
+    ? [
+        `const __session = createSession({`,
+        `  ...(__sessionFactory() ?? {}),`,
+        `  output: (t) => process.stdout.write(t),`,
+        `});`,
+      ]
+    : [
+        `const __session = createSession({ output: (t) => process.stdout.write(t) });`,
+      ]
+
+  const lines: string[] = [
+    testImport,
+    `import { createSession, cljToJs } from ${JSON.stringify(ctx.coreIndexPath)};`,
+    ...(entrypointPath
+      ? [`import __sessionFactory from ${JSON.stringify(entrypointPath)};`]
+      : []),
+    ``,
+    `// Isolated session — one per test file so state doesn't leak between files.`,
+    ...sessionLines,
+    `// loadFile evaluates the source but doesn't update session.currentNs.`,
+    `// setNs syncs it so subsequent evaluate() calls run in the right namespace.`,
+    `const __loadedNs = ${loadCall.replace(/;$/, '')};`,
+    `__session.setNs(__loadedNs);`,
+    ``,
+    `// Ensure clojure.test is available for override installation.`,
+    `__session.evaluate("(require '[clojure.test])");`,
+    ``,
+    `// Test-framework failure bridge: override :fail/:error to accumulate strings in an atom.`,
+    `// All other report methods are silenced — the test runner controls the output.`,
+    `__session.evaluate("(def __vt_failures (atom []))");`,
+    `__session.evaluate(${JSON.stringify(failOverride)});`,
+    `__session.evaluate(${JSON.stringify(errorOverride)});`,
+    `__session.evaluate("(defmethod clojure.test/report :pass [_] nil)");`,
+    `__session.evaluate("(defmethod clojure.test/report :begin-test-var [_] nil)");`,
+    `__session.evaluate("(defmethod clojure.test/report :end-test-var [_] nil)");`,
+    `__session.evaluate("(defmethod clojure.test/report :begin-test-ns [_] nil)");`,
+    `__session.evaluate("(defmethod clojure.test/report :end-test-ns [_] nil)");`,
+    `__session.evaluate("(defmethod clojure.test/report :summary [_] nil)");`,
+    ``,
+    `// Compose the :each fixture chain once for this file.`,
+    `// join-fixtures of [] → default-fixture → (fn [f] (f)), so zero-fixture files pay no overhead.`,
+    `// use-fixtures calls populate fixture-registry at loadFile time, so this runs after registration.`,
+    `__session.evaluate(${JSON.stringify(`(def __vt_each_fixture (clojure.test/join-fixtures (get @clojure.test/fixture-registry [${JSON.stringify(nsName)} :each] [])))`)}); `,
+    ``,
+  ]
+
+  for (const testName of deftestNames) {
+    lines.push(
+      `test(${JSON.stringify(testName)}, async () => {`,
+      `  __session.evaluate("(reset! __vt_failures [])");`,
+      `  // evaluateAsync awaits CljPending results (returned by (async ...) blocks),`,
+      `  // and returns synchronously for ordinary deftests — no overhead either way.`,
+      `  // __vt_each_fixture applies any :each fixtures registered via (use-fixtures :each ...).`,
+      `  await __session.evaluateAsync(${JSON.stringify(`(__vt_each_fixture (fn [] (${testName})))`)});`,
+      `  const __failures = cljToJs(__session.evaluate("@__vt_failures"), __session);`,
+      `  if (Array.isArray(__failures) && __failures.length > 0) {`,
+      `    throw new Error(__failures.join('\\n\\n'));`,
+      `  }`,
+      `});`,
+      ``,
+    )
+  }
+
+  return lines.join('\n')
 }
 
 // ---------------------------------------------------------------------------
