@@ -87,6 +87,7 @@ export {
   isEqual,
   isVar,
   isNamespace,
+  is,
 } from './assertions'
 
 // Env

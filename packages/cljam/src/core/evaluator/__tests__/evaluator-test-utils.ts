@@ -1,5 +1,5 @@
 import { expect } from 'vitest'
-import { isCljValue, isCons, isEqual, isLazySeq, isNil } from '../../assertions'
+import { isCljValue, isCons, isEqual, isLazySeq } from '../../assertions'
 import {
   cljBoolean,
   cljList,

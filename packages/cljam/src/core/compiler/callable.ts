@@ -1,6 +1,6 @@
 import { is } from '../assertions.ts'
 import { EvaluationError } from '../errors.ts'
-import { dispatchMultiMethod } from '../evaluator/dispatch.ts'
+import { dispatchMultiMethod } from '../evaluator/multimethod-dispatch.ts'
 import { resolveArity } from '../evaluator/arity.ts'
 import { getLineCol, getPos, maybeHydrateErrorPos } from '../positions.ts'
 import { printString } from '../printer.ts'

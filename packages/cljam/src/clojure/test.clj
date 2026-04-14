@@ -26,6 +26,40 @@
 (def test-registry (atom {}))
 
 ;; ---------------------------------------------------------------------------
+;; Fixture registry — maps [ns-name-string :each/:once] → [fixture-fn ...]
+;; Populated by use-fixtures at namespace load time.
+;; ---------------------------------------------------------------------------
+
+(def fixture-registry (atom {}))
+
+;; Identity fixture — baseline for reduce in join-fixtures.
+(defn default-fixture [f] (f))
+
+(defn compose-fixtures
+  "Returns a single fixture that wraps f2 inside f1.
+  Setup order: f1 setup first, then f2 setup.
+  Teardown order: f2 teardown first, then f1 teardown.
+  This is the standard middleware-onion composition."
+  [f1 f2]
+  (fn [g] (f1 (fn [] (f2 g)))))
+
+(defn join-fixtures
+  "Compose a sequence of fixture functions into a single fixture.
+  Empty sequence returns default-fixture (calls f directly).
+  Fixtures run left-to-right for setup, right-to-left for teardown."
+  [fixtures]
+  (reduce compose-fixtures default-fixture fixtures))
+
+(defn use-fixtures
+  "Register fixture functions for the current namespace.
+  type must be :each (runs around each individual test) or
+  :once (runs around the entire namespace test suite).
+  Multiple fixture fns are composed in order."
+  [type & fixture-fns]
+  (swap! fixture-registry assoc [(str (ns-name *ns*)) type] (vec fixture-fns))
+  nil)
+
+;; ---------------------------------------------------------------------------
 ;; report multimethod — dispatch on :type key of the result map.
 ;; Override any method to customise test output (e.g. for vitest integration).
 ;; ---------------------------------------------------------------------------
@@ -75,12 +109,54 @@
   (println (:fail m) "failures," (:error m) "errors."))
 
 ;; ---------------------------------------------------------------------------
+;; thrown? / thrown-with-msg? — exception-testing macros
+;;
+;; These are standalone macros that evaluate to a truthy value (the caught
+;; exception) on success, or a falsy value on failure. Designed to compose
+;; directly with `is` — no special handling in `is` required.
+;;
+;; exc-type is a keyword matched against the caught value exactly as cljam's
+;; own try/catch does: :default catches anything, :error/runtime catches
+;; runtime errors, etc.
+;;
+;; (is (thrown? :error/runtime (/ 1 0)))           → pass
+;; (is (thrown? :default (throw "boom")))           → pass
+;; (is (thrown-with-msg? :default #"boom" ...))    → pass if message matches
+;; ---------------------------------------------------------------------------
+
+(defmacro thrown?
+  "Returns the caught exception if body throws an exception matching exc-type,
+  false if no exception is thrown. Wrong-type exceptions propagate unchanged.
+  Use :default to match any thrown value."
+  [exc-type & body]
+  `(try
+     ~@body
+     false
+     (catch ~exc-type e#
+       e#)))
+
+(defmacro thrown-with-msg?
+  "Returns the caught exception if body throws exc-type AND the exception
+  message matches the regex re. Returns false if no throw, nil if message
+  does not match. Wrong-type exceptions propagate unchanged.
+  Message is extracted via (:message e) for runtime error maps, (str e) otherwise."
+  [exc-type re & body]
+  `(try
+     ~@body
+     false
+     (catch ~exc-type e#
+       (let [err-msg# (or (:message e#) (str e#))]
+         (when (re-find ~re (str err-msg#))
+           e#)))))
+
+;; ---------------------------------------------------------------------------
 ;; is — core assertion macro
 ;;
 ;; (is form)        — assert form is truthy
 ;; (is form msg)    — same, with a failure message
 ;;
 ;; Reports :pass when form is truthy, :fail when falsy, :error on exception.
+;; thrown? and thrown-with-msg? compose naturally — they return truthy/falsy.
 ;; ---------------------------------------------------------------------------
 
 (defmacro is
@@ -164,22 +240,67 @@
    (let [counters (atom {:test 0 :pass 0 :fail 0 :error 0})]
      (binding [*report-counters* counters]
        (doseq [ns-ref namespaces]
-         (let [ns-str (str (ns-name ns-ref))
-               tests  (get @test-registry ns-str [])]
+         (let [ns-str       (str (ns-name ns-ref))
+               tests        (get @test-registry ns-str [])
+               once-fixture (join-fixtures (get @fixture-registry [ns-str :once] []))
+               each-fixture (join-fixtures (get @fixture-registry [ns-str :each] []))]
            (report {:type :begin-test-ns :ns ns-ref})
-           (doseq [{test-name :name test-fn :fn} tests]
-             (binding [*testing-vars* [test-name]]
-               (report {:type :begin-test-var :var test-name})
-               (swap! *report-counters* update :test (fnil inc 0))
-               (try
-                 (test-fn)
-                 (catch :default e
-                   (report {:type :error
-                             :message "Uncaught error in test"
-                             :expected nil
-                             :actual e})))
-               (report {:type :end-test-var :var test-name})))
+           (once-fixture
+             (fn []
+               (doseq [{test-name :name test-fn :fn} tests]
+                 (binding [*testing-vars* [test-name]]
+                   (report {:type :begin-test-var :var test-name})
+                   (swap! *report-counters* update :test (fnil inc 0))
+                   (try
+                     (each-fixture test-fn)
+                     (catch :default e
+                       (report {:type :error
+                                :message "Uncaught error in test"
+                                :expected nil
+                                :actual e})))
+                   (report {:type :end-test-var :var test-name})))))
            (report {:type :end-test-ns :ns ns-ref})))
        (let [summary @counters]
          (report (assoc summary :type :summary))
          summary)))))
+
+;; ---------------------------------------------------------------------------
+;; successful? — summary predicate
+;;
+;; (successful? (run-tests 'my.ns)) → true / false
+;; ---------------------------------------------------------------------------
+
+(defn successful?
+  "Returns true if the test summary has zero failures and zero errors."
+  [summary]
+  (and (zero? (get summary :fail 0))
+       (zero? (get summary :error 0))))
+
+;; ---------------------------------------------------------------------------
+;; run-test — run a single deftest by name (REPL-friendly)
+;;
+;; (run-test my-test) — calls my-test with *report-counters* and *testing-vars*
+;;                       properly bound; prints summary; returns summary map.
+;; ---------------------------------------------------------------------------
+
+(defmacro run-test
+  "Runs a single deftest. Returns a summary map.
+  Useful for targeted test runs at the REPL without running the whole suite."
+  [test-symbol]
+  `(let [test-name# ~(str test-symbol)
+         counters#  (atom {:test 0 :pass 0 :fail 0 :error 0})]
+     (binding [*report-counters* counters#
+               *testing-vars*    [test-name#]]
+       (report {:type :begin-test-var :var test-name#})
+       (swap! *report-counters* update :test (fnil inc 0))
+       (try
+         (~test-symbol)
+         (catch :default e#
+           (report {:type :error
+                    :message "Uncaught error in test"
+                    :expected nil
+                    :actual   e#})))
+       (report {:type :end-test-var :var test-name#}))
+     (let [summary# @counters#]
+       (report (assoc summary# :type :summary))
+       summary#)))

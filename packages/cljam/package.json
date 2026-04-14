@@ -20,6 +20,7 @@
       "bun": "./src/vite-plugin-cljam/index.ts",
       "default": "./dist-vite-plugin/index.mjs"
     },
+    "./bun-test": "./src/vite-plugin-cljam/bun-plugin.ts",
     "./scripts/gen-library-sources": "./scripts/gen-library-sources.mjs"
   },
   "files": [

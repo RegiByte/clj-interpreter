@@ -1,19 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readNamespaceVars } from '../static-analysis'
-
-// ---------------------------------------------------------------------------
-// Helpers for compact arity assertions
-// ---------------------------------------------------------------------------
-
-function arityShape(fixedCount: number, variadic: boolean) {
-  return {
-    params: expect.arrayContaining(
-      Array.from({ length: fixedCount }, () => expect.objectContaining({ kind: 'symbol' }))
-    ),
-    restParam: variadic ? expect.objectContaining({ kind: 'symbol' }) : null,
-    body: [],
-  }
-}
+import { readNamespaceVars, readDeftestNames } from '../static-analysis'
 
 // ---------------------------------------------------------------------------
 // defn
@@ -23,7 +9,12 @@ describe('readNamespaceVars — defn', () => {
   it('single-arity defn produces a fn var', () => {
     const vars = readNamespaceVars('(defn add [a b] (+ a b))')
     expect(vars).toHaveLength(1)
-    expect(vars[0]).toMatchObject({ name: 'add', kind: 'fn', isPrivate: false, isMacro: false })
+    expect(vars[0]).toMatchObject({
+      name: 'add',
+      kind: 'fn',
+      isPrivate: false,
+      isMacro: false,
+    })
     expect(vars[0].arities).toHaveLength(1)
     expect(vars[0].arities![0].params).toHaveLength(2)
     expect(vars[0].arities![0].restParam).toBeNull()
@@ -63,7 +54,9 @@ describe('readNamespaceVars — defn', () => {
     expect(vars[0]).toMatchObject({ name: 'log', kind: 'fn' })
     expect(vars[0].arities![0].params).toHaveLength(1)
     expect(vars[0].arities![0].restParam).not.toBeNull()
-    expect((vars[0].arities![0].restParam as { kind: string; name: string }).name).toBe('args')
+    expect(
+      (vars[0].arities![0].restParam as { kind: string; name: string }).name
+    ).toBe('args')
   })
 
   it('variadic defn with no fixed params', () => {
@@ -74,17 +67,32 @@ describe('readNamespaceVars — defn', () => {
 
   it('defn- marks var as private', () => {
     const vars = readNamespaceVars('(defn- helper [x] x)')
-    expect(vars[0]).toMatchObject({ name: 'helper', kind: 'fn', isPrivate: true, isMacro: false })
+    expect(vars[0]).toMatchObject({
+      name: 'helper',
+      kind: 'fn',
+      isPrivate: true,
+      isMacro: false,
+    })
   })
 
   it('defn with ^:private metadata marks var as private', () => {
     const vars = readNamespaceVars('(defn ^:private helper [x] x)')
-    expect(vars[0]).toMatchObject({ name: 'helper', kind: 'fn', isPrivate: true, isMacro: false })
+    expect(vars[0]).toMatchObject({
+      name: 'helper',
+      kind: 'fn',
+      isPrivate: true,
+      isMacro: false,
+    })
   })
 
   it('defmacro marks var as macro', () => {
     const vars = readNamespaceVars('(defmacro when-let [bindings & body] nil)')
-    expect(vars[0]).toMatchObject({ name: 'when-let', kind: 'fn', isPrivate: false, isMacro: true })
+    expect(vars[0]).toMatchObject({
+      name: 'when-let',
+      kind: 'fn',
+      isPrivate: false,
+      isMacro: true,
+    })
     expect(vars[0].arities).toHaveLength(1)
   })
 })
@@ -96,37 +104,67 @@ describe('readNamespaceVars — defn', () => {
 describe('readNamespaceVars — def', () => {
   it('def with number literal → const with tsType number', () => {
     const vars = readNamespaceVars('(def max-retries 3)')
-    expect(vars[0]).toMatchObject({ name: 'max-retries', kind: 'const', tsType: 'number', isPrivate: false, isMacro: false })
+    expect(vars[0]).toMatchObject({
+      name: 'max-retries',
+      kind: 'const',
+      tsType: 'number',
+      isPrivate: false,
+      isMacro: false,
+    })
   })
 
   it('def with negative number literal', () => {
     const vars = readNamespaceVars('(def offset -1)')
-    expect(vars[0]).toMatchObject({ name: 'offset', kind: 'const', tsType: 'number' })
+    expect(vars[0]).toMatchObject({
+      name: 'offset',
+      kind: 'const',
+      tsType: 'number',
+    })
   })
 
   it('def with string literal → const with tsType string', () => {
     const vars = readNamespaceVars('(def greeting "hello")')
-    expect(vars[0]).toMatchObject({ name: 'greeting', kind: 'const', tsType: 'string' })
+    expect(vars[0]).toMatchObject({
+      name: 'greeting',
+      kind: 'const',
+      tsType: 'string',
+    })
   })
 
   it('def with boolean true → const with tsType boolean', () => {
     const vars = readNamespaceVars('(def debug? true)')
-    expect(vars[0]).toMatchObject({ name: 'debug?', kind: 'const', tsType: 'boolean' })
+    expect(vars[0]).toMatchObject({
+      name: 'debug?',
+      kind: 'const',
+      tsType: 'boolean',
+    })
   })
 
   it('def with boolean false → const with tsType boolean', () => {
     const vars = readNamespaceVars('(def disabled? false)')
-    expect(vars[0]).toMatchObject({ name: 'disabled?', kind: 'const', tsType: 'boolean' })
+    expect(vars[0]).toMatchObject({
+      name: 'disabled?',
+      kind: 'const',
+      tsType: 'boolean',
+    })
   })
 
   it('def with nil → const with tsType null', () => {
     const vars = readNamespaceVars('(def nothing nil)')
-    expect(vars[0]).toMatchObject({ name: 'nothing', kind: 'const', tsType: 'null' })
+    expect(vars[0]).toMatchObject({
+      name: 'nothing',
+      kind: 'const',
+      tsType: 'null',
+    })
   })
 
   it('def with keyword → const with tsType string', () => {
     const vars = readNamespaceVars('(def status :active)')
-    expect(vars[0]).toMatchObject({ name: 'status', kind: 'const', tsType: 'string' })
+    expect(vars[0]).toMatchObject({
+      name: 'status',
+      kind: 'const',
+      tsType: 'string',
+    })
   })
 
   it('def with computed expression → unknown', () => {
@@ -147,7 +185,12 @@ describe('readNamespaceVars — def', () => {
 
   it('def with ^:private metadata marks var as private', () => {
     const vars = readNamespaceVars('(def ^:private secret 42)')
-    expect(vars[0]).toMatchObject({ name: 'secret', kind: 'const', tsType: 'number', isPrivate: true })
+    expect(vars[0]).toMatchObject({
+      name: 'secret',
+      kind: 'const',
+      tsType: 'number',
+      isPrivate: true,
+    })
   })
 
   it('def with inline fn → fn with extracted arity', () => {
@@ -177,7 +220,11 @@ describe('readNamespaceVars — def', () => {
 describe('readNamespaceVars — defonce', () => {
   it('defonce with literal → same as def const', () => {
     const vars = readNamespaceVars('(defonce counter 0)')
-    expect(vars[0]).toMatchObject({ name: 'counter', kind: 'const', tsType: 'number' })
+    expect(vars[0]).toMatchObject({
+      name: 'counter',
+      kind: 'const',
+      tsType: 'number',
+    })
   })
 
   it('defonce with expression → unknown', () => {
@@ -193,7 +240,12 @@ describe('readNamespaceVars — defonce', () => {
 describe('readNamespaceVars — declare', () => {
   it('declare produces unknown var', () => {
     const vars = readNamespaceVars('(declare forward-ref)')
-    expect(vars[0]).toMatchObject({ name: 'forward-ref', kind: 'unknown', isPrivate: false, isMacro: false })
+    expect(vars[0]).toMatchObject({
+      name: 'forward-ref',
+      kind: 'unknown',
+      isPrivate: false,
+      isMacro: false,
+    })
     expect(vars[0].arities).toBeUndefined()
     expect(vars[0].tsType).toBeUndefined()
   })
@@ -205,7 +257,9 @@ describe('readNamespaceVars — declare', () => {
 
 describe('readNamespaceVars — skipped forms', () => {
   it('ns form is skipped', () => {
-    const vars = readNamespaceVars('(ns my.app (:require [clojure.string :as str]))')
+    const vars = readNamespaceVars(
+      '(ns my.app (:require [clojure.string :as str]))'
+    )
     expect(vars).toHaveLength(0)
   })
 
@@ -248,43 +302,142 @@ describe('readNamespaceVars — multiple forms', () => {
 (declare lazy-var)
 `
     const vars = readNamespaceVars(source)
-    expect(vars.map(v => v.name)).toEqual([
-      'version', 'internal-helper', 'greet', 'add', 'when-debug', 'lazy-var'
+    expect(vars.map((v) => v.name)).toEqual([
+      'version',
+      'internal-helper',
+      'greet',
+      'add',
+      'when-debug',
+      'lazy-var',
     ])
 
-    const version = vars.find(v => v.name === 'version')!
-    expect(version).toMatchObject({ kind: 'const', tsType: 'string', isPrivate: false })
+    const version = vars.find((v) => v.name === 'version')!
+    expect(version).toMatchObject({
+      kind: 'const',
+      tsType: 'string',
+      isPrivate: false,
+    })
 
-    const helper = vars.find(v => v.name === 'internal-helper')!
-    expect(helper).toMatchObject({ kind: 'fn', isPrivate: true, isMacro: false })
+    const helper = vars.find((v) => v.name === 'internal-helper')!
+    expect(helper).toMatchObject({
+      kind: 'fn',
+      isPrivate: true,
+      isMacro: false,
+    })
 
-    const greet = vars.find(v => v.name === 'greet')!
+    const greet = vars.find((v) => v.name === 'greet')!
     expect(greet).toMatchObject({ kind: 'fn', isPrivate: false })
     expect(greet.arities).toHaveLength(1)
     expect(greet.arities![0].params).toHaveLength(1)
 
-    const add = vars.find(v => v.name === 'add')!
+    const add = vars.find((v) => v.name === 'add')!
     expect(add).toMatchObject({ kind: 'fn' })
     expect(add.arities).toHaveLength(2)
 
-    const macro = vars.find(v => v.name === 'when-debug')!
+    const macro = vars.find((v) => v.name === 'when-debug')!
     expect(macro).toMatchObject({ kind: 'fn', isMacro: true })
 
-    const lazy = vars.find(v => v.name === 'lazy-var')!
+    const lazy = vars.find((v) => v.name === 'lazy-var')!
     expect(lazy).toMatchObject({ kind: 'unknown' })
   })
 
   it('preserves declaration order', () => {
     const source = `(def z 1) (def a 2) (def m 3)`
     const vars = readNamespaceVars(source)
-    expect(vars.map(v => v.name)).toEqual(['z', 'a', 'm'])
+    expect(vars.map((v) => v.name)).toEqual(['z', 'a', 'm'])
   })
 
   it('private and public vars are both returned (caller decides to filter)', () => {
     const source = `(defn pub [x] x) (defn- priv [x] x)`
     const vars = readNamespaceVars(source)
     expect(vars).toHaveLength(2)
-    expect(vars.find(v => v.name === 'pub')!.isPrivate).toBe(false)
-    expect(vars.find(v => v.name === 'priv')!.isPrivate).toBe(true)
+    expect(vars.find((v) => v.name === 'pub')!.isPrivate).toBe(false)
+    expect(vars.find((v) => v.name === 'priv')!.isPrivate).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// readDeftestNames
+// ---------------------------------------------------------------------------
+
+describe('readDeftestNames', () => {
+  it('returns names of all top-level deftest forms', () => {
+    const source = `
+      (deftest addition-works (is (= (+ 1 2) 3)))
+      (deftest subtraction-works (is (= (- 5 3) 2)))
+    `
+    expect(readDeftestNames(source)).toEqual([
+      'addition-works',
+      'subtraction-works',
+    ])
+  })
+
+  it('returns empty array when no deftest forms', () => {
+    expect(readDeftestNames('(defn foo [] 42)')).toEqual([])
+  })
+
+  it('ignores non-top-level deftest (inside let or fn)', () => {
+    // readDeftestNames only sees top-level forms
+    const source = `(let [] (deftest nested (is true)))`
+    expect(readDeftestNames(source)).toEqual([])
+  })
+
+  it('handles hyphenated test names', () => {
+    const source = `(deftest my-complex-test-name (is true))`
+    expect(readDeftestNames(source)).toEqual(['my-complex-test-name'])
+  })
+
+  it('skips deftest with no name symbol', () => {
+    // Malformed — but should not throw
+    const source = `(deftest)`
+    expect(readDeftestNames(source)).toEqual([])
+  })
+
+  it('does not include defn, defmacro, or def in results', () => {
+    const source = `
+      (defn helper [] nil)
+      (deftest my-test (is true))
+      (def x 42)
+    `
+    expect(readDeftestNames(source)).toEqual(['my-test'])
+  })
+
+  it('preserves declaration order', () => {
+    const source = `
+      (deftest zzz (is true))
+      (deftest aaa (is true))
+      (deftest mmm (is true))
+    `
+    expect(readDeftestNames(source)).toEqual(['zzz', 'aaa', 'mmm'])
+  })
+
+  it('recognises alias-qualified t/deftest', () => {
+    const source = `
+      (ns my.test (:require [clojure.test :as t]))
+      (t/deftest addition-works (t/is (= (+ 1 2) 3)))
+      (t/deftest subtraction-works (t/is (= (- 5 3) 2)))
+    `
+    expect(readDeftestNames(source)).toEqual([
+      'addition-works',
+      'subtraction-works',
+    ])
+  })
+
+  it('recognises fully-qualified clojure.test/deftest', () => {
+    const source = `(clojure.test/deftest my-test (clojure.test/is true))`
+    expect(readDeftestNames(source)).toEqual(['my-test'])
+  })
+
+  it('recognises mix of bare and qualified deftest in same file', () => {
+    const source = `
+      (deftest bare-test (is true))
+      (t/deftest aliased-test (is true))
+      (clojure.test/deftest qualified-test (is true))
+    `
+    expect(readDeftestNames(source)).toEqual([
+      'bare-test',
+      'aliased-test',
+      'qualified-test',
+    ])
   })
 })

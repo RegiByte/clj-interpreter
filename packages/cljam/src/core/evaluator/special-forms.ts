@@ -22,6 +22,7 @@ import type {
   EvaluationContext,
 } from '../types'
 import { parseArities, RecurSignal } from './arity'
+import { setupBindingVars } from './binding-setup'
 import {
   matchesDiscriminator,
   parseTryStructure,
@@ -496,66 +497,7 @@ function evaluateBinding(
   env: Env,
   ctx: EvaluationContext
 ): CljValue {
-  const bindings = list.value[1]
-  if (!is.vector(bindings)) {
-    throw new EvaluationError('binding requires a vector of bindings', {
-      list,
-      env,
-    }, getPos(list))
-  }
-  if (bindings.value.length % 2 !== 0) {
-    throw new EvaluationError(
-      'binding vector must have an even number of forms',
-      { list, env },
-      getPos(bindings) ?? getPos(list)
-    )
-  }
-  const body = list.value.slice(2)
-  const boundVars: import('../types').CljVar[] = []
-
-  for (let i = 0; i < bindings.value.length; i += 2) {
-    const sym = bindings.value[i]
-    if (!is.symbol(sym)) {
-      throw new EvaluationError('binding left-hand side must be a symbol', {
-        sym,
-      }, getPos(sym) ?? getPos(list))
-    }
-    const newVal = ctx.evaluate(bindings.value[i + 1], env)
-    // Support both unqualified (*my-var*) and qualified (my.ns/*my-var*) symbols.
-    const slashIdx = sym.name.indexOf('/')
-    let targetVar: import('../types').CljVar | undefined
-    if (slashIdx > 0 && slashIdx < sym.name.length - 1) {
-      const nsPrefix = sym.name.slice(0, slashIdx)
-      const localName = sym.name.slice(slashIdx + 1)
-      const nsEnv = getNamespaceEnv(env)
-      const targetNs = nsEnv.ns?.aliases.get(nsPrefix) ?? ctx.resolveNs(nsPrefix) ?? null
-      if (!targetNs) {
-        throw new EvaluationError(`No such namespace: ${nsPrefix}`, { sym }, getPos(sym))
-      }
-      targetVar = targetNs.vars.get(localName)
-    } else {
-      targetVar = lookupVar(sym.name, env)
-    }
-    const v = targetVar
-    if (!v) {
-      throw new EvaluationError(
-        `No var found for symbol '${sym.name}' in binding form`,
-        { sym },
-        getPos(sym)
-      )
-    }
-    if (!v.dynamic) {
-      throw new EvaluationError(
-        `Cannot use binding with non-dynamic var ${v.ns}/${v.name}. Mark it dynamic with (def ^:dynamic ${sym.name} ...)`,
-        { sym },
-        getPos(sym)
-      )
-    }
-    v.bindingStack ??= []
-    v.bindingStack.push(newVal)
-    boundVars.push(v)
-  }
-
+  const { body, boundVars } = setupBindingVars(list, env, ctx)
   try {
     return ctx.evaluateForms(body, env)
   } finally {

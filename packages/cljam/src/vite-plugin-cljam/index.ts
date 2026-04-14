@@ -7,7 +7,7 @@ import type { Plugin, ResolvedConfig, ViteDevServer } from 'vite'
 import { createSession } from '../core/session'
 import type { Session } from '../core/session'
 import { nsToPath, pathToNs, extractStringRequires } from './namespace-utils'
-import { generateModuleCode, generateDts, safeJsIdentifier } from './codegen'
+import { generateModuleCode, generateDts, generateTestModuleCode, safeJsIdentifier } from './codegen'
 import type { CodegenContext } from './codegen'
 import { startBrowserNreplRelay } from '../nrepl/relay'
 
@@ -410,5 +410,86 @@ export function cljPlugin(options?: CljPluginOptions): Plugin {
   } satisfies Plugin
 }
 
-export { safeJsIdentifier, generateModuleCode, generateDts }
+/**
+ * Vitest plugin for `.test.clj` and `.spec.clj` files.
+ *
+ * Register this in your `vitest.config.ts` and add the Clojure patterns to
+ * `test.include`. Each top-level `deftest` (bare, `t/deftest`, or
+ * `clojure.test/deftest`) becomes a native vitest `test()` call.
+ * The `clojure.test/report` multimethod is overridden to capture `:fail` /
+ * `:error` as strings and throw at the end of each test — giving clean
+ * failure messages in the vitest UI.
+ *
+ * By default an isolated, pristine cljam session is created per test file.
+ * Pass `entrypoint` to seed the session with custom `hostBindings`, `modules`,
+ * `allowedPackages`, etc.:
+ *
+ * ```ts
+ * // src/test-session.ts  (your factory)
+ * export default function() {
+ *   return { hostBindings: { myLib } }
+ * }
+ * ```
+ *
+ * Example vitest.config.ts:
+ * ```ts
+ * import { defineConfig } from 'vitest/config'
+ * import { cljTestPlugin } from '@regibyte/cljam/vite-plugin'
+ *
+ * export default defineConfig({
+ *   plugins: [cljTestPlugin({ sourceRoots: ['src'], entrypoint: 'src/test-session.ts' })],
+ *   test: {
+ *     include: [
+ *       '**\/*.{test,spec}.{js,ts,tsx}',
+ *       '**\/*.{test,spec}.clj',
+ *     ],
+ *   },
+ * })
+ * ```
+ */
+export function cljTestPlugin(options?: CljPluginOptions): Plugin {
+  const sourceRoots = options?.sourceRoots ?? ['src']
+  let projectRoot = ''
+  let coreIndexPath: string
+  let codegenCtx: CodegenContext
+  let entrypointPath: string | null = null
+
+  return {
+    name: 'vite-plugin-cljam-test',
+
+    configResolved(config: ResolvedConfig) {
+      projectRoot = config.root
+      coreIndexPath = resolveCoreIndexPath()
+
+      if (options?.entrypoint) {
+        const ep = resolve(projectRoot, options.entrypoint)
+        try {
+          statSync(ep)
+          entrypointPath = ep
+        } catch {
+          console.warn(
+            `[vite-plugin-cljam-test] entrypoint not found: ${options.entrypoint} — using pristine session`
+          )
+        }
+      }
+
+      codegenCtx = {
+        sourceRoots,
+        coreIndexPath,
+        virtualSessionId: '',
+        resolveDepPath: () => null,
+      }
+    },
+
+    load(id: string) {
+      if ((id.endsWith('.test.clj') || id.endsWith('.spec.clj')) && !id.includes('?')) {
+        const source = readFileSync(id, 'utf-8')
+        const nsNameFromPath = pathToNs(relative(projectRoot, id), sourceRoots)
+        return generateTestModuleCode(codegenCtx, nsNameFromPath, source, { entrypointPath })
+      }
+    },
+  } satisfies Plugin
+}
+
+export { safeJsIdentifier, generateModuleCode, generateDts, generateTestModuleCode }
 export type { CljPluginOptions, CodegenContext }
