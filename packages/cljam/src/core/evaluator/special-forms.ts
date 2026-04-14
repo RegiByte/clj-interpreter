@@ -183,6 +183,18 @@ function evaluateDef(
   const varMeta = buildVarMeta(name.meta, ctx, name)
   const finalMeta = docstring ? mergeDocIntoMeta(varMeta, docstring) : varMeta
 
+  // Propagate :doc from var meta to the function value's meta so that
+  // (describe fn) and (describe ns) can find the docstring without needing
+  // the var. The var owns the canonical doc; the function gets a copy.
+  if (finalMeta && newValue.kind === 'function') {
+    const docEntry = finalMeta.entries.find(([k]) => is.keyword(k) && k.name === ':doc')
+    if (docEntry) {
+      const prevEntries = newValue.meta?.entries ?? []
+      const filtered = prevEntries.filter(([k]) => !(is.keyword(k) && k.name === ':doc'))
+      newValue.meta = v.map([...filtered, docEntry])
+    }
+  }
+
   const existing = cljNs.vars.get(name.name)
   if (existing) {
     existing.value = newValue

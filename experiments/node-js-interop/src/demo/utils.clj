@@ -100,3 +100,14 @@
   (deep 7500)
   (deep 7778) ;; <-- new max
   )
+
+(def the-data [1 2 3])
+(def mapped (map inc the-data))
+
+(comment
+  mapped
+  (describe (find-ns 'demo.utils))  
+  ;
+
+  )
+

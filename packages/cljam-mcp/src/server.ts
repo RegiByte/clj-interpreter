@@ -166,6 +166,9 @@ const NREPL_TOOL_DEFINITIONS = [
       '',
       'After connecting, use nrepl_eval with the returned session_id.',
       'To share a Calva session, pass the Calva session ID (from status bar) as session_id in nrepl_eval.',
+      '',
+      'On cljam servers: also returns other_sessions — all pre-existing sessions (Calva etc).',
+      'Use this to identify which session belongs to the human developer without a separate call.',
     ].join('\n'),
     inputSchema: {
       type: 'object',
@@ -380,12 +383,24 @@ export function createMcpServer(): Server {
         try {
           const conn = await connManager.connect(host, port)
           const session = await conn.newSession()
+          // Fetch all server sessions so the caller can immediately identify
+          // which sessions belong to other clients (e.g. Calva) without a
+          // separate nrepl_server_sessions call.
+          let allSessions: { session_id: string; ns: string }[] = []
+          try {
+            const raw = await conn.lsServerSessions()
+            allSessions = raw.map((s) => ({ session_id: s.id, ns: s.ns }))
+          } catch {
+            // Non-cljam servers won't support ls-sessions — silently skip.
+          }
+          const otherSessions = allSessions.filter((s) => s.session_id !== session.id)
           return ok({
             connection_id: conn.id,
             session_id: session.id,
             ns: session.ns,
             host,
             port,
+            other_sessions: otherSessions,
           })
         } catch (e) {
           const message = e instanceof Error ? e.message : String(e)
