@@ -34,6 +34,10 @@ jobs:
         working-directory: packages/cljam-date
         run: bun run test
 
+      - name: Build cljam CLI
+        working-directory: packages/cljam
+        run: node scripts/build-npm-bin.mjs
+
       - name: Generate sources
         working-directory: packages/cljam-date
         run: npm run gen:sources
