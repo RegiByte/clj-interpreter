@@ -259,7 +259,7 @@ For the sake of transparency, I'd like to highlight that Claude Code has been an
 
 ### What's next?
 
-cljam is not done, it's just getting started. The next phase focuses on stability, performance and stdlib feature parity. Bundle size is a priority: I've already done work to create specialized browser-only bundles of `clojure.core` and other namespaces, and I'll continue refining this so people only pay for what they use. That's what makes embedding cljam in existing projects viable without bloating your bundle.
+cljam is not done, it's just getting started. The next phase focuses on stability, performance and stdlib feature parity. Bundle size is a priority: I've already done work to create specialized browser-only bundles of `clojure.core` and other namespaces, and I'll continue refining this so people only pay for what they use. That's what makes embedding cljam in existing projects viable without bloating your bundle. Currently cljam (the core lib) ships with 70kb gzipped.
 
 There's also the question of persistent data structures. Clojure's immutable vectors, maps, and sets are powered by sophisticated persistent data structures (HAMT, finger trees, etc.). Implementing these would be an interesting challenge, probably more than I can handle with my current knowledge, but it would take cljam to the absolute next level. Maybe someday. 
 
