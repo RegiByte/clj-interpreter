@@ -30,6 +30,7 @@ export default defineConfig({
           items: [
             { text: 'Getting Started', link: '/guide/getting-started' },
             { text: 'Embedding', link: '/guide/embedding' },
+            { text: 'Vite Integration', link: '/guide/vite' },
             { text: 'Language Reference', link: '/guide/language' },
             { text: 'Protocols & Records', link: '/guide/protocols' },
             { text: 'Testing', link: '/guide/testing' },
