@@ -19,19 +19,23 @@
  * See ./evaluate.ts:evaluateWithContext for the entry point.
  */
 import { is } from '../assertions.ts'
-import { derefValue, getNamespaceEnv, lookup } from '../env.ts'
+import { derefValue, getNamespaceEnv } from '../env.ts'
 import { EvaluationError } from '../errors.ts'
 import { specialFormKeywords, valueKeywords } from '../keywords.ts'
 import {
+  type CljNamespace,
   type CljList,
   type CljMap,
   type CljSet,
   type CljSymbol,
   type CljValue,
+  type CljVar,
+  type Env,
   type CljVector,
   type CompiledExpr,
   type CompileEnv,
   type CompileFn,
+  type EvaluationContext,
 } from '../types.ts'
 import { getPos } from '../positions.ts'
 import { jsToClj } from '../evaluator/js-interop.ts'
@@ -47,6 +51,108 @@ import { compileDo, compileIf, compileTry } from './control-flow.ts'
  * not it's children!
  */
 export { compileBinding, compileDo, compileIf, compileLet, compileLoop, compileRecur, compileFnBody, compileTry }
+
+type CachedVarRef = {
+  ns: CljNamespace
+  varRef: CljVar
+}
+
+function readUnqualifiedSymbol(
+  name: string,
+  env: Env,
+  cache: { current: CachedVarRef | null }
+): CljValue {
+  let current: Env | null = env
+  while (current) {
+    const raw = current.bindings.get(name)
+    if (raw !== undefined) return raw
+
+    if (current.ns) {
+      const cached = cache.current
+      if (
+        cached !== null &&
+        current.ns === cached.ns &&
+        current.ns.vars.get(name) === cached.varRef
+      ) {
+        return derefValue(cached.varRef)
+      }
+
+      const varRef = current.ns.vars.get(name)
+      if (varRef !== undefined) {
+        cache.current = { ns: current.ns, varRef }
+        return derefValue(varRef)
+      }
+    }
+
+    current = current.outer
+  }
+  throw new EvaluationError(`Symbol ${name} not found`, { name })
+}
+
+function resolveQualifiedVar(
+  alias: string,
+  localName: string,
+  symbolName: string,
+  env: Env,
+  ctx: EvaluationContext,
+  pos: ReturnType<typeof getPos>
+): CachedVarRef {
+  const nsEnv = getNamespaceEnv(env)
+  const targetNs = nsEnv.ns?.aliases.get(alias) ?? ctx.resolveNs(alias) ?? null
+  if (!targetNs) {
+    throw new EvaluationError(`No such namespace or alias: ${alias}`, {
+      symbol: symbolName,
+      env,
+    }, pos)
+  }
+  const varRef = targetNs.vars.get(localName)
+  if (varRef === undefined) {
+    throw new EvaluationError(`Symbol ${symbolName} not found`, {
+      symbol: symbolName,
+      env,
+    }, pos)
+  }
+  return { ns: targetNs, varRef }
+}
+
+function readQualifiedSymbol(
+  alias: string,
+  localName: string,
+  symbolName: string,
+  env: Env,
+  ctx: EvaluationContext,
+  pos: ReturnType<typeof getPos>,
+  cache: { current: CachedVarRef | null }
+): CljValue {
+  const nsEnv = getNamespaceEnv(env)
+  const targetNs = nsEnv.ns?.aliases.get(alias) ?? ctx.resolveNs(alias) ?? null
+  if (!targetNs) {
+    throw new EvaluationError(`No such namespace or alias: ${alias}`, {
+      symbol: symbolName,
+      env,
+    }, pos)
+  }
+
+  const cached = cache.current
+  if (
+    cached !== null &&
+    targetNs === cached.ns &&
+    targetNs.vars.get(localName) === cached.varRef
+  ) {
+    return derefValue(cached.varRef)
+  }
+
+  const resolved = resolveQualifiedVar(
+    alias,
+    localName,
+    symbolName,
+    env,
+    ctx,
+    pos
+  )
+  cache.current = resolved
+  return derefValue(resolved.varRef)
+}
 
 function compileList(
   node: CljList,
@@ -153,24 +259,20 @@ function compileSymbol(
     }
 
     // Phase 6: qualified symbol — alias/name strings captured at compile time,
-    // namespace resolved at runtime (vars are mutable; ctx not available at compile time).
+    // namespace resolved at runtime. Successful var refs are cached, but misses
+    // are not; REPL namespace state can evolve after a function is compiled.
+    const cache: { current: CachedVarRef | null } = { current: null }
+    const pos = getPos(node)
     return (env, ctx) => {
-      const nsEnv = getNamespaceEnv(env)
-      const targetNs = nsEnv.ns?.aliases.get(alias) ?? ctx.resolveNs(alias) ?? null
-      if (!targetNs) {
-        throw new EvaluationError(`No such namespace or alias: ${alias}`, {
-          symbol: symbolName,
-          env,
-        }, getPos(node))
-      }
-      const varObj = targetNs.vars.get(localName)
-      if (varObj === undefined) {
-        throw new EvaluationError(`Symbol ${symbolName} not found`, {
-          symbol: symbolName,
-          env,
-        }, getPos(node))
-      }
-      return derefValue(varObj)
+      return readQualifiedSymbol(
+        alias,
+        localName,
+        symbolName,
+        env,
+        ctx,
+        pos,
+        cache
+      )
     }
   }
   const slot = findSlot(symbolName, compileEnv)
@@ -180,9 +282,10 @@ function compileSymbol(
   // Regular lookup — capture pos at compile time so lookup failures point at
   // the symbol in the source rather than the call site.
   const pos = getPos(node)
+  const cache: { current: CachedVarRef | null } = { current: null }
   return (env, _ctx) => {
     try {
-      return lookup(symbolName, env)
+      return readUnqualifiedSymbol(symbolName, env, cache)
     } catch (e) {
       if (e instanceof EvaluationError && !e.pos && pos) {
         e.pos = pos

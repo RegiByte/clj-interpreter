@@ -69,6 +69,7 @@ describe('Compiler Coverage — compiles → non-null', () => {
       ['nil', 'nil', v.nil()],
       ['boolean true', 'true', v.boolean(true)],
       ['boolean false', 'false', v.boolean(false)],
+      ['character', '\\a', v.char('a')],
     ])('%s literal compiles and returns correct value', (_, code, expected) => {
       const compiled = compileForm(code)
       expect(compiled).not.toBeNull()
@@ -122,6 +123,48 @@ describe('Compiler Coverage — compiles → non-null', () => {
       const compiled = compileForm('(let* [x 7] x)')
       expect(compiled).not.toBeNull()
       expect(run('(let* [x 7] x)')).toEqual(v.number(7))
+    })
+
+    it('compiled global symbol reads see later root redefinition', () => {
+      const s = session()
+      s.evaluate('(def x 1)')
+      s.evaluate('(defn read-x [] x)')
+      s.evaluate('(def x 2)')
+      expect(s.evaluate('(read-x)')).toEqual(v.number(2))
+    })
+
+    it('compiled global symbol reads support forward refs', () => {
+      const s = session()
+      s.evaluate('(defn read-later [] later)')
+      s.evaluate('(def later 44)')
+      expect(s.evaluate('(read-later)')).toEqual(v.number(44))
+    })
+
+    it('raw env bindings still shadow a cached namespace var', () => {
+      const userEnv = runtime.getNamespaceEnv('user')!
+      userEnv.ns!.vars.set('x', v.var('user', 'x', v.number(1)))
+      const compiled = compile(v.symbol('x'))!
+      const ctx = createEvaluationContext()
+
+      expect(compiled(userEnv, ctx)).toEqual(v.number(1))
+
+      const rawEnv = extend(['x'], [v.number(99)], userEnv)
+      expect(compiled(rawEnv, ctx)).toEqual(v.number(99))
+      expect(compiled(userEnv, ctx)).toEqual(v.number(1))
+    })
+
+    it('missing unqualified symbol keeps the symbol source position', () => {
+      const s = session()
+      s.evaluate('(defn broken [] missing)')
+      let err: Error | undefined
+      try {
+        s.evaluate('(broken)')
+      } catch (e) {
+        if (e instanceof Error) err = e
+      }
+      expect(err).toBeDefined()
+      expect(err!.message).toContain('missing')
+      expect(err!.message).toContain('col 17')
     })
   })
 
@@ -417,6 +460,144 @@ describe('Compiler Coverage — compiles → non-null', () => {
   })
 
   // -------------------------------------------------------------------------
+  // Phase 6 — qualified symbols
+  //
+  // alias and localName are captured at compile time; namespace is resolved
+  // at runtime via ctx.resolveNs / ns aliases. Successful var refs are cached,
+  // but root values are always read through derefValue.
+  // -------------------------------------------------------------------------
+  describe('Phase 6 — qualified symbols', () => {
+    it.each([
+      'clojure.core/+',
+      'str/join',
+      'my.ns/foo',
+      'clojure.string/split',
+    ])('%s → compiles (non-null)', (code) => {
+      expect(compileForm(code)).not.toBeNull()
+    })
+
+    it('compiled alias-qualified reads see later root redefinition', () => {
+      const s = session()
+      s.loadFile('(ns fastpath.source)\n(def q 10)')
+      s.loadFile(
+        '(ns fastpath.consumer (:require [fastpath.source :as src]))\n' +
+        '(defn read-q [] src/q)'
+      )
+      s.setNs('fastpath.consumer')
+      expect(s.evaluate('(read-q)')).toEqual(v.number(10))
+
+      s.loadFile('(ns fastpath.source)\n(def q 20)')
+      s.setNs('fastpath.consumer')
+      expect(s.evaluate('(read-q)')).toEqual(v.number(20))
+      expect(s.evaluate('src/q')).toEqual(v.number(20))
+    })
+
+    it('compiled alias-qualified reads support forward refs', () => {
+      const s = session()
+      s.loadFile('(ns fastpath.forward-source)')
+      s.loadFile(
+        '(ns fastpath.forward-consumer (:require [fastpath.forward-source :as src]))\n' +
+        '(defn read-later-q [] src/later)'
+      )
+      s.loadFile('(ns fastpath.forward-source)\n(def later 55)')
+      s.setNs('fastpath.forward-consumer')
+      expect(s.evaluate('(read-later-q)')).toEqual(v.number(55))
+    })
+
+    it('cached unqualified and qualified dynamic var reads respect binding', () => {
+      const s = session()
+      s.loadFile('(ns fastpath.dyn-source)\n(def ^:dynamic *x* :root)')
+      s.loadFile(
+        '(ns fastpath.dyn-consumer ' +
+        '(:require [fastpath.dyn-source :as src :refer [*x*]]))\n' +
+        '(defn read-src-x [] src/*x*)\n' +
+        '(defn read-referred-x [] *x*)'
+      )
+      s.setNs('fastpath.dyn-consumer')
+      expect(
+        s.evaluate(
+          '[(binding [*x* :bound] (read-src-x)) ' +
+          '(binding [*x* :bound] (read-referred-x)) ' +
+          '*x*]'
+        )
+      ).toEqual(v.vector([
+        v.keyword(':bound'),
+        v.keyword(':bound'),
+        v.keyword(':root'),
+      ]))
+    })
+
+    it('missing qualified namespace keeps the qualified symbol source position', () => {
+      const s = session()
+      s.evaluate('(defn broken [] unknown.ns/x)')
+      let err: Error | undefined
+      try {
+        s.evaluate('(broken)')
+      } catch (e) {
+        if (e instanceof Error) err = e
+      }
+      expect(err).toBeDefined()
+      expect(err!.message).toContain('No such namespace or alias: unknown.ns')
+      expect(err!.message).toContain('col 17')
+    })
+
+    it('missing qualified var keeps the qualified symbol source position', () => {
+      const s = session()
+      s.loadFile('(ns fastpath.empty)')
+      s.loadFile(
+        '(ns fastpath.missing-consumer (:require [fastpath.empty :as empty]))\n' +
+        '(defn broken [] empty/nope)'
+      )
+      s.setNs('fastpath.missing-consumer')
+      let err: Error | undefined
+      try {
+        s.evaluate('(broken)')
+      } catch (e) {
+        if (e instanceof Error) err = e
+      }
+      expect(err).toBeDefined()
+      expect(err!.message).toContain('Symbol empty/nope not found')
+      expect(err!.message).toContain('col 17')
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // Phase 7 — collection literals
+  //
+  // Vector, map, and set literals compile recursively. Vectors/maps preserve
+  // reader-attached metadata, and sets deduplicate with structural equality.
+  // -------------------------------------------------------------------------
+  describe('Phase 7 — collection literals', () => {
+    it.each([
+      ['empty list', '()', v.list([])],
+      ['vector literal', '[1 (+ 1 1) :x]', v.vector([v.number(1), v.number(2), v.keyword(':x')])],
+      ['map literal', '{:a 1 :b (+ 1 2)}', v.map([[v.keyword(':a'), v.number(1)], [v.keyword(':b'), v.number(3)]])],
+      ['set literal deduplicates', '#{1 1 2}', v.set([v.number(1), v.number(2)])],
+      ['nested collections', '[{:a #{1 2}} [3 4]]', v.vector([
+        v.map([[v.keyword(':a'), v.set([v.number(1), v.number(2)])]]),
+        v.vector([v.number(3), v.number(4)]),
+      ])],
+    ])('%s', (_, code, expected) => {
+      expect(compileForm(code)).not.toBeNull()
+      expect(run(code)).toEqual(expected)
+    })
+
+    it('vector metadata is preserved', () => {
+      const result = run('^:fast [1 2]')
+      expect(result.kind).toBe('vector')
+      if (result.kind !== 'vector') return
+      expect(result.meta).toEqual(v.map([[v.keyword(':fast'), v.boolean(true)]]))
+    })
+
+    it('map metadata is preserved', () => {
+      const result = run('^:fast {:a 1}')
+      expect(result.kind).toBe('map')
+      if (result.kind !== 'map') return
+      expect(result.meta).toEqual(v.map([[v.keyword(':fast'), v.boolean(true)]]))
+    })
+  })
+
+  // -------------------------------------------------------------------------
   // Phase 4b — fn param slots
   //
   // For fn arities with all simple symbol params, evaluateFn now calls
@@ -647,25 +828,6 @@ describe('Compiler Coverage — bails → null', () => {
   })
 
   // -------------------------------------------------------------------------
-  // Qualified symbols — Phase 6
-  //
-  // alias and localName are captured at compile time; namespace is resolved
-  // at runtime via ctx.resolveNs / ns aliases. compile() returns a non-null
-  // closure for any well-formed ns/sym, regardless of whether the namespace
-  // exists (unknown ns throws at runtime, not compile time).
-  // -------------------------------------------------------------------------
-  describe('Qualified symbols — Phase 6', () => {
-    it.each([
-      'clojure.core/+',
-      'str/join',
-      'my.ns/foo',
-      'clojure.string/split',
-    ])('%s → compiles (non-null)', (code) => {
-      expect(compileForm(code)).not.toBeNull()
-    })
-  })
-
-  // -------------------------------------------------------------------------
   // (fn* ...) special form at the top-level compile() dispatcher
   //
   // fn* IS a special form (in specialFormKeywords), so compileCall is skipped.
@@ -766,11 +928,12 @@ describe('Compiler Coverage — bails → null', () => {
   // -------------------------------------------------------------------------
   // Special forms — quoting (quote, quasiquote)
   // -------------------------------------------------------------------------
-  describe('Special forms — quoting', () => {
+  describe('Special forms — quoting and var lookup', () => {
     it.each([
       ["quoted list '(1 2 3)", "'(1 2 3)"],
       ["quoted symbol 'foo", "'foo"],
       ['explicit (quote x)', '(quote x)'],
+      ['explicit (var x)', '(var x)'],
     ])('%s: %s → null', (_, code) => {
       expect(compileForm(code)).toBeNull()
     })
@@ -799,6 +962,8 @@ describe('Compiler Coverage — bails → null', () => {
   // -------------------------------------------------------------------------
   describe('let* with destructuring bindings — compileLet bails', () => {
     it.each([
+      ['non-vector bindings', '(let* :not-a-vector 1)'],
+      ['odd binding vector', '(let* [x 1 y] x)'],
       ['vector destructuring', '(let* [[a b] [1 2]] a)'],
       ['vector with rest', '(let* [[a & b] [1 2 3]] b)'],
       ['map :keys destructuring', '(let* [{:keys [a b]} {:a 1 :b 2}] a)'],
@@ -818,6 +983,8 @@ describe('Compiler Coverage — bails → null', () => {
   // -------------------------------------------------------------------------
   describe('loop* with destructuring bindings — compileLoop bails', () => {
     it.each([
+      ['non-vector bindings in loop*', '(loop* :not-a-vector 1)'],
+      ['odd binding vector in loop*', '(loop* [x 1 y] x)'],
       ['vector destructuring in loop*', '(loop* [[a & b] [1 2 3]] a)'],
       ['map destructuring in loop*', '(loop* [{:keys [x]} {:x 1}] x)'],
     ])('%s: %s → null', (_, code) => {
@@ -833,6 +1000,33 @@ describe('Compiler Coverage — bails → null', () => {
       // findLoopTarget(null) returns null → compileRecur bails.
       // The interpreter's evaluateRecur handles it and throws the right error.
       expect(compileForm('(recur 1)')).toBeNull()
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // binding shape failures
+  // -------------------------------------------------------------------------
+  describe('binding with malformed binding vector — compileBinding bails', () => {
+    it.each([
+      ['non-vector bindings', '(binding :not-a-vector nil)'],
+      ['odd binding vector', '(binding [*x* 1 *y*] nil)'],
+      ['non-symbol binding target', '(binding [:not-a-symbol 1] nil)'],
+    ])('%s: %s → null', (_, code) => {
+      expect(compileForm(code)).toBeNull()
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // Collection literals with uncompilable children
+  // -------------------------------------------------------------------------
+  describe('collection literals with uncompilable children — collection compiler bails', () => {
+    it.each([
+      ['vector element bails', '[(def x 1) 2]'],
+      ['map key bails', '{(def x 1) 2}'],
+      ['map value bails', '{:a (def x 1)}'],
+      ['set element bails', '#{(def x 1) 2}'],
+    ])('%s: %s → null', (_, code) => {
+      expect(compileForm(code)).toBeNull()
     })
   })
 
