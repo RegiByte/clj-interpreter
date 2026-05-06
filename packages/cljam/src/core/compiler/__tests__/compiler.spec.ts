@@ -497,17 +497,34 @@ describe('Compiler Phase 4b — param slots', () => {
     expect(fn.arities[0].paramSlots?.length).toBe(2)
   })
 
-  it('fn with rest param does NOT have paramSlots (falls through to bindParams)', () => {
+  it('fn with rest param has fixed params plus final rest slot', () => {
     const fn = session().evaluate('(fn [x & rest] x)')
     expect(fn.kind).toBe('function')
     if (fn.kind !== 'function') return
-    expect(fn.arities[0].paramSlots).toBeUndefined()
+    expect(fn.arities[0].paramSlots).toBeDefined()
+    expect(fn.arities[0].paramSlots?.length).toBe(2)
   })
 
   it.each([
     ['simple param access', '((fn [x] x) 99)', 99],
     ['multi-param arithmetic', '((fn [a b c] (+ a b c)) 1 2 3)', 6],
+    ['rest param no extras', '((fn [x & rest] rest) 1)', null],
+    [
+      'rest param with extras',
+      '((fn [x & rest] rest) 1 2 3)',
+      v.list([v.number(2), v.number(3)]),
+    ],
+    [
+      'multi-arity exact beats variadic',
+      '((fn ([x] :exact) ([x & rest] rest)) 1)',
+      v.keyword(':exact'),
+    ],
     ['fn-level recur: countdown to zero', '((fn [n] (if (= n 0) 42 (recur (- n 1)))) 5)', 42],
+    [
+      'fn-level recur with rest param repacks rest args',
+      '((fn [n & rest] (if (= n 0) rest (recur (- n 1) n (+ n 10)))) 3)',
+      v.list([v.number(1), v.number(11)]),
+    ],
     [
       'fn-level recur: accumulator',
       '((fn [n acc] (if (= n 0) acc (recur (- n 1) (+ acc n)))) 5 0)',

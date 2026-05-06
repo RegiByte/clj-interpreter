@@ -11,7 +11,7 @@ import type {
   Env,
   EvaluationContext,
 } from '../types'
-import { bindParams, RecurSignal, resolveArity } from './arity'
+import { bindParams, RecurSignal, resolveArity, slotValuesForArity } from './arity'
 import { cljToJs, jsToClj } from './js-interop'
 
 export function applyFunctionWithContext(
@@ -35,10 +35,11 @@ export function applyFunctionWithContext(
     // Save/restore handles reentrancy for mutual and non-tail-recursive calls.
     if (arity.compiledBody && arity.paramSlots) {
       const slots = arity.paramSlots
+      const slotValues = slotValuesForArity(arity, args)
       const savedValues: (CljValue | null)[] = new Array(slots.length)
       for (let i = 0; i < slots.length; i++) {
         savedValues[i] = slots[i].value // save for reentrancy
-        slots[i].value = args[i] // write call args
+        slots[i].value = slotValues[i] // write call args
       }
       try {
         return arity.compiledBody(fn.env, ctx)

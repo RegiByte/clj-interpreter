@@ -202,6 +202,106 @@ describe('Compiler Coverage — compiles → non-null', () => {
         compiled!(runtime.getNamespaceEnv('user')!, createEvaluationContext())
       ).toEqual(toCljValue(12))
     })
+
+    describe('arithmetic/comparison intrinsics', () => {
+      it.each([
+        ['zero-arity +', '(+)', 0],
+        ['multi-arity +', '(+ 1 2 3 4)', 10],
+        ['zero-arity *', '(*)', 1],
+        ['multi-arity *', '(* 2 3 4)', 24],
+        ['unary -', '(- 10)', -10],
+        ['multi-arity -', '(- 20 3 4)', 13],
+        ['unary / preserves current cljam semantics', '(/ 10)', 10],
+        ['multi-arity /', '(/ 100 5 2)', 10],
+      ])('%s', (_, code, expected) => {
+        expect(compileForm(code)).not.toBeNull()
+        expect(session().evaluate(code)).toEqual(toCljValue(expected))
+      })
+
+      it.each([
+        ['< true', '(< 1 2 3)', true],
+        ['< false', '(< 1 3 2)', false],
+        ['> true', '(> 3 2 1)', true],
+        ['> false', '(> 3 1 2)', false],
+        ['<= true', '(<= 1 1 2)', true],
+        ['<= false', '(<= 1 3 2)', false],
+        ['>= true', '(>= 3 3 2)', true],
+        ['>= false', '(>= 3 1 2)', false],
+        ['= structural true', '(= [1 2] (list 1 2))', true],
+        ['= structural false', '(= {:a 1} {:a 2})', false],
+      ])('%s', (_, code, expected) => {
+        expect(compileForm(code)).not.toBeNull()
+        expect(session().evaluate(code)).toEqual(toCljValue(expected))
+      })
+
+      it('lexical operator shadowing wins over intrinsic inlining', () => {
+        const code = '(let* [+ :answer] (+ {:answer 99}))'
+        expect(compileForm(code)).not.toBeNull()
+        expect(session().evaluate(code)).toEqual(v.number(99))
+      })
+
+      it('user namespace operator shadowing wins over intrinsic inlining', () => {
+        const s = session()
+        s.evaluate('(def + (fn [a b] 99))')
+        expect(s.evaluate('(+ 1 2)')).toEqual(v.number(99))
+      })
+
+      it('clojure.core operator redefinition wins over intrinsic inlining', () => {
+        const s = session()
+        s.evaluate('(ns clojure.core)')
+        s.evaluate('(def + (fn [a b] 42))')
+        expect(s.evaluate('(+ 1 2)')).toEqual(v.number(42))
+      })
+
+      it('local binding to original core operator still works', () => {
+        const code = '(let* [+ clojure.core/+] (+ 1 2 3))'
+        expect(compileForm(code)).not.toBeNull()
+        expect(session().evaluate(code)).toEqual(v.number(6))
+      })
+
+      it.each([
+        ['+ non-number', '(+ 1 "x")', '+ expects all arguments to be numbers', 1],
+        ['- non-number', '(- "x")', '- expects all arguments to be numbers', 0],
+        ['* non-number', '(* 1 "x")', '* expects all arguments to be numbers', 1],
+        ['/ non-number', '(/ 10 "x")', '/ expects all arguments to be numbers', 1],
+        ['< non-number', '(< 1 "x")', '< expects all arguments to be numbers', 1],
+        ['>= non-number', '(>= "x" 1)', '>= expects all arguments to be numbers', 0],
+      ])('%s preserves message and argIndex', (_, code, message, argIndex) => {
+        let err: any
+        try {
+          session().evaluate(code)
+        } catch (e) {
+          err = e
+        }
+        expect(err).toBeInstanceOf(Error)
+        expect(err.message).toContain(message)
+        expect(err.data?.argIndex).toBe(argIndex)
+      })
+
+      it('division by zero preserves argIndex', () => {
+        let err: any
+        try {
+          session().evaluate('(/ 10 2 0)')
+        } catch (e) {
+          err = e
+        }
+        expect(err).toBeInstanceOf(Error)
+        expect(err.message).toContain('division by zero')
+        expect(err.data?.argIndex).toBe(2)
+      })
+
+      it.each([
+        ['-', '(-)', '- expects at least one argument'],
+        ['/', '(/)', '/ expects at least one argument'],
+        ['<', '(< 1)', '< expects at least two arguments'],
+        ['>', '(> 1)', '> expects at least two arguments'],
+        ['<=', '(<= 1)', '<= expects at least two arguments'],
+        ['>=', '(>= 1)', '>= expects at least two arguments'],
+        ['=', '(= 1)', '= expects at least two arguments'],
+      ])('%s invalid arity preserves message', (_, code, message) => {
+        expect(() => session().evaluate(code)).toThrow(message)
+      })
+    })
   })
 
   // -------------------------------------------------------------------------
@@ -239,8 +339,9 @@ describe('Compiler Coverage — compiles → non-null', () => {
   // closure directly without walking the AST again.
   //
   // Phase 4b: evaluateFnStar() additionally calls compileFnBody()
-  // for no-rest-param simple-symbol arities. compileFnBody allocates SlotRef[]
-  // per param (stored in arity.paramSlots), marks a fn-level loop target
+  // for simple-symbol arities, including simple rest params. compileFnBody
+  // allocates SlotRef[] per param (plus one final rest slot when present),
+  // marks a fn-level loop target
   // (enabling compiled recur), and wraps body in while(true). This eliminates
   // bindParams env allocation and RecurSignal for fn-level recur.
   //
@@ -318,10 +419,11 @@ describe('Compiler Coverage — compiles → non-null', () => {
   // -------------------------------------------------------------------------
   // Phase 4b — fn param slots
   //
-  // For fn arities with no rest param and all simple symbol params, evaluateFn
-  // now calls compileFnBody which: allocates SlotRef per param, marks a loop
-  // target in fnCompileEnv (enabling compiled recur), and wraps the compiled
-  // body in a while(true) that handles fn-level recur without RecurSignal.
+  // For fn arities with all simple symbol params, evaluateFn now calls
+  // compileFnBody which: allocates SlotRef per param, plus one final rest slot
+  // for variadic arities, marks a loop target in fnCompileEnv (enabling
+  // compiled recur), and wraps the compiled body in a while(true) that handles
+  // fn-level recur without RecurSignal.
   //
   // applyFunctionWithContext uses save/restore around paramSlots for reentrancy.
   // -------------------------------------------------------------------------
@@ -334,16 +436,28 @@ describe('Compiler Coverage — compiles → non-null', () => {
       expect(fn.arities[0].paramSlots?.length).toBe(1)
     })
 
-    it('fn with rest param has no paramSlots (falls through to bindParams)', () => {
+    it('fn with rest param stores fixed params plus final rest slot', () => {
       const fn = session().evaluate('(fn [x & rest] x)')
       expect(fn.kind).toBe('function')
       if (fn.kind !== 'function') return
-      expect(fn.arities[0].paramSlots).toBeUndefined()
+      expect(fn.arities[0].paramSlots).toBeDefined()
+      expect(fn.arities[0].paramSlots?.length).toBe(2)
     })
 
     it.each([
       ['param slot call', '((fn [x] x) 99)', 99],
       ['multi-param', '((fn [a b c] (+ a b c)) 1 2 3)', 6],
+      ['rest slot with no extras', '((fn [x & rest] rest) 1)', null],
+      [
+        'rest slot with extras',
+        '((fn [x & rest] rest) 1 2 3)',
+        v.list([v.number(2), v.number(3)]),
+      ],
+      [
+        'multi-arity exact beats variadic',
+        '((fn ([x] :exact) ([x & rest] rest)) 1)',
+        v.keyword(':exact'),
+      ],
     ])('%s', (_, code, expected) => {
       expect(session().evaluate(code)).toEqual(toCljValue(expected))
     })
@@ -355,6 +469,13 @@ describe('Compiler Coverage — compiles → non-null', () => {
         '((fn [n] (if (= n 0) :done (recur (- n 1)))) 5)'
       )
       expect(result).toEqual(v.keyword(':done'))
+    })
+
+    it('fn-level recur with rest param repacks raw recur args into the rest slot', () => {
+      const result = session().evaluate(
+        '((fn [n & rest] (if (= n 0) rest (recur (- n 1) n (+ n 10)))) 3)'
+      )
+      expect(result).toEqual(v.list([v.number(1), v.number(11)]))
     })
   })
   // -------------------------------------------------------------------------

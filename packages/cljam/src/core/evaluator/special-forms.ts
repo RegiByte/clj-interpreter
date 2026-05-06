@@ -298,20 +298,19 @@ function evaluateFnStar(
       )
     }
     assertRecurInTailPosition(arity.body)
-    // Phase 4b: params are all guaranteed simple symbols (validated above).
-    // For no-rest-param arities, compile with param slots to eliminate
-    // both bindParams env allocation and lookup chain walks for params.
-    if (arity.restParam === null) {
-      const result = compileFnBody(
-        arity.params as CljSymbol[],
-        arity.body,
-        compile
-      )
-      if (result !== null) {
-        arity.compiledBody = result.compiledBody
-        arity.paramSlots = result.paramSlots
-      }
-    } else {
+    // Phase 4b: params and rest param are all guaranteed simple symbols
+    // (validated above). Compile with param slots to eliminate both bindParams
+    // env allocation and lookup chain walks for params.
+    const result = compileFnBody(
+      arity.params as CljSymbol[],
+      arity.restParam as CljSymbol | null,
+      arity.body,
+      compile
+    )
+    if (result !== null) {
+      arity.compiledBody = result.compiledBody
+      arity.paramSlots = result.paramSlots
+    } else if (arity.restParam !== null) {
       const compiled = compile(
         v.list([v.symbol(specialFormKeywords.do), ...arity.body])
       )

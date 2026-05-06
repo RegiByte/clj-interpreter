@@ -460,5 +460,7 @@ export type CompileEnv = {
   loop?: {
     slots: SlotRef[]
     recurTarget: { args: CljValue[] | null }
+    fixedParamCount?: number
+    hasRestParam?: boolean
   }
 }

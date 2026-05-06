@@ -1,9 +1,11 @@
 import { is } from '../assertions.ts'
 import { getNamespaceEnv, lookupVar } from '../env.ts'
 import { EvaluationError } from '../errors.ts'
+import { slotValuesForArity } from '../evaluator/arity.ts'
 import { assertRecurInTailPosition } from '../evaluator/recur-check.ts'
 import { v } from '../factories.ts'
 import type {
+  Arity,
   CljList,
   CljSymbol,
   CljValue,
@@ -150,7 +152,11 @@ export function compileRecur(
   const { recurTarget, slots } = loopInfo
   const argForms = node.value.slice(BINDINGS_POS)
   // Arity mismatch, bail out
-  if (argForms.length !== slots.length) return null
+  if (loopInfo.hasRestParam) {
+    if (argForms.length < (loopInfo.fixedParamCount ?? 0)) return null
+  } else if (argForms.length !== slots.length) {
+    return null
+  }
 
   const compiledArgs: CompiledExpr[] = []
   for (const arg of argForms) {
@@ -256,15 +262,27 @@ export function compileBinding(
  */
 export function compileFnBody(
   params: CljSymbol[],
+  restParam: CljSymbol | null,
   body: CljValue[],
   compile: CompileFn
 ): { compiledBody: CompiledExpr; paramSlots: SlotRef[] } | null {
+  const arityForSlots: Arity = { params, restParam, body }
   const paramSlots: SlotRef[] = params.map(() => ({ value: null }))
+  if (restParam !== null) paramSlots.push({ value: null })
   const recurTarget: { args: CljValue[] | null } = { args: null }
+  const bindings = new Map(params.map((p, i) => [p.name, paramSlots[i]]))
+  if (restParam !== null) {
+    bindings.set(restParam.name, paramSlots[paramSlots.length - 1])
+  }
   const fnCompileEnv: CompileEnv = {
-    bindings: new Map(params.map((p, i) => [p.name, paramSlots[i]])),
+    bindings,
     outer: null,
-    loop: { slots: paramSlots, recurTarget },
+    loop: {
+      slots: paramSlots,
+      recurTarget,
+      fixedParamCount: params.length,
+      hasRestParam: restParam !== null,
+    },
   }
   const innerCompiled = compileDo(body, fnCompileEnv, compile)
   if (innerCompiled === null) return null
@@ -274,8 +292,9 @@ export function compileFnBody(
       recurTarget.args = null
       const result = innerCompiled(env, ctx)
       if (recurTarget.args !== null) {
+        const slotValues = slotValuesForArity(arityForSlots, recurTarget.args)
         for (let i = 0; i < paramSlots.length; i++) {
-          paramSlots[i].value = recurTarget.args[i]
+          paramSlots[i].value = slotValues[i]
         }
       } else {
         return result

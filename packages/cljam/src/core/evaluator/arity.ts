@@ -170,6 +170,17 @@ export function bindParams(
   )
 }
 
+export function slotValuesForArity(
+  arity: Arity,
+  args: CljValue[]
+): CljValue[] {
+  if (arity.restParam === null) return args
+  const fixedValues = args.slice(0, arity.params.length)
+  const restArgs = args.slice(arity.params.length)
+  const restValue = restArgs.length > 0 ? v.list(restArgs) : v.nil()
+  return [...fixedValues, restValue]
+}
+
 export function resolveArity(arities: Arity[], argCount: number): Arity {
   const exactMatch = arities.find(
     (a) => a.restParam === null && a.params.length === argCount
