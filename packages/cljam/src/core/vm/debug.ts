@@ -1,0 +1,54 @@
+import { printString } from '../printer'
+import type { VmChunk } from '../types'
+import { Op, opcodeName } from './opcodes'
+
+export function disassembleChunk(chunk: VmChunk): string {
+  const lines: string[] = []
+  lines.push(`== ${chunk.name ?? 'chunk'} ==`)
+
+  let offset = 0
+  while (offset < chunk.code.length) {
+    offset = disassembleInstruction(chunk, offset, lines)
+  }
+
+  return lines.join('\n')
+}
+
+function disassembleInstruction(
+  chunk: VmChunk,
+  offset: number,
+  lines: string[]
+): number {
+  const instruction = chunk.code[offset]
+  const name = opcodeName(instruction)
+
+  switch (instruction) {
+    case Op.Constant: {
+      const constantIndex = chunk.code[offset + 1]
+      const constant = chunk.constants[constantIndex]
+      const rendered =
+        constant === undefined ? '<missing>' : printString(constant)
+      lines.push(
+        `${formatOffset(offset)} ${name} ${constantIndex} ; ${rendered}`
+      )
+      return offset + 2
+    }
+    case Op.Nil:
+    case Op.True:
+    case Op.False:
+    case Op.Return: {
+      lines.push(`${formatOffset(offset)} ${name}`)
+      return offset + 1
+    }
+    default: {
+      lines.push(
+        `${formatOffset(offset)} ${name} ; [disassembleInstruction] unknown opcode`
+      )
+      return offset + 1
+    }
+  }
+}
+
+function formatOffset(offset: number): string {
+  return offset.toString().padStart(4, '0')
+}

@@ -129,8 +129,8 @@ export type CljProtocol = {
 
 export type CljRecord = {
   kind: 'record'
-  recordType: string           // unqualified: 'Circle'
-  ns: string                   // defining namespace: 'my.shapes'
+  recordType: string // unqualified: 'Circle'
+  ns: string // defining namespace: 'my.shapes'
   fields: [CljValue, CljValue][] // same structure as CljMap.entries
   meta?: CljMap
 }
@@ -291,14 +291,20 @@ export type Cursor = {
   offset: number
 }
 
-export type Pos = { start: number; end: number; source?: string; lineOffset?: number; colOffset?: number } // absolute char offsets; source+lineOffset+colOffset enable file-relative display
+export type Pos = {
+  start: number
+  end: number
+  source?: string
+  lineOffset?: number
+  colOffset?: number
+} // absolute char offsets; source+lineOffset+colOffset enable file-relative display
 
 export interface StackFrame {
-  fnName: string | null   // symbol name at the call site, null for non-symbol heads (anonymous calls)
-  line: number | null     // 1-indexed line of call site, null when source is unavailable
-  col: number | null      // 1-indexed col of call site, null when source is unavailable
-  source: string | null   // ctx.currentFile at push time
-  pos: Pos | null         // raw byte-offset position in ctx.currentSource; enables session-level display fallback
+  fnName: string | null // symbol name at the call site, null for non-symbol heads (anonymous calls)
+  line: number | null // 1-indexed line of call site, null when source is unavailable
+  col: number | null // 1-indexed col of call site, null when source is unavailable
+  source: string | null // ctx.currentFile at push time
+  pos: Pos | null // raw byte-offset position in ctx.currentSource; enables session-level display fallback
 }
 
 export type TokenLParen = {
@@ -463,4 +469,19 @@ export type CompileEnv = {
     fixedParamCount?: number
     hasRestParam?: boolean
   }
+}
+
+/**
+ * VM Types
+ */
+
+export type OpCode = number
+
+export type VmChunk = {
+  code: number[]
+  constants: CljValue[]
+  positions: Array<Pos | null>
+  name?: string
+  maxStack: number
+  localCount: number
 }
