@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { addConstant, emit, emitOperand, makeChunk } from '../chunk'
+import {
+  addConstant,
+  emit,
+  emitOperand,
+  makeChunk,
+  rollbackChunk,
+  snapshotChunk,
+} from '../chunk'
 import { v } from '../../factories'
 import { Op, opcodeName } from '../opcodes'
 import { executeChunk } from '../vm'
@@ -366,20 +373,43 @@ describe('VM Hand written chunks', () => {
   })
 
   it.each([
-    ['missing operand', (chunk: ReturnType<typeof makeChunk>) => {
-      emit(chunk, Op.Call)
-    }],
-    ['not enough stack values', (chunk: ReturnType<typeof makeChunk>) => {
-      emit(chunk, Op.Call)
-      emitOperand(chunk, 1)
-    }],
-    ['non-callable callee', (chunk: ReturnType<typeof makeChunk>) => {
-      const index = addConstant(chunk, v.number(1))
-      emit(chunk, Op.Constant)
-      emitOperand(chunk, index)
-      emit(chunk, Op.Call)
-      emitOperand(chunk, 0)
-    }],
+    [
+      'missing operand',
+      (chunk: ReturnType<typeof makeChunk>) => {
+        emit(chunk, Op.Call)
+      },
+    ],
+    [
+      'not enough stack values',
+      (chunk: ReturnType<typeof makeChunk>) => {
+        emit(chunk, Op.Call)
+        emitOperand(chunk, 1)
+      },
+    ],
+    [
+      'negative argument count',
+      (chunk: ReturnType<typeof makeChunk>) => {
+        emit(chunk, Op.Call)
+        emitOperand(chunk, -1)
+      },
+    ],
+    [
+      'non-integer argument count',
+      (chunk: ReturnType<typeof makeChunk>) => {
+        emit(chunk, Op.Call)
+        emitOperand(chunk, 1.5)
+      },
+    ],
+    [
+      'non-callable callee',
+      (chunk: ReturnType<typeof makeChunk>) => {
+        const index = addConstant(chunk, v.number(1))
+        emit(chunk, Op.Constant)
+        emitOperand(chunk, index)
+        emit(chunk, Op.Call)
+        emitOperand(chunk, 0)
+      },
+    ],
   ])('throws when Call has %s', (_label, buildChunk) => {
     const chunk = makeChunk('bad-call-test')
     buildChunk(chunk)
@@ -387,6 +417,215 @@ describe('VM Hand written chunks', () => {
     expect(() =>
       executeChunk(chunk, makeEnv(), createEvaluationContext())
     ).toThrow(EvaluationError)
+  })
+
+  it.each([
+    ['MakeVector', Op.MakeVector],
+    ['MakeMap', Op.MakeMap],
+    ['MakeSet', Op.MakeSet],
+  ])('throws when %s is missing its count operand', (_name, op) => {
+    const chunk = makeChunk('missing-count-test')
+    emit(chunk, op)
+
+    expect(() =>
+      executeChunk(chunk, makeEnv(), createEvaluationContext())
+    ).toThrow(EvaluationError)
+  })
+
+  it.each([
+    ['MakeVector', Op.MakeVector, -1],
+    ['MakeVector', Op.MakeVector, 1.5],
+    ['MakeMap', Op.MakeMap, -1],
+    ['MakeMap', Op.MakeMap, 1.5],
+    ['MakeSet', Op.MakeSet, -1],
+    ['MakeSet', Op.MakeSet, 1.5],
+  ])('throws when %s has invalid count %s', (_name, op, count) => {
+    const chunk = makeChunk('invalid-count-test')
+    emit(chunk, op)
+    emitOperand(chunk, count)
+
+    expect(() =>
+      executeChunk(chunk, makeEnv(), createEvaluationContext())
+    ).toThrow(EvaluationError)
+  })
+
+  it('executes MakeVector by constructing a vector from the stack', () => {
+    const chunk = makeChunk('make-vector-test')
+    const first = addConstant(chunk, v.number(1))
+    const second = addConstant(chunk, v.number(2))
+    const third = addConstant(chunk, v.number(3))
+
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, first)
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, second)
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, third)
+    emit(chunk, Op.MakeVector)
+    emitOperand(chunk, 3)
+    emit(chunk, Op.Return)
+
+    expect(executeChunk(chunk, makeEnv(), createEvaluationContext())).toEqual(
+      v.vector([v.number(1), v.number(2), v.number(3)])
+    )
+  })
+
+  it('executes MakeMap by constructing a map from the stack', () => {
+    const chunk = makeChunk('make-map-test')
+    const key1 = addConstant(chunk, v.keyword(':a'))
+    const value1 = addConstant(chunk, v.number(1))
+    const key2 = addConstant(chunk, v.keyword(':b'))
+    const value2 = addConstant(chunk, v.number(2))
+
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, key1)
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, value1)
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, key2)
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, value2)
+    emit(chunk, Op.MakeMap)
+    emitOperand(chunk, 2)
+    emit(chunk, Op.Return)
+
+    expect(executeChunk(chunk, makeEnv(), createEvaluationContext())).toEqual(
+      v.map([
+        [v.keyword(':a'), v.number(1)],
+        [v.keyword(':b'), v.number(2)],
+      ])
+    )
+  })
+
+  it('executes MakeSet by constructing a set from the stack', () => {
+    const chunk = makeChunk('make-map-test')
+    const key1 = addConstant(chunk, v.keyword(':a'))
+    const value1 = addConstant(chunk, v.number(1))
+    const key2 = addConstant(chunk, v.keyword(':b'))
+    const value2 = addConstant(chunk, v.number(2))
+
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, key1)
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, value1)
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, key2)
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, value2)
+    emit(chunk, Op.MakeSet)
+    emitOperand(chunk, 4)
+    emit(chunk, Op.Return)
+
+    expect(executeChunk(chunk, makeEnv(), createEvaluationContext())).toEqual(
+      v.set([v.keyword(':a'), v.number(1), v.keyword(':b'), v.number(2)])
+    )
+  })
+
+  it('Throws when MakeVector has fewer items on the stack than the operand', () => {
+    const chunk = makeChunk('make-vector-underflow-test')
+    const first = addConstant(chunk, v.number(1))
+    const second = addConstant(chunk, v.number(2))
+
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, first)
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, second)
+
+    const snapshot = snapshotChunk(chunk)
+
+    emit(chunk, Op.MakeVector)
+    emitOperand(chunk, 3)
+
+    // Fails with underflow
+    expect(() =>
+      executeChunk(chunk, makeEnv(), createEvaluationContext())
+    ).toThrow(EvaluationError)
+
+    rollbackChunk(chunk, snapshot)
+
+    // Passes with valid operand size
+    emit(chunk, Op.MakeVector)
+    emitOperand(chunk, 2)
+    emit(chunk, Op.Return)
+
+    expect(executeChunk(chunk, makeEnv(), createEvaluationContext())).toEqual(
+      v.vector([v.number(1), v.number(2)])
+    )
+  })
+
+  it('Throws when MakeMap has fewer items on the stack than the operand', () => {
+    const chunk = makeChunk('make-map-underflow-test')
+    const key1 = addConstant(chunk, v.keyword(':a'))
+    const value1 = addConstant(chunk, v.number(1))
+    const key2 = addConstant(chunk, v.keyword(':b'))
+    const value2 = addConstant(chunk, v.number(2))
+
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, key1)
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, value1)
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, key2)
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, value2)
+    const snapshot = snapshotChunk(chunk)
+
+    emit(chunk, Op.MakeMap)
+    emitOperand(chunk, 3)
+
+    // Fails with underflow
+    expect(() =>
+      executeChunk(chunk, makeEnv(), createEvaluationContext())
+    ).toThrow(EvaluationError)
+
+    rollbackChunk(chunk, snapshot)
+
+    // Passes with valid operand size
+    emit(chunk, Op.MakeMap)
+    emitOperand(chunk, 2)
+    emit(chunk, Op.Return)
+
+    expect(executeChunk(chunk, makeEnv(), createEvaluationContext())).toEqual(
+      v.map([
+        [v.keyword(':a'), v.number(1)],
+        [v.keyword(':b'), v.number(2)],
+      ])
+    )
+  })
+
+  it('Throws when MakeSet has fewer items on the stack than the operand', () => {
+    const chunk = makeChunk('make-set-underflow-test')
+    const first = addConstant(chunk, v.number(1))
+    const second = addConstant(chunk, v.number(2))
+    const third = addConstant(chunk, v.number(3))
+
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, first)
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, second)
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, third)
+
+    const snapshot = snapshotChunk(chunk)
+
+    emit(chunk, Op.MakeSet)
+    emitOperand(chunk, 4)
+
+    // Fails with underflow
+    expect(() =>
+      executeChunk(chunk, makeEnv(), createEvaluationContext())
+    ).toThrow(EvaluationError)
+
+    rollbackChunk(chunk, snapshot)
+
+    // Passes with valid operand size
+    emit(chunk, Op.MakeSet)
+    emitOperand(chunk, 3)
+    emit(chunk, Op.Return)
+
+    expect(executeChunk(chunk, makeEnv(), createEvaluationContext())).toEqual(
+      v.set([v.number(1), v.number(2), v.number(3)])
+    )
   })
 })
 

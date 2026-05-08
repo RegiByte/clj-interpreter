@@ -89,11 +89,16 @@ export function executeChunk(
         }
         break
       }
-      case Op.Call: {
-        const argCount = chunk.code[ip++]
-        if (argCount === undefined) {
+      case Op.MakeVector: {
+        const length = chunk.code[ip++]
+        assertCountOperand(length, 'MakeVector', instruction, ip, stack, chunk)
+        if (length === 0) {
+          stack.push(v.vector([]))
+          break
+        }
+        if (stack.length < length) {
           throw new EvaluationError(
-            'VM stack underflow on Call, argCount missing',
+            'VM stack underflow on MakeVector, not enough elements',
             {
               instruction,
               ip,
@@ -102,6 +107,64 @@ export function executeChunk(
             }
           )
         }
+
+        const elements = stack.splice(stack.length - length, length)
+        stack.push(v.vector(elements))
+        break
+      }
+      case Op.MakeMap: {
+        const length = chunk.code[ip++]
+        assertCountOperand(length, 'MakeMap', instruction, ip, stack, chunk)
+        if (length === 0) {
+          stack.push(v.map([]))
+          break
+        }
+        if (stack.length < length * 2) {
+          throw new EvaluationError(
+            'VM stack underflow on MakeMap, not enough entries',
+            {
+              instruction,
+              ip,
+              stack,
+              chunk,
+            }
+          )
+        }
+
+        const entries = stack.splice(stack.length - length * 2, length * 2)
+        const pairs: [CljValue, CljValue][] = []
+        for (let i = 0; i < entries.length; i += 2) {
+          pairs.push([entries[i], entries[i + 1]])
+        }
+        stack.push(v.map(pairs))
+        break
+      }
+      case Op.MakeSet: {
+        const length = chunk.code[ip++]
+        assertCountOperand(length, 'MakeSet', instruction, ip, stack, chunk)
+        if (length === 0) {
+          stack.push(v.set([]))
+          break
+        }
+        if (stack.length < length) {
+          throw new EvaluationError(
+            'VM stack underflow on MakeSet, not enough elements',
+            {
+              instruction,
+              ip,
+              stack,
+              chunk,
+            }
+          )
+        }
+
+        const elements = stack.splice(stack.length - length, length)
+        stack.push(v.set(elements))
+        break
+      }
+      case Op.Call: {
+        const argCount = chunk.code[ip++]
+        assertCountOperand(argCount, 'Call', instruction, ip, stack, chunk)
 
         if (stack.length < argCount + 1) {
           throw new EvaluationError(
@@ -208,6 +271,29 @@ function assertJumpOffset(
     throw new EvaluationError(`Invalid jump offset: ${offset}`, {
       instruction,
       offset,
+      ip,
+      stack,
+      chunk,
+    })
+  }
+}
+
+function assertCountOperand(
+  count: number | undefined,
+  opName: string,
+  instruction: number,
+  ip: number,
+  stack: CljValue[],
+  chunk: VmChunk
+): asserts count is number {
+  if (
+    count === undefined ||
+    !Number.isInteger(count) ||
+    count < 0
+  ) {
+    throw new EvaluationError(`Invalid ${opName} count: ${count}`, {
+      instruction,
+      count,
       ip,
       stack,
       chunk,

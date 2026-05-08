@@ -2,7 +2,16 @@ import { is } from '../assertions'
 import { v } from '../factories'
 import { valueKeywords } from '../keywords'
 import { getPos } from '../positions'
-import type { CljList, CljValue, OpCode, Pos, VmChunk } from '../types'
+import type {
+  CljList,
+  CljMap,
+  CljSet,
+  CljValue,
+  CljVector,
+  OpCode,
+  Pos,
+  VmChunk,
+} from '../types'
 import {
   addConstant,
   emit,
@@ -60,6 +69,15 @@ function emitExpression(chunk: VmChunk, node: CljValue): boolean {
       if (head.name === 'if') return emitIf(chunk, node)
 
       return emitCall(chunk, node)
+    }
+    case valueKeywords.vector: {
+      return emitVector(chunk, node)
+    }
+    case valueKeywords.map: {
+      return emitMap(chunk, node)
+    }
+    case valueKeywords.set: {
+      return emitSet(chunk, node)
     }
     default:
       return false
@@ -148,6 +166,68 @@ function emitCall(chunk: VmChunk, node: CljList): boolean {
     emit(chunk, Op.Call, pos)
     emitOperand(chunk, args.length, pos)
 
+    return true
+  })
+}
+
+function emitVector(chunk: VmChunk, node: CljVector): boolean {
+  return emitTransaction(chunk, () => {
+    const elements = node.value
+    if (elements.length === 0) {
+      // Emits an empty MakeVector 0 to return an empty vector
+      // could just bail here too, may do that later
+      emit(chunk, Op.MakeVector, getPos(node) ?? null)
+      emitOperand(chunk, 0, getPos(node) ?? null)
+      return true
+    }
+    for (let i = 0; i < elements.length; i++) {
+      if (!emitExpression(chunk, elements[i])) return false
+    }
+
+    const pos = getPos(node) ?? null
+    emit(chunk, Op.MakeVector, pos)
+    emitOperand(chunk, elements.length, pos)
+    return true
+  })
+}
+
+function emitMap(chunk: VmChunk, node: CljMap): boolean {
+  return emitTransaction(chunk, () => {
+    const entries = node.entries
+    if (entries.length === 0) {
+      emit(chunk, Op.MakeMap, getPos(node) ?? null)
+      emitOperand(chunk, 0, getPos(node) ?? null)
+      return true
+    }
+
+    for (const [key, value] of entries) {
+      if (!emitExpression(chunk, key)) return false
+      if (!emitExpression(chunk, value)) return false
+    }
+
+    const pos = getPos(node) ?? null
+    emit(chunk, Op.MakeMap, pos)
+    emitOperand(chunk, entries.length, pos)
+    return true
+  })
+}
+
+function emitSet(chunk: VmChunk, node: CljSet): boolean {
+  return emitTransaction(chunk, () => {
+    const elements = node.values
+    if (elements.length === 0) {
+      emit(chunk, Op.MakeSet, getPos(node) ?? null)
+      emitOperand(chunk, 0, getPos(node) ?? null)
+      return true
+    }
+
+    for (let i = 0; i < elements.length; i++) {
+      if (!emitExpression(chunk, elements[i])) return false
+    }
+
+    const pos = getPos(node) ?? null
+    emit(chunk, Op.MakeSet, pos)
+    emitOperand(chunk, elements.length, pos)
     return true
   })
 }

@@ -68,6 +68,13 @@ function disassembleInstruction(
       lines.push(`${formatOffset(offset)} ${name}`)
       return offset + 1
     }
+    case Op.MakeVector:
+    case Op.MakeMap:
+    case Op.MakeSet: {
+      const operandOffset = chunk.code[offset + 1]
+      lines.push(`${formatOffset(offset)} ${name} ; ${operandOffset}`)
+      return offset + 2
+    }
     default: {
       lines.push(
         `${formatOffset(offset)} ${name} ; [disassembleInstruction] unknown opcode`

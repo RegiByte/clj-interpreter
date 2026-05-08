@@ -9,6 +9,10 @@ export const Op = {
 
   LoadGlobal: 12,
 
+  MakeVector: 20,
+  MakeMap: 21,
+  MakeSet: 22,
+
   Call: 30,
   Return: 32,
 

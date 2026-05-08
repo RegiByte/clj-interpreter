@@ -10,20 +10,10 @@ import { compileVm } from '../compiler'
 import { disassembleChunk } from '../debug'
 import { jsToClj } from '../../conversions'
 import { printString } from '../../printer'
+import { hofFunctions } from '../../modules/core/stdlib/hof'
 
 const formToNode = (code: string) =>
   readForms(tokenize(code), 'user', new Map())[0] as CljValue
-
-function expectVmCompilesTo(code: string, expected: unknown) {
-  const node = formToNode(code)
-  const chunk = compileVm(node)
-
-  expect(chunk).not.toBeNull()
-  if (chunk === null) return
-
-  const result = executeChunk(chunk, makeEnv(), createEvaluationContext())
-  expect(result).toEqual(expected)
-}
 
 function makeCallTestEnv() {
   const env = makeEnv()
@@ -57,8 +47,24 @@ function makeCallTestEnv() {
     v.nativeFn('forty-two', () => v.number(42)),
     env
   )
+  define('apply', hofFunctions.apply, env)
 
   return env
+}
+
+function expectVmCompilesTo(code: string, expected: unknown) {
+  const node = formToNode(code)
+  const chunk = compileVm(node)
+
+  expect(chunk).not.toBeNull()
+  if (chunk === null) return
+
+  const result = executeChunk(
+    chunk,
+    makeCallTestEnv(),
+    createEvaluationContext()
+  )
+  expect(result).toEqual(expected)
 }
 
 function expectVmCallCompilesTo(code: string, expected: CljValue) {
@@ -111,13 +117,6 @@ describe('VM compiler literals', () => {
       ['== vm-expression ==', '0000 True', '0001 Return'].join('\n')
     )
   })
-
-  it.each(['[1 2]', '{:a 1}', '#{1}'])(
-    'returns null for unsupported form %s',
-    (code) => {
-      expect(compileVm(formToNode(code))).toBeNull()
-    }
-  )
 })
 
 describe('VM Symbols', () => {
@@ -196,7 +195,7 @@ describe('VM do compilation', () => {
   })
 
   it('falls back when any do child cannot compile', () => {
-    expect(compileVm(formToNode('(do 1 [2 3])'))).toBeNull()
+    expect(compileVm(formToNode('(do 1 [2 3 foo/bar])'))).toBeNull()
   })
 })
 
@@ -259,6 +258,17 @@ describe('VM if compilation', () => {
 
   it('executes compiled if with truthy non-boolean test', () => {
     expectVmCompilesTo('(if 0 1 2)', v.number(1))
+  })
+
+  it('executes compiled if with vector expression in then', () => {
+    expectVmCompilesTo(
+      '(if 0 [1 (+ 2 3)])',
+      v.vector([v.number(1), v.number(5)])
+    )
+    expectVmCompilesTo(
+      '(if nil :ignored [1 (+ 2 3)])',
+      v.vector([v.number(1), v.number(5)])
+    )
   })
 
   it('executes compiled if without else as nil', () => {
@@ -345,15 +355,138 @@ describe('VM call compilation', () => {
     ['(if false (+ 1 2) (+ 10 20))', v.number(30)],
     ['(if (+ 0 0) (+ 1 2) (+ 10 20))', v.number(3)],
     ['(if (truthy? nil) (+ 1 2) (+ 10 20))', v.number(30)],
+    ['(apply + 1 [2 3])', v.number(6)],
   ])('executes compiled call inside surrounding form %s', (code, expected) => {
     expectVmCallCompilesTo(code, expected)
   })
 
   it.each([
     ['([1 2] 0)', 'unsupported callee expression'],
-    ['(+ 1 [2 3])', 'unsupported argument expression'],
     ['(+ 1 foo/bar)', 'unsupported qualified argument symbol'],
   ])('falls back for %s: %s', (code) => {
     expect(compileVm(formToNode(code))).toBeNull()
+  })
+})
+
+describe('VM collection compilation', () => {
+  it.each(['[]', '[1 2]', '{:a 1}', '#{1}'])(
+    'Can compile literal collections %s',
+    (code) => {
+      const chunk = compileVm(formToNode(code))
+
+      expect(chunk).not.toBeNull()
+    }
+  )
+
+  it.each([
+    ['[1 2 3]', v.vector([v.number(1), v.number(2), v.number(3)])],
+    ['[1 (+ 2 3)]', v.vector([v.number(1), v.number(5)])],
+    ['[:a :b]', v.vector([v.keyword(':a'), v.keyword(':b')])],
+    [
+      '[:a (+ 1 2) :b (- 10 3)]',
+      v.vector([v.keyword(':a'), v.number(3), v.keyword(':b'), v.number(7)]),
+    ],
+    [
+      '{:a 1 :b 2}',
+      v.map([
+        [v.keyword(':a'), v.number(1)],
+        [v.keyword(':b'), v.number(2)],
+      ]),
+    ],
+    [
+      '{:a 1 :b (+ 2 3)}',
+      v.map([
+        [v.keyword(':a'), v.number(1)],
+        [v.keyword(':b'), v.number(5)],
+      ]),
+    ],
+    ['#{1 2 3}', v.set([v.number(1), v.number(2), v.number(3)])],
+    ['#{1 (+ 1 2)}', v.set([v.number(1), v.number(3)])],
+    ['(do [1 2] [3 4])', v.vector([v.number(3), v.number(4)])],
+  ])('executes compiled collection expressions %s', (code, expected) => {
+    expectVmCallCompilesTo(code, expected)
+  })
+
+  it.each([
+    [
+      '[(+ 1 2)]',
+      [
+        '== vm-expression ==',
+        '0000 LoadGlobal 0 ; +',
+        '0002 Constant 1 ; 1',
+        '0004 Constant 2 ; 2',
+        '0006 Call 2',
+        '0008 MakeVector ; 1',
+        '0010 Return',
+      ],
+    ],
+    [
+      '[:a (+ 1 2) :b (- 10 3)]',
+      [
+        '== vm-expression ==',
+        '0000 Constant 0 ; :a',
+        '0002 LoadGlobal 1 ; +',
+        '0004 Constant 2 ; 1',
+        '0006 Constant 3 ; 2',
+        '0008 Call 2',
+        '0010 Constant 4 ; :b',
+        '0012 LoadGlobal 5 ; -',
+        '0014 Constant 6 ; 10',
+        '0016 Constant 7 ; 3',
+        '0018 Call 2',
+        '0020 MakeVector ; 4',
+        '0022 Return',
+      ],
+    ],
+    [
+      '{:a 1 :b (+ 2 3)}',
+      [
+        '== vm-expression ==',
+        '0000 Constant 0 ; :a',
+        '0002 Constant 1 ; 1',
+        '0004 Constant 2 ; :b',
+        '0006 LoadGlobal 3 ; +',
+        '0008 Constant 4 ; 2',
+        '0010 Constant 5 ; 3',
+        '0012 Call 2',
+        '0014 MakeMap ; 2',
+        '0016 Return',
+      ],
+    ],
+    [
+      '#{1 (+ 1 2)}',
+      [
+        '== vm-expression ==',
+        '0000 Constant 0 ; 1',
+        '0002 LoadGlobal 1 ; +',
+        '0004 Constant 2 ; 1',
+        '0006 Constant 3 ; 2',
+        '0008 Call 2',
+        '0010 MakeSet ; 2',
+        '0012 Return',
+      ],
+    ],
+    [
+      '[1 2 (if 1 3 4)]',
+      [
+        '== vm-expression ==',
+        '0000 Constant 0 ; 1',
+        '0002 Constant 1 ; 2',
+        '0004 Constant 2 ; 1',
+        '0006 JumpIfFalsy 4 -> 0012',
+        '0008 Constant 3 ; 3',
+        '0010 Jump 2 -> 0014',
+        '0012 Constant 4 ; 4',
+        '0014 MakeVector ; 3',
+        '0016 Return',
+      ],
+    ],
+  ])('Compiles collection expressions to bytecode %s', (code, expected) => {
+    const chunk = compileVm(formToNode(code))
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    expect(disassembleChunk(chunk)).toBe(expected.join('\n'))
   })
 })
