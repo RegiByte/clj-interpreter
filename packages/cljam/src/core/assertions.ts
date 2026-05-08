@@ -38,7 +38,7 @@ export const isChar = (value: CljValue): value is CljChar =>
   value.kind === 'character'
 export const isFalsy = (value: CljValue): boolean => {
   if (value.kind === 'nil') return true
-  if (isBoolean(value)) return !value.value
+  if (value.kind === 'boolean') return value.value === false
   return false
 }
 export const isTruthy = (value: CljValue): boolean => {

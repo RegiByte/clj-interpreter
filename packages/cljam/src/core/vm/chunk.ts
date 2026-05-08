@@ -1,5 +1,11 @@
 import type { CljValue, Pos, VmChunk } from '../types'
 
+type ChunkSnapshot = {
+  codeLength: number
+  constantsLength: number
+  positionsLength: number
+}
+
 export function makeChunk(name?: string): VmChunk {
   return {
     code: [],
@@ -31,4 +37,33 @@ export function emitOperand(
   pos: Pos | null = null
 ): void {
   emit(chunk, operand, pos)
+}
+
+export function snapshotChunk(chunk: VmChunk): ChunkSnapshot {
+  return {
+    codeLength: chunk.code.length,
+    constantsLength: chunk.constants.length,
+    positionsLength: chunk.positions.length,
+  }
+}
+
+export function rollbackChunk(
+  chunk: VmChunk,
+  snapshot: ChunkSnapshot
+): void {
+  chunk.code.length = snapshot.codeLength
+  chunk.constants.length = snapshot.constantsLength
+  chunk.positions.length = snapshot.positionsLength
+}
+
+export function emitTransaction(
+  chunk: VmChunk,
+  emitBody: () => boolean
+): boolean {
+  const snapshot = snapshotChunk(chunk)
+
+  if (emitBody()) return true
+
+  rollbackChunk(chunk, snapshot)
+  return false
 }

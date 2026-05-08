@@ -33,9 +33,37 @@ function disassembleInstruction(
       )
       return offset + 2
     }
+    case Op.LoadGlobal: {
+      const constantIndex = chunk.code[offset + 1]
+      const constant = chunk.constants[constantIndex]
+      const rendered =
+        constant === undefined ? '<missing>' : printString(constant)
+
+      lines.push(
+        `${formatOffset(offset)} ${name} ${constantIndex} ; ${rendered}`
+      )
+
+      return offset + 2
+    }
+    case Op.Jump:
+    case Op.JumpIfFalsy: {
+      const operandOffset = chunk.code[offset + 1]
+      const offsetAfterOperand = 2 + offset
+      const finalOffset = offsetAfterOperand + operandOffset
+      lines.push(
+        `${formatOffset(offset)} ${name} ${operandOffset} -> ${formatOffset(finalOffset)}`
+      )
+      return offset + 2
+    }
+    case Op.Call: {
+      const operandOffset = chunk.code[offset + 1]
+      lines.push(`${formatOffset(offset)} ${name} ${operandOffset}`)
+      return offset + 2
+    }
     case Op.Nil:
     case Op.True:
     case Op.False:
+    case Op.Pop:
     case Op.Return: {
       lines.push(`${formatOffset(offset)} ${name}`)
       return offset + 1
