@@ -54,7 +54,18 @@ function emitExpression(chunk: VmChunk, node: CljValue): boolean {
       const symbolName = node.name
       const slashIdx = symbolName.indexOf('/')
       // qualified symbol not supported yet
-      if (slashIdx > 0 && slashIdx < symbolName.length - 1) return false
+      if (slashIdx > 0 && slashIdx < symbolName.length - 1) {
+        const localName = symbolName.slice(slashIdx + 1)
+        if (localName.includes('.')) {
+          // js interop form not yet supported, e.g (js/console.log "hello")
+          return false
+        }
+        const index = addConstant(chunk, node)
+        const pos = getPos(node) ?? null
+        emit(chunk, Op.LoadQualified, pos)
+        emitOperand(chunk, index, pos)
+        return true
+      }
       const index = addConstant(chunk, node)
       const pos = getPos(node) ?? null
       emit(chunk, Op.LoadGlobal, pos)

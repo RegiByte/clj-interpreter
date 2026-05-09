@@ -33,7 +33,8 @@ function disassembleInstruction(
       )
       return offset + 2
     }
-    case Op.LoadGlobal: {
+    case Op.LoadGlobal:
+    case Op.LoadQualified: {
       const constantIndex = chunk.code[offset + 1]
       const constant = chunk.constants[constantIndex]
       const rendered =

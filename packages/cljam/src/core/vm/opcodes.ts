@@ -8,6 +8,7 @@ export const Op = {
   Pop: 4,
 
   LoadGlobal: 12,
+  LoadQualified: 13,
 
   MakeVector: 20,
   MakeMap: 21,

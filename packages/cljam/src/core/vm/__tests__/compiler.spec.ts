@@ -11,6 +11,11 @@ import { disassembleChunk } from '../debug'
 import { jsToClj } from '../../conversions'
 import { printString } from '../../printer'
 import { hofFunctions } from '../../modules/core/stdlib/hof'
+import {
+  expectVmEqualsInterpreter,
+  expectVmFallsBack,
+  expectVmThrowsLikeInterpreter,
+} from './helpers'
 
 const formToNode = (code: string) =>
   readForms(tokenize(code), 'user', new Map())[0] as CljValue
@@ -82,6 +87,38 @@ function expectVmCallCompilesTo(code: string, expected: CljValue) {
   expect(result).toEqual(expected)
 }
 
+describe('VM compiler equivalence helpers', () => {
+  it.each([
+    '42',
+    '"hello"',
+    ':ok',
+    'nil',
+    'true',
+    'false',
+    '(do 1 2 3)',
+    '(if true 1 2)',
+    '[1 (+ 2 3)]',
+    '{:a 1 :b (+ 2 3)}',
+    '#{1 (+ 1 2)}',
+  ])('matches interpreter result for %s', (code) => {
+    expectVmEqualsInterpreter(code)
+  })
+
+  it.each(['js/Math.pow', '([1 2] 0)', '(if true 1 2 3)'])(
+    'expects VM fallback for %s',
+    (code) => {
+      expectVmFallsBack(code)
+    }
+  )
+
+  it.each(['missing', '(+ missing 1)', 'source.ns/missing'])(
+    'throws like the interpreter for %s',
+    (code) => {
+      expectVmThrowsLikeInterpreter(code)
+    }
+  )
+})
+
 describe('VM compiler literals', () => {
   it.each([
     ['42', v.number(42)],
@@ -144,8 +181,93 @@ describe('VM Symbols', () => {
       v.number(42)
     )
   })
-  it.each(['foo/bar', 'js/Math'])(
-    'still falls back for qualified symbol %s',
+
+  it.each([
+    ['foo/bar', 'foo/bar'],
+    ['clojure.core/+', 'clojure.core/+'],
+  ])(
+    'compiles qualified symbol %s to LoadQualified plus Return',
+    (code, rendered) => {
+      const chunk = compileVm(formToNode(code))
+
+      expect(chunk).not.toBeNull()
+      if (chunk === null) return
+
+      expect(disassembleChunk(chunk)).toBe(
+        [
+          '== vm-expression ==',
+          `0000 LoadQualified 0 ; ${rendered}`,
+          '0002 Return',
+        ].join('\n')
+      )
+    }
+  )
+
+  it.each([
+    ['full namespace name', 'source.ns/answer'],
+    ['alias-qualified name', 'src/answer'],
+  ])('executes compiled qualified symbol reads via %s', (_label, code) => {
+    const chunk = compileVm(formToNode(code))
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    const sourceNs = v.namespace('source.ns')
+    sourceNs.vars.set('answer', v.var('source.ns', 'answer', v.number(42)))
+
+    const env = makeEnv()
+    env.ns = v.namespace('consumer.ns')
+    env.ns.aliases.set('src', sourceNs)
+
+    const ctx = createEvaluationContext()
+    ctx.resolveNs = (name) => (name === 'source.ns' ? sourceNs : null)
+
+    expect(executeChunk(chunk, env, ctx)).toEqual(v.number(42))
+  })
+
+  it('compiled qualified reads see later root redefinition', () => {
+    const chunk = compileVm(formToNode('source.ns/answer'))
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    const sourceNs = v.namespace('source.ns')
+    const answer = v.var('source.ns', 'answer', v.number(1))
+    sourceNs.vars.set('answer', answer)
+
+    const ctx = createEvaluationContext()
+    ctx.resolveNs = (name) => (name === 'source.ns' ? sourceNs : null)
+
+    expect(executeChunk(chunk, makeEnv(), ctx)).toEqual(v.number(1))
+
+    answer.value = v.number(2)
+
+    expect(executeChunk(chunk, makeEnv(), ctx)).toEqual(v.number(2))
+  })
+
+  it('compiles qualified symbols inside calls and collections', () => {
+    const sourceNs = v.namespace('source.ns')
+    sourceNs.vars.set('answer', v.var('source.ns', 'answer', v.number(40)))
+
+    const env = makeCallTestEnv()
+    env.ns = v.namespace('consumer.ns')
+    env.ns.aliases.set('src', sourceNs)
+
+    const ctx = createEvaluationContext()
+    ctx.resolveNs = (name) => (name === 'source.ns' ? sourceNs : null)
+
+    const chunk = compileVm(formToNode('[(+ src/answer 2) source.ns/answer]'))
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    expect(executeChunk(chunk, env, ctx)).toEqual(
+      v.vector([v.number(42), v.number(40)])
+    )
+  })
+
+  it.each(['js/Math.pow', 'js/console.log', 'foo/bar.baz'])(
+    'still falls back for dotted qualified symbol %s',
     (code) => {
       expect(compileVm(formToNode(code))).toBeNull()
     }
@@ -195,7 +317,7 @@ describe('VM do compilation', () => {
   })
 
   it('falls back when any do child cannot compile', () => {
-    expect(compileVm(formToNode('(do 1 [2 3 foo/bar])'))).toBeNull()
+    expect(compileVm(formToNode('(do 1 [2 3 foo/bar.baz])'))).toBeNull()
   })
 })
 
@@ -362,7 +484,7 @@ describe('VM call compilation', () => {
 
   it.each([
     ['([1 2] 0)', 'unsupported callee expression'],
-    ['(+ 1 foo/bar)', 'unsupported qualified argument symbol'],
+    ['(+ 1 foo/bar.baz)', 'unsupported dotted qualified argument symbol'],
   ])('falls back for %s: %s', (code) => {
     expect(compileVm(formToNode(code))).toBeNull()
   })

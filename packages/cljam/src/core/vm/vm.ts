@@ -1,10 +1,10 @@
 import { is } from '../assertions'
-import { lookup } from '../env'
-import { EvaluationError } from '../errors'
+import { derefValue, getNamespaceEnv, lookup } from '../env'
+import { EvaluationError, isEvaluationError } from '../errors'
 import { v } from '../factories'
 import { getPos } from '../positions'
 import { printString } from '../printer'
-import type { CljValue, Env, EvaluationContext, VmChunk } from '../types'
+import type { CljValue, Env, EvaluationContext, Pos, VmChunk } from '../types'
 import { Op, opcodeName } from './opcodes'
 
 export function executeChunk(
@@ -16,7 +16,9 @@ export function executeChunk(
   let ip = 0
 
   while (ip < chunk.code.length) {
+    const instructionOffset = ip
     const instruction = chunk.code[ip++]
+    const instructionPos = getInstructionPos(chunk, instructionOffset)
     switch (instruction) {
       case Op.Constant: {
         const constantIndex = chunk.code[ip++]
@@ -24,7 +26,8 @@ export function executeChunk(
         if (value === undefined) {
           throw new EvaluationError(
             `Invalid constant index: ${constantIndex}`,
-            { instruction, constantIndex, ip, stack, chunk }
+            { instruction, constantIndex, ip, stack, chunk },
+            instructionPos
           )
         }
         stack.push(value)
@@ -40,7 +43,7 @@ export function executeChunk(
             ip,
             stack,
             chunk,
-          })
+          }, instructionPos)
         }
         if (!is.symbol(symbol)) {
           throw new EvaluationError(`LoadGlobal expected symbol constant`, {
@@ -50,19 +53,83 @@ export function executeChunk(
             ip,
             stack,
             chunk,
-          })
+          }, instructionPos)
         }
         try {
           const value = lookup(symbol.name, env)
           stack.push(value)
         } catch (e) {
-          if (e instanceof EvaluationError && !e.pos) {
-            const pos = getPos(symbol)
-            if (pos) e.pos = pos
-          }
+          hydrateVmErrorPos(e, getPos(symbol) ?? instructionPos)
           throw e
         }
 
+        break
+      }
+      case Op.LoadQualified: {
+        const symbolIndex = chunk.code[ip++]
+        const symbol = chunk.constants[symbolIndex]
+        if (symbol === undefined) {
+          throw new EvaluationError(`Invalid constant index: ${symbolIndex}`, {
+            instruction,
+            constantIndex: symbolIndex,
+            ip,
+            stack,
+            chunk,
+          }, instructionPos)
+        }
+        if (!is.symbol(symbol)) {
+          throw new EvaluationError(`LoadQualified expected symbol constant`, {
+            instruction,
+            constantIndex: symbolIndex,
+            value: symbol,
+            ip,
+            stack,
+            chunk,
+          }, instructionPos)
+        }
+        const slashIdx = symbol.name.indexOf('/')
+        if (slashIdx <= 0 || slashIdx >= symbol.name.length - 1) {
+          throw new EvaluationError(
+            `Invalid qualified symbol: ${symbol.name}`,
+            {
+              instruction,
+              constantIndex: symbolIndex,
+              value: symbol,
+              ip,
+              stack,
+              chunk,
+            },
+            getPos(symbol) ?? instructionPos
+          )
+        }
+        const alias = symbol.name.slice(0, slashIdx)
+        const localName = symbol.name.slice(slashIdx + 1)
+        const nsEnv = getNamespaceEnv(env)
+        // Resolve alias: local :as alias first, then full namespace name
+        const targetNs =
+          nsEnv.ns?.aliases.get(alias) ?? ctx.resolveNs(alias) ?? null
+        if (!targetNs) {
+          throw new EvaluationError(`No such namespace or alias: ${alias}`, {
+            instruction,
+            constantIndex: symbolIndex,
+            value: symbol,
+            ip,
+            stack,
+            chunk,
+          }, getPos(symbol) ?? instructionPos)
+        }
+        const theVar = targetNs.vars.get(localName)
+        if (theVar === undefined) {
+          throw new EvaluationError(`Symbol ${symbol.name} not found`, {
+            instruction,
+            constantIndex: symbolIndex,
+            value: symbol,
+            ip,
+            stack,
+            chunk,
+          }, getPos(symbol) ?? instructionPos)
+        }
+        stack.push(derefValue(theVar))
         break
       }
       case Op.Nil: {
@@ -80,18 +147,30 @@ export function executeChunk(
       case Op.Pop: {
         const value = stack.pop()
         if (value === undefined) {
-          throw new EvaluationError('VM stack underflow on Pop', {
-            instruction,
-            ip,
-            stack,
-            chunk,
-          })
+          throw new EvaluationError(
+            'VM stack underflow on Pop',
+            {
+              instruction,
+              ip,
+              stack,
+              chunk,
+            },
+            instructionPos
+          )
         }
         break
       }
       case Op.MakeVector: {
         const length = chunk.code[ip++]
-        assertCountOperand(length, 'MakeVector', instruction, ip, stack, chunk)
+        assertCountOperand(
+          length,
+          'MakeVector',
+          instruction,
+          ip,
+          stack,
+          chunk,
+          instructionPos
+        )
         if (length === 0) {
           stack.push(v.vector([]))
           break
@@ -104,7 +183,8 @@ export function executeChunk(
               ip,
               stack,
               chunk,
-            }
+            },
+            instructionPos
           )
         }
 
@@ -114,7 +194,15 @@ export function executeChunk(
       }
       case Op.MakeMap: {
         const length = chunk.code[ip++]
-        assertCountOperand(length, 'MakeMap', instruction, ip, stack, chunk)
+        assertCountOperand(
+          length,
+          'MakeMap',
+          instruction,
+          ip,
+          stack,
+          chunk,
+          instructionPos
+        )
         if (length === 0) {
           stack.push(v.map([]))
           break
@@ -127,7 +215,8 @@ export function executeChunk(
               ip,
               stack,
               chunk,
-            }
+            },
+            instructionPos
           )
         }
 
@@ -141,7 +230,15 @@ export function executeChunk(
       }
       case Op.MakeSet: {
         const length = chunk.code[ip++]
-        assertCountOperand(length, 'MakeSet', instruction, ip, stack, chunk)
+        assertCountOperand(
+          length,
+          'MakeSet',
+          instruction,
+          ip,
+          stack,
+          chunk,
+          instructionPos
+        )
         if (length === 0) {
           stack.push(v.set([]))
           break
@@ -154,7 +251,8 @@ export function executeChunk(
               ip,
               stack,
               chunk,
-            }
+            },
+            instructionPos
           )
         }
 
@@ -164,7 +262,15 @@ export function executeChunk(
       }
       case Op.Call: {
         const argCount = chunk.code[ip++]
-        assertCountOperand(argCount, 'Call', instruction, ip, stack, chunk)
+        assertCountOperand(
+          argCount,
+          'Call',
+          instruction,
+          ip,
+          stack,
+          chunk,
+          instructionPos
+        )
 
         if (stack.length < argCount + 1) {
           throw new EvaluationError(
@@ -174,7 +280,8 @@ export function executeChunk(
               ip,
               stack,
               chunk,
-            }
+            },
+            instructionPos
           )
         }
 
@@ -190,7 +297,8 @@ export function executeChunk(
               ip,
               stack,
               chunk,
-            }
+            },
+            instructionPos
           )
         }
 
@@ -202,11 +310,16 @@ export function executeChunk(
             ip,
             stack,
             chunk,
-          })
+          }, instructionPos)
         }
 
-        const result = ctx.applyCallable(callable, args, env)
-        stack.push(result)
+        try {
+          const result = ctx.applyCallable(callable, args, env)
+          stack.push(result)
+        } catch (e) {
+          hydrateVmErrorPos(e, instructionPos)
+          throw e
+        }
         break
       }
       case Op.Return: {
@@ -215,22 +328,26 @@ export function executeChunk(
       }
       case Op.Jump: {
         const offset = chunk.code[ip++]
-        assertJumpOffset(offset, instruction, ip, stack, chunk)
+        assertJumpOffset(offset, instruction, ip, stack, chunk, instructionPos)
         ip += offset
         break
       }
       case Op.JumpIfFalsy: {
         const offset = chunk.code[ip++]
-        assertJumpOffset(offset, instruction, ip, stack, chunk)
+        assertJumpOffset(offset, instruction, ip, stack, chunk, instructionPos)
         const condition = stack.pop()
 
         if (condition === undefined) {
-          throw new EvaluationError('VM stack underflow on JumpIfFalsy', {
-            instruction,
-            ip,
-            stack,
-            chunk,
-          })
+          throw new EvaluationError(
+            'VM stack underflow on JumpIfFalsy',
+            {
+              instruction,
+              ip,
+              stack,
+              chunk,
+            },
+            instructionPos
+          )
         }
         if (is.falsy(condition)) {
           ip += offset
@@ -246,7 +363,8 @@ export function executeChunk(
             ip,
             stack,
             chunk,
-          }
+          },
+          instructionPos
         )
       }
     }
@@ -255,12 +373,23 @@ export function executeChunk(
   return v.nil()
 }
 
+function getInstructionPos(chunk: VmChunk, offset: number): Pos | undefined {
+  return chunk.positions[offset] ?? undefined
+}
+
+function hydrateVmErrorPos(error: unknown, pos: Pos | undefined): void {
+  if (pos && isEvaluationError(error) && !error.pos) {
+    error.pos = pos
+  }
+}
+
 function assertJumpOffset(
   offset: number | undefined,
   instruction: number,
   ip: number,
   stack: CljValue[],
-  chunk: VmChunk
+  chunk: VmChunk,
+  pos: Pos | undefined
 ): asserts offset is number {
   if (
     offset === undefined ||
@@ -268,13 +397,17 @@ function assertJumpOffset(
     offset < 0 ||
     ip + offset > chunk.code.length
   ) {
-    throw new EvaluationError(`Invalid jump offset: ${offset}`, {
-      instruction,
-      offset,
-      ip,
-      stack,
-      chunk,
-    })
+    throw new EvaluationError(
+      `Invalid jump offset: ${offset}`,
+      {
+        instruction,
+        offset,
+        ip,
+        stack,
+        chunk,
+      },
+      pos
+    )
   }
 }
 
@@ -284,19 +417,20 @@ function assertCountOperand(
   instruction: number,
   ip: number,
   stack: CljValue[],
-  chunk: VmChunk
+  chunk: VmChunk,
+  pos: Pos | undefined
 ): asserts count is number {
-  if (
-    count === undefined ||
-    !Number.isInteger(count) ||
-    count < 0
-  ) {
-    throw new EvaluationError(`Invalid ${opName} count: ${count}`, {
-      instruction,
-      count,
-      ip,
-      stack,
-      chunk,
-    })
+  if (count === undefined || !Number.isInteger(count) || count < 0) {
+    throw new EvaluationError(
+      `Invalid ${opName} count: ${count}`,
+      {
+        instruction,
+        count,
+        ip,
+        stack,
+        chunk,
+      },
+      pos
+    )
   }
 }

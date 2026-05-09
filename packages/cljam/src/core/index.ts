@@ -15,7 +15,12 @@ export type {
 export type { CljamLibrary } from './library'
 
 // Preset functions — plain SessionOptions objects for common environments
-export { nodePreset, browserPreset, sandboxPreset, resolveSessionProfile } from '../presets'
+export {
+  nodePreset,
+  browserPreset,
+  sandboxPreset,
+  resolveSessionProfile,
+} from '../presets'
 export type { SessionPresetName, SessionProfile } from '../presets'
 
 // Runtime API (advanced embedding)
@@ -38,13 +43,15 @@ export { cljToJs, jsToClj, ConversionError } from './conversions'
 export type { FunctionApplier } from './conversions'
 
 // Evaluator
-export {
-  applyFunction,
-  evaluateWithMeasurements,
-} from './evaluator'
+export { applyFunction, evaluateWithMeasurements } from './evaluator'
 
 // Errors
-export { EvaluationError, ReaderError, TokenizerError, isEvaluationError } from './errors'
+export {
+  EvaluationError,
+  ReaderError,
+  TokenizerError,
+  isEvaluationError,
+} from './errors'
 
 // Factories
 export {
