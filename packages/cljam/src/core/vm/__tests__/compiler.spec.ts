@@ -510,6 +510,29 @@ describe('VM function body compilation', () => {
     )
   })
 
+  it('pops intermediate let* body forms before returning the last body value', () => {
+    const chunk = compileFnBodyForTest(['x'], ['(let* [y (+ x 1)] y (+ y 1))'])
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    expect(disassembleChunk(chunk)).toBe(
+      [
+        '== vm-fn-body ==',
+        '0000 LoadLocal 0',
+        '0002 Constant 0 ; 1',
+        '0004 Add 2',
+        '0006 StoreLocal 1',
+        '0008 LoadLocal 1',
+        '0010 Pop',
+        '0011 LoadLocal 1',
+        '0013 Constant 1 ; 1',
+        '0015 Add 2',
+        '0017 Return',
+      ].join('\n')
+    )
+  })
+
   it('lets inner let* bindings shadow params without changing the param slot', () => {
     expectVmFnBodyCompilesTo(
       ['x'],
@@ -602,6 +625,38 @@ describe('VM function body compilation', () => {
         '0020 Add 2',
         '0022 Recur 0 1 -> 0004',
         '0026 Return',
+      ].join('\n')
+    )
+  })
+
+  it('pops intermediate loop* body forms while keeping recur in tail position', () => {
+    const chunk = compileFnBodyForTest(
+      [],
+      ['(loop* [i 0] i (if (= i 3) i (recur (+ i 1))))']
+    )
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    expect(chunk.localCount).toBe(1)
+    expect(disassembleChunk(chunk)).toBe(
+      [
+        '== vm-fn-body ==',
+        '0000 Constant 0 ; 0',
+        '0002 StoreLocal 0',
+        '0004 LoadLocal 0',
+        '0006 Pop',
+        '0007 LoadLocal 0',
+        '0009 Constant 1 ; 3',
+        '0011 Eq 2',
+        '0013 JumpIfFalsy 4 -> 0019',
+        '0015 LoadLocal 0',
+        '0017 Jump 10 -> 0029',
+        '0019 LoadLocal 0',
+        '0021 Constant 2 ; 1',
+        '0023 Add 2',
+        '0025 Recur 0 1 -> 0004',
+        '0029 Return',
       ].join('\n')
     )
   })

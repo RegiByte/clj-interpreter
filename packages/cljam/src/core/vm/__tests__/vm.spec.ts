@@ -119,6 +119,57 @@ describe('VM Hand written chunks', () => {
     expect(chunk.positions).toEqual([pos, pos, pos])
   })
 
+  it('tracks max stack for emitted chunks', () => {
+    const chunk = makeChunk('max-stack-test')
+
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, v.number(1)))
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, v.number(2)))
+    emit(chunk, Op.Add)
+    emitOperand(chunk, 2)
+    emit(chunk, Op.Return)
+
+    expect(chunk.maxStack).toBe(2)
+  })
+
+  it('tracks max stack for operand-count instructions', () => {
+    const chunk = makeChunk('max-stack-count-test')
+
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, v.keyword(':a')))
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, v.number(1)))
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, v.keyword(':b')))
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, v.number(2)))
+    emit(chunk, Op.MakeMap)
+    emitOperand(chunk, 2)
+    emit(chunk, Op.Return)
+
+    expect(chunk.maxStack).toBe(4)
+  })
+
+  it('restores max stack metadata when rolling back chunks', () => {
+    const chunk = makeChunk('max-stack-rollback-test')
+    const snapshot = snapshotChunk(chunk)
+
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, v.number(1)))
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, v.number(2)))
+
+    expect(chunk.maxStack).toBe(2)
+
+    rollbackChunk(chunk, snapshot)
+
+    expect(chunk.maxStack).toBe(0)
+    expect(chunk.code).toEqual([])
+    expect(chunk.constants).toEqual([])
+    expect(chunk.positions).toEqual([])
+  })
+
   it('disassembles constants and returns', () => {
     const chunk = makeChunk('disassemble-test')
     const index = addConstant(chunk, v.number(42))

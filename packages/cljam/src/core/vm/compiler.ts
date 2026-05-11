@@ -39,8 +39,6 @@ type VmCompileEnv = {
 
 const unsupportedVmSpecialForms = new Set<string>([
   specialFormKeywords['fn*'],
-  specialFormKeywords['loop*'],
-  specialFormKeywords['recur'],
   specialFormKeywords['def'],
   specialFormKeywords['try'],
   specialFormKeywords['binding'],
@@ -417,6 +415,10 @@ function emitLetStar(
     for (let i = 0; i < body.length; i++) {
       const form = body[i]
       if (!emitExpression(chunk, form, compileEnv)) return false
+
+      if (i < body.length - 1) {
+        emit(chunk, Op.Pop)
+      }
     }
 
     for (const [name, previousSlot] of previousSlots) {
@@ -481,6 +483,10 @@ function emitLoopStar(
       if (!emitExpression(chunk, form, compileEnv)) {
         bodyCompiled = false
         break
+      }
+
+      if (i < body.length - 1) {
+        emit(chunk, Op.Pop)
       }
     }
     compileEnv.recurTarget = previousRecurTarget
