@@ -82,7 +82,7 @@ function evaluateWithVm(code: string): CljValue {
   expect(chunk).not.toBeNull()
   if (chunk === null) throw new Error(`Expected VM compile for: ${code}`)
 
-  return executeChunk(chunk, env, ctx)
+  return executeChunk({ chunk, env, ctx })
 }
 
 function expectThrows(fn: () => unknown): Error {

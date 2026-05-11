@@ -586,7 +586,7 @@ async function applyCallableAsync(
         arity.restParam,
         currentArgs,
         fn.env,
-        asyncCtx.syncCtx, // bindParams uses syncCtx only for structural destructuring
+        asyncCtx.syncCtx,
         callEnv
       )
       try {

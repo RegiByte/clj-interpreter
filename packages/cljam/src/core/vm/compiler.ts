@@ -28,7 +28,6 @@ type VmCompileEnv = {
 }
 
 const unsupportedVmSpecialForms = new Set<string>([
-  specialFormKeywords['let*'],
   specialFormKeywords['fn*'],
   specialFormKeywords['loop*'],
   specialFormKeywords['recur'],

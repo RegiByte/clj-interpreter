@@ -25,7 +25,11 @@ describe('VM Hand written chunks', () => {
     emitOperand(chunk, index)
     emit(chunk, Op.Return)
 
-    const result = executeChunk(chunk, makeEnv(), createEvaluationContext())
+    const result = executeChunk({
+      chunk,
+      env: makeEnv(),
+      ctx: createEvaluationContext(),
+    })
 
     expect(result).toEqual(v.number(42))
   })
@@ -39,17 +43,17 @@ describe('VM Hand written chunks', () => {
     emit(chunk, op)
     emit(chunk, Op.Return)
 
-    expect(executeChunk(chunk, makeEnv(), createEvaluationContext())).toEqual(
-      expected
-    )
+    expect(
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
+    ).toEqual(expected)
   })
 
   it('returns nil for an empty chunk', () => {
     const chunk = makeChunk('empty-test')
 
-    expect(executeChunk(chunk, makeEnv(), createEvaluationContext())).toEqual(
-      v.nil()
-    )
+    expect(
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
+    ).toEqual(v.nil())
   })
 
   it('throws on an invalid constant index', () => {
@@ -59,7 +63,7 @@ describe('VM Hand written chunks', () => {
     emit(chunk, Op.Return)
 
     expect(() =>
-      executeChunk(chunk, makeEnv(), createEvaluationContext())
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
     ).toThrow(EvaluationError)
   })
 
@@ -68,7 +72,7 @@ describe('VM Hand written chunks', () => {
     emit(chunk, 999)
 
     expect(() =>
-      executeChunk(chunk, makeEnv(), createEvaluationContext())
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
     ).toThrow(EvaluationError)
   })
 
@@ -108,9 +112,11 @@ describe('VM Hand written chunks', () => {
     emit(chunk, Op.Return)
 
     expect(disassembleChunk(chunk)).toBe(
-      ['== load-local-disassemble-test ==', '0000 LoadLocal 0', '0002 Return'].join(
-        '\n'
-      )
+      [
+        '== load-local-disassemble-test ==',
+        '0000 LoadLocal 0',
+        '0002 Return',
+      ].join('\n')
     )
   })
 
@@ -122,9 +128,11 @@ describe('VM Hand written chunks', () => {
     emit(chunk, Op.Return)
 
     expect(disassembleChunk(chunk)).toBe(
-      ['== store-local-disassemble-test ==', '0000 StoreLocal 0', '0002 Return'].join(
-        '\n'
-      )
+      [
+        '== store-local-disassemble-test ==',
+        '0000 StoreLocal 0',
+        '0002 Return',
+      ].join('\n')
     )
   })
 
@@ -139,9 +147,9 @@ describe('VM Hand written chunks', () => {
     const env = makeEnv()
     define('x', v.number(42), env)
 
-    expect(executeChunk(chunk, env, createEvaluationContext())).toEqual(
-      v.number(42)
-    )
+    expect(
+      executeChunk({ chunk, env, ctx: createEvaluationContext() })
+    ).toEqual(v.number(42))
   })
 
   it('executes LoadGlobal from namespace vars', () => {
@@ -156,9 +164,9 @@ describe('VM Hand written chunks', () => {
     env.ns = makeNamespace('user')
     internVar('x', v.number(42), env)
 
-    expect(executeChunk(chunk, env, createEvaluationContext())).toEqual(
-      v.number(42)
-    )
+    expect(
+      executeChunk({ chunk, env, ctx: createEvaluationContext() })
+    ).toEqual(v.number(42))
   })
 
   it('derefs namespace vars at execution time', () => {
@@ -175,9 +183,9 @@ describe('VM Hand written chunks', () => {
 
     internVar('x', v.number(2), env)
 
-    expect(executeChunk(chunk, env, createEvaluationContext())).toEqual(
-      v.number(2)
-    )
+    expect(
+      executeChunk({ chunk, env, ctx: createEvaluationContext() })
+    ).toEqual(v.number(2))
   })
 
   it('throws for missing globals', () => {
@@ -189,7 +197,7 @@ describe('VM Hand written chunks', () => {
     emit(chunk, Op.Return)
 
     expect(() =>
-      executeChunk(chunk, makeEnv(), createEvaluationContext())
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
     ).toThrow(EvaluationError)
   })
 
@@ -214,7 +222,7 @@ describe('VM Hand written chunks', () => {
     const ctx = createEvaluationContext()
     ctx.resolveNs = (name) => (name === 'source.ns' ? sourceNs : null)
 
-    expect(executeChunk(chunk, env, ctx)).toEqual(v.number(42))
+    expect(executeChunk({ chunk, env, ctx })).toEqual(v.number(42))
   })
 
   it('derefs qualified vars at execution time', () => {
@@ -232,11 +240,11 @@ describe('VM Hand written chunks', () => {
     const ctx = createEvaluationContext()
     ctx.resolveNs = (name) => (name === 'source.ns' ? sourceNs : null)
 
-    expect(executeChunk(chunk, makeEnv(), ctx)).toEqual(v.number(1))
+    expect(executeChunk({ chunk, env: makeEnv(), ctx })).toEqual(v.number(1))
 
     answer.value = v.number(2)
 
-    expect(executeChunk(chunk, makeEnv(), ctx)).toEqual(v.number(2))
+    expect(executeChunk({ chunk, env: makeEnv(), ctx })).toEqual(v.number(2))
   })
 
   it('respects dynamic binding stacks for qualified vars', () => {
@@ -256,7 +264,9 @@ describe('VM Hand written chunks', () => {
     const ctx = createEvaluationContext()
     ctx.resolveNs = (name) => (name === 'source.ns' ? sourceNs : null)
 
-    expect(executeChunk(chunk, makeEnv(), ctx)).toEqual(v.keyword(':bound'))
+    expect(executeChunk({ chunk, env: makeEnv(), ctx })).toEqual(
+      v.keyword(':bound')
+    )
   })
 
   it.each([
@@ -300,7 +310,9 @@ describe('VM Hand written chunks', () => {
     const ctx = createEvaluationContext()
     ctx.resolveNs = (name) => (name === 'source.ns' ? sourceNs : null)
 
-    expect(() => executeChunk(chunk, makeEnv(), ctx)).toThrow(EvaluationError)
+    expect(() => executeChunk({ chunk, env: makeEnv(), ctx })).toThrow(
+      EvaluationError
+    )
   })
 
   it('attaches instruction position to LoadQualified errors', () => {
@@ -314,7 +326,7 @@ describe('VM Hand written chunks', () => {
 
     let err: EvaluationError | undefined
     try {
-      executeChunk(chunk, makeEnv(), createEvaluationContext())
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
     } catch (e) {
       if (e instanceof EvaluationError) err = e
     }
@@ -341,7 +353,7 @@ describe('VM Hand written chunks', () => {
 
     let err: EvaluationError | undefined
     try {
-      executeChunk(chunk, makeEnv(), createEvaluationContext())
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
     } catch (e) {
       if (e instanceof EvaluationError) err = e
     }
@@ -405,7 +417,7 @@ describe('VM Hand written chunks', () => {
 
       let err: EvaluationError | undefined
       try {
-        executeChunk(chunk, makeEnv(), createEvaluationContext())
+        executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
       } catch (e) {
         if (e instanceof EvaluationError) err = e
       }
@@ -427,9 +439,9 @@ describe('VM Hand written chunks', () => {
     emitOperand(chunk, second)
     emit(chunk, Op.Return)
 
-    expect(executeChunk(chunk, makeEnv(), createEvaluationContext())).toEqual(
-      v.number(2)
-    )
+    expect(
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
+    ).toEqual(v.number(2))
   })
 
   it('throws when Pop has an empty stack', () => {
@@ -437,7 +449,7 @@ describe('VM Hand written chunks', () => {
     emit(chunk, Op.Pop)
 
     expect(() =>
-      executeChunk(chunk, makeEnv(), createEvaluationContext())
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
     ).toThrow(EvaluationError)
   })
 
@@ -454,9 +466,9 @@ describe('VM Hand written chunks', () => {
     emitOperand(chunk, result)
     emit(chunk, Op.Return)
 
-    expect(executeChunk(chunk, makeEnv(), createEvaluationContext())).toEqual(
-      v.number(2)
-    )
+    expect(
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
+    ).toEqual(v.number(2))
   })
 
   it('executes JumpIfFalsy when condition is false', () => {
@@ -473,9 +485,9 @@ describe('VM Hand written chunks', () => {
     emitOperand(chunk, result)
     emit(chunk, Op.Return)
 
-    expect(executeChunk(chunk, makeEnv(), createEvaluationContext())).toEqual(
-      v.number(2)
-    )
+    expect(
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
+    ).toEqual(v.number(2))
   })
 
   it('does not jump when condition is true', () => {
@@ -489,9 +501,9 @@ describe('VM Hand written chunks', () => {
     emitOperand(chunk, result)
     emit(chunk, Op.Return)
 
-    expect(executeChunk(chunk, makeEnv(), createEvaluationContext())).toEqual(
-      v.number(1)
-    )
+    expect(
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
+    ).toEqual(v.number(1))
   })
 
   it('treats nil as falsey', () => {
@@ -508,9 +520,9 @@ describe('VM Hand written chunks', () => {
     emitOperand(chunk, result)
     emit(chunk, Op.Return)
 
-    expect(executeChunk(chunk, makeEnv(), createEvaluationContext())).toEqual(
-      v.number(2)
-    )
+    expect(
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
+    ).toEqual(v.number(2))
   })
 
   it('treats non-false non-nil values as truthy', () => {
@@ -525,9 +537,9 @@ describe('VM Hand written chunks', () => {
     emitOperand(chunk, result)
     emit(chunk, Op.Return)
 
-    expect(executeChunk(chunk, makeEnv(), createEvaluationContext())).toEqual(
-      v.number(1)
-    )
+    expect(
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
+    ).toEqual(v.number(1))
   })
 
   it('throws when JumpIfFalsy has an empty stack', () => {
@@ -536,7 +548,7 @@ describe('VM Hand written chunks', () => {
     emitOperand(chunk, 1)
 
     expect(() =>
-      executeChunk(chunk, makeEnv(), createEvaluationContext())
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
     ).toThrow(EvaluationError)
   })
 
@@ -545,7 +557,7 @@ describe('VM Hand written chunks', () => {
     emit(chunk, Op.Jump)
 
     expect(() =>
-      executeChunk(chunk, makeEnv(), createEvaluationContext())
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
     ).toThrow(EvaluationError)
   })
 
@@ -555,7 +567,7 @@ describe('VM Hand written chunks', () => {
     emitOperand(chunk, 999)
 
     expect(() =>
-      executeChunk(chunk, makeEnv(), createEvaluationContext())
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
     ).toThrow(EvaluationError)
   })
 
@@ -590,9 +602,9 @@ describe('VM Hand written chunks', () => {
     emitOperand(chunk, args.length)
     emit(chunk, Op.Return)
 
-    expect(executeChunk(chunk, makeEnv(), createEvaluationContext())).toEqual(
-      expected
-    )
+    expect(
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
+    ).toEqual(expected)
   })
 
   it('preserves argument order when executing Call', () => {
@@ -617,9 +629,9 @@ describe('VM Hand written chunks', () => {
     emitOperand(chunk, 3)
     emit(chunk, Op.Return)
 
-    expect(executeChunk(chunk, makeEnv(), createEvaluationContext())).toEqual(
-      v.string('1:2:3')
-    )
+    expect(
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
+    ).toEqual(v.string('1:2:3'))
   })
 
   it.each([
@@ -665,7 +677,7 @@ describe('VM Hand written chunks', () => {
     buildChunk(chunk)
 
     expect(() =>
-      executeChunk(chunk, makeEnv(), createEvaluationContext())
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
     ).toThrow(EvaluationError)
   })
 
@@ -678,7 +690,7 @@ describe('VM Hand written chunks', () => {
     emit(chunk, op)
 
     expect(() =>
-      executeChunk(chunk, makeEnv(), createEvaluationContext())
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
     ).toThrow(EvaluationError)
   })
 
@@ -695,7 +707,7 @@ describe('VM Hand written chunks', () => {
     emitOperand(chunk, count)
 
     expect(() =>
-      executeChunk(chunk, makeEnv(), createEvaluationContext())
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
     ).toThrow(EvaluationError)
   })
 
@@ -715,9 +727,9 @@ describe('VM Hand written chunks', () => {
     emitOperand(chunk, 3)
     emit(chunk, Op.Return)
 
-    expect(executeChunk(chunk, makeEnv(), createEvaluationContext())).toEqual(
-      v.vector([v.number(1), v.number(2), v.number(3)])
-    )
+    expect(
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
+    ).toEqual(v.vector([v.number(1), v.number(2), v.number(3)]))
   })
 
   it('executes MakeMap by constructing a map from the stack', () => {
@@ -739,7 +751,9 @@ describe('VM Hand written chunks', () => {
     emitOperand(chunk, 2)
     emit(chunk, Op.Return)
 
-    expect(executeChunk(chunk, makeEnv(), createEvaluationContext())).toEqual(
+    expect(
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
+    ).toEqual(
       v.map([
         [v.keyword(':a'), v.number(1)],
         [v.keyword(':b'), v.number(2)],
@@ -766,7 +780,9 @@ describe('VM Hand written chunks', () => {
     emitOperand(chunk, 4)
     emit(chunk, Op.Return)
 
-    expect(executeChunk(chunk, makeEnv(), createEvaluationContext())).toEqual(
+    expect(
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
+    ).toEqual(
       v.set([v.keyword(':a'), v.number(1), v.keyword(':b'), v.number(2)])
     )
   })
@@ -788,7 +804,7 @@ describe('VM Hand written chunks', () => {
 
     // Fails with underflow
     expect(() =>
-      executeChunk(chunk, makeEnv(), createEvaluationContext())
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
     ).toThrow(EvaluationError)
 
     rollbackChunk(chunk, snapshot)
@@ -798,9 +814,9 @@ describe('VM Hand written chunks', () => {
     emitOperand(chunk, 2)
     emit(chunk, Op.Return)
 
-    expect(executeChunk(chunk, makeEnv(), createEvaluationContext())).toEqual(
-      v.vector([v.number(1), v.number(2)])
-    )
+    expect(
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
+    ).toEqual(v.vector([v.number(1), v.number(2)]))
   })
 
   it('Throws when MakeMap has fewer items on the stack than the operand', () => {
@@ -825,7 +841,7 @@ describe('VM Hand written chunks', () => {
 
     // Fails with underflow
     expect(() =>
-      executeChunk(chunk, makeEnv(), createEvaluationContext())
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
     ).toThrow(EvaluationError)
 
     rollbackChunk(chunk, snapshot)
@@ -835,7 +851,9 @@ describe('VM Hand written chunks', () => {
     emitOperand(chunk, 2)
     emit(chunk, Op.Return)
 
-    expect(executeChunk(chunk, makeEnv(), createEvaluationContext())).toEqual(
+    expect(
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
+    ).toEqual(
       v.map([
         [v.keyword(':a'), v.number(1)],
         [v.keyword(':b'), v.number(2)],
@@ -863,7 +881,7 @@ describe('VM Hand written chunks', () => {
 
     // Fails with underflow
     expect(() =>
-      executeChunk(chunk, makeEnv(), createEvaluationContext())
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
     ).toThrow(EvaluationError)
 
     rollbackChunk(chunk, snapshot)
@@ -873,9 +891,9 @@ describe('VM Hand written chunks', () => {
     emitOperand(chunk, 3)
     emit(chunk, Op.Return)
 
-    expect(executeChunk(chunk, makeEnv(), createEvaluationContext())).toEqual(
-      v.set([v.number(1), v.number(2), v.number(3)])
-    )
+    expect(
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
+    ).toEqual(v.set([v.number(1), v.number(2), v.number(3)]))
   })
 
   it('loads a local slot by index [0]', () => {
@@ -885,9 +903,12 @@ describe('VM Hand written chunks', () => {
     emitOperand(chunk, 0)
     emit(chunk, Op.Return)
 
-    const result = executeChunk(chunk, makeEnv(), createEvaluationContext(), [
-      v.number(42),
-    ])
+    const result = executeChunk({
+      chunk,
+      env: makeEnv(),
+      ctx: createEvaluationContext(),
+      locals: [v.number(42)],
+    })
 
     expect(result).toEqual(v.number(42))
   })
@@ -899,10 +920,12 @@ describe('VM Hand written chunks', () => {
     emitOperand(chunk, 1)
     emit(chunk, Op.Return)
 
-    const result = executeChunk(chunk, makeEnv(), createEvaluationContext(), [
-      v.number(10),
-      v.number(20),
-    ])
+    const result = executeChunk({
+      chunk,
+      env: makeEnv(),
+      ctx: createEvaluationContext(),
+      locals: [v.number(10), v.number(20)],
+    })
 
     expect(result).toEqual(v.number(20))
   })
@@ -919,10 +942,12 @@ describe('VM Hand written chunks', () => {
     emitOperand(chunk, 1)
     emit(chunk, Op.Return)
 
-    const result = executeChunk(chunk, makeEnv(), createEvaluationContext(), [
-      v.number(10),
-      v.nil(),
-    ])
+    const result = executeChunk({
+      chunk,
+      env: makeEnv(),
+      ctx: createEvaluationContext(),
+      locals: [v.number(10), v.nil()],
+    })
 
     expect(result).toEqual(v.number(42))
   })
@@ -934,7 +959,12 @@ describe('VM Hand written chunks', () => {
     emitOperand(chunk, 0)
 
     expect(() =>
-      executeChunk(chunk, makeEnv(), createEvaluationContext(), [v.nil()])
+      executeChunk({
+        chunk,
+        env: makeEnv(),
+        ctx: createEvaluationContext(),
+        locals: [v.nil()],
+      })
     ).toThrow(EvaluationError)
   })
 
@@ -948,7 +978,12 @@ describe('VM Hand written chunks', () => {
     emitOperand(chunk, 1)
 
     expect(() =>
-      executeChunk(chunk, makeEnv(), createEvaluationContext(), [v.nil()])
+      executeChunk({
+        chunk,
+        env: makeEnv(),
+        ctx: createEvaluationContext(),
+        locals: [v.nil()],
+      })
     ).toThrow(EvaluationError)
   })
 
@@ -959,7 +994,12 @@ describe('VM Hand written chunks', () => {
     emit(chunk, Op.Return)
 
     expect(() =>
-      executeChunk(chunk, makeEnv(), createEvaluationContext(), [v.number(10)])
+      executeChunk({
+        chunk,
+        env: makeEnv(),
+        ctx: createEvaluationContext(),
+        locals: [v.number(10)],
+      })
     ).toThrow(EvaluationError)
   })
 })

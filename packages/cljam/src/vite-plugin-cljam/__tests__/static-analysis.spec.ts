@@ -65,6 +65,15 @@ describe('readNamespaceVars — defn', () => {
     expect(vars[0].arities![0].restParam).not.toBeNull()
   })
 
+  it('normalizes destructured params to synthetic symbols', () => {
+    const vars = readNamespaceVars('(defn unpack [[x y] {:keys [z]} & {:keys [more]}] nil)')
+    expect(vars[0].arities![0].params.map((p) => p.name)).toEqual([
+      'arg0',
+      'arg1',
+    ])
+    expect(vars[0].arities![0].restParam?.name).toBe('rest')
+  })
+
   it('defn- marks var as private', () => {
     const vars = readNamespaceVars('(defn- helper [x] x)')
     expect(vars[0]).toMatchObject({

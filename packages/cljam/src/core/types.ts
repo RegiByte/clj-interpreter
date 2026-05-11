@@ -27,11 +27,9 @@ export type Env = {
   ns?: CljNamespace // set on namespace-root envs only
 }
 
-export type DestructurePattern = CljSymbol | CljVector | CljMap
-
 export type Arity = {
-  params: DestructurePattern[]
-  restParam: DestructurePattern | null
+  params: CljSymbol[]
+  restParam: CljSymbol | null
   body: CljValue[]
   compiledBody?: CompiledExpr
   bytecodeBody?: VmChunk
@@ -485,4 +483,11 @@ export type VmChunk = {
   name?: string
   maxStack: number
   localCount: number
+}
+
+export type VmExecuteInput = {
+  chunk: VmChunk
+  env: Env
+  ctx: EvaluationContext
+  locals?: CljValue[]
 }

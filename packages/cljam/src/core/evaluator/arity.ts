@@ -5,13 +5,12 @@ import { v } from '../factories'
 import { getPos } from '../positions'
 import type {
   Arity,
+  CljSymbol,
   CljValue,
   CljVector,
-  DestructurePattern,
   Env,
   EvaluationContext,
 } from '../types'
-import { destructureBindings } from './destructure'
 
 const REST_SYMBOL = '&'
 
@@ -27,14 +26,14 @@ export class RecurSignal {
 export function parseParamVector(
   args: CljVector,
   env: Env
-): { params: DestructurePattern[]; restParam: DestructurePattern | null } {
+): { params: CljSymbol[]; restParam: CljSymbol | null } {
   const ampIdx = args.value.findIndex(
     (a) => is.symbol(a) && a.name === REST_SYMBOL
   )
-  let params: DestructurePattern[] = []
-  let restParam: DestructurePattern | null = null
+  let rawParams: CljValue[] = []
+  let rawRestParam: CljValue | null = null
   if (ampIdx === -1) {
-    params = args.value as DestructurePattern[]
+    rawParams = args.value
   } else {
     const ampsCount = args.value.filter(
       (a) => is.symbol(a) && a.name === REST_SYMBOL
@@ -55,8 +54,31 @@ export function parseParamVector(
         getPos(args)
       )
     }
-    params = args.value.slice(0, ampIdx) as DestructurePattern[]
-    restParam = args.value[ampIdx + 1] as DestructurePattern
+    rawParams = args.value.slice(0, ampIdx)
+    rawRestParam = args.value[ampIdx + 1]
+  }
+
+  const params = rawParams.map((param) => {
+    if (!is.symbol(param)) {
+      throw new EvaluationError(
+        'fn* only supports simple symbol params; use fn for destructuring',
+        { param, env },
+        getPos(param) ?? getPos(args)
+      )
+    }
+    return param
+  })
+
+  let restParam: CljSymbol | null = null
+  if (rawRestParam !== null) {
+    if (!is.symbol(rawRestParam)) {
+      throw new EvaluationError(
+        'fn* only supports simple symbol rest param; use fn for destructuring',
+        { restParam: rawRestParam, env },
+        getPos(rawRestParam) ?? getPos(args)
+      )
+    }
+    restParam = rawRestParam
   }
   return { params, restParam }
 }
@@ -119,12 +141,12 @@ export function parseArities(forms: CljValue[], env: Env): Arity[] {
 }
 
 export function bindParams(
-  params: DestructurePattern[],
-  restParam: DestructurePattern | null,
+  params: CljSymbol[],
+  restParam: CljSymbol | null,
   args: CljValue[],
   outerEnv: Env,
-  ctx: EvaluationContext,
-  bindEnv: Env
+  _ctx: EvaluationContext,
+  _bindEnv: Env
 ): Env {
   if (restParam === null) {
     if (args.length !== params.length) {
@@ -142,32 +164,16 @@ export function bindParams(
     }
   }
 
-  const allPairs: [string, CljValue][] = []
-
-  for (let i = 0; i < params.length; i++) {
-    allPairs.push(...destructureBindings(params[i], args[i], ctx, bindEnv))
-  }
+  const names = params.map((param) => param.name)
+  const values = args.slice(0, params.length)
 
   if (restParam !== null) {
     const restArgs = args.slice(params.length)
-    let restValue: CljValue
-    if (is.map(restParam) && restArgs.length > 0) {
-      const entries: [CljValue, CljValue][] = []
-      for (let i = 0; i < restArgs.length; i += 2) {
-        entries.push([restArgs[i], restArgs[i + 1] ?? v.nil()])
-      }
-      restValue = v.map(entries)
-    } else {
-      restValue = restArgs.length > 0 ? v.list(restArgs) : v.nil()
-    }
-    allPairs.push(...destructureBindings(restParam, restValue, ctx, bindEnv))
+    names.push(restParam.name)
+    values.push(restArgs.length > 0 ? v.list(restArgs) : v.nil())
   }
 
-  return extend(
-    allPairs.map(([n]) => n),
-    allPairs.map(([, v]) => v),
-    outerEnv
-  )
+  return extend(names, values, outerEnv)
 }
 
 export function slotValuesForArity(

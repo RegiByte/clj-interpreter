@@ -42,7 +42,12 @@ export function applyFunctionWithContext(
       while (locals.length < localCount) {
         locals.push(cljNil())
       }
-      return executeChunk(arity.bytecodeBody, fn.env, ctx, locals)
+      return executeChunk({
+        chunk: arity.bytecodeBody,
+        env: fn.env,
+        ctx,
+        locals,
+      })
     }
 
     // Phase 4b fast path: param slots compiled into body — no Env allocation,

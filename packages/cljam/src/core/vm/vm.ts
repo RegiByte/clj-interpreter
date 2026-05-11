@@ -4,436 +4,490 @@ import { EvaluationError, isEvaluationError } from '../errors'
 import { v } from '../factories'
 import { getPos } from '../positions'
 import { printString } from '../printer'
-import type { CljValue, Env, EvaluationContext, Pos, VmChunk } from '../types'
+import type {
+  CljValue,
+  Env,
+  EvaluationContext,
+  Pos,
+  VmChunk,
+  VmExecuteInput,
+} from '../types'
 import { Op, opcodeName } from './opcodes'
 
-export function executeChunk(
-  chunk: VmChunk,
-  env: Env,
-  ctx: EvaluationContext,
-  locals: CljValue[] = []
-): CljValue {
-  const stack: CljValue[] = []
-  let ip = 0
+type VmState = {
+  chunk: VmChunk
+  env: Env
+  ctx: EvaluationContext
+  stack: CljValue[]
+  locals: CljValue[]
+  ip: number
+  done: boolean
+  result: CljValue | null
+}
 
-  while (ip < chunk.code.length) {
-    const instructionOffset = ip
-    const instruction = chunk.code[ip++]
-    const instructionPos = getInstructionPos(chunk, instructionOffset)
-    switch (instruction) {
-      case Op.Constant: {
-        const constantIndex = chunk.code[ip++]
-        const value = chunk.constants[constantIndex]
-        if (value === undefined) {
-          throw new EvaluationError(
-            `Invalid constant index: ${constantIndex}`,
-            { instruction, constantIndex, ip, stack, chunk },
-            instructionPos
-          )
-        }
-        stack.push(value)
-        break
-      }
-      case Op.LoadLocal: {
-        const slot = chunk.code[ip++]
-        const value = locals[slot]
-        if (value === undefined) {
-          throw new EvaluationError(
-            `Invalid local index: ${slot}`,
-            { instruction, slot, ip, stack, chunk },
-            instructionPos
-          )
-        }
-        stack.push(value)
+export function executeChunk(input: VmExecuteInput): CljValue {
+  const state = createVmState(input)
+  return runToCompletion(state)
+}
 
-        break
-      }
-      case Op.StoreLocal: {
-        const slot = chunk.code[ip++]
-        if (slot === undefined || slot < 0 || slot >= locals.length) {
-          throw new EvaluationError(
-            `Invalid local index: ${slot}`,
-            { instruction, slot, ip, stack, chunk },
-            instructionPos
-          )
-        }
-        const value = stack.pop()
-        if (value === undefined) {
-          throw new EvaluationError(
-            'VM stack underflow on StoreLocal',
-            { instruction, slot, ip, stack, chunk },
-            instructionPos
-          )
-        }
-        locals[slot] = value
-        break
-      }
-      case Op.LoadGlobal: {
-        const symbolIndex = chunk.code[ip++]
-        const symbol = chunk.constants[symbolIndex]
-        if (symbol === undefined) {
-          throw new EvaluationError(
-            `Invalid constant index: ${symbolIndex}`,
-            {
-              instruction,
-              constantIndex: symbolIndex,
-              ip,
-              stack,
-              chunk,
-            },
-            instructionPos
-          )
-        }
-        if (!is.symbol(symbol)) {
-          throw new EvaluationError(
-            `LoadGlobal expected symbol constant`,
-            {
-              instruction,
-              constantIndex: symbolIndex,
-              value: symbol,
-              ip,
-              stack,
-              chunk,
-            },
-            instructionPos
-          )
-        }
-        try {
-          const value = lookup(symbol.name, env)
-          stack.push(value)
-        } catch (e) {
-          hydrateVmErrorPos(e, getPos(symbol) ?? instructionPos)
-          throw e
-        }
+function createVmState(input: VmExecuteInput): VmState {
+  return {
+    chunk: input.chunk,
+    env: input.env,
+    ctx: input.ctx,
+    stack: [],
+    locals: input.locals ?? [],
+    ip: 0,
+    done: false,
+    result: null,
+  }
+}
 
-        break
-      }
-      case Op.LoadQualified: {
-        const symbolIndex = chunk.code[ip++]
-        const symbol = chunk.constants[symbolIndex]
-        if (symbol === undefined) {
-          throw new EvaluationError(
-            `Invalid constant index: ${symbolIndex}`,
-            {
-              instruction,
-              constantIndex: symbolIndex,
-              ip,
-              stack,
-              chunk,
-            },
-            instructionPos
-          )
-        }
-        if (!is.symbol(symbol)) {
-          throw new EvaluationError(
-            `LoadQualified expected symbol constant`,
-            {
-              instruction,
-              constantIndex: symbolIndex,
-              value: symbol,
-              ip,
-              stack,
-              chunk,
-            },
-            instructionPos
-          )
-        }
-        const slashIdx = symbol.name.indexOf('/')
-        if (slashIdx <= 0 || slashIdx >= symbol.name.length - 1) {
-          throw new EvaluationError(
-            `Invalid qualified symbol: ${symbol.name}`,
-            {
-              instruction,
-              constantIndex: symbolIndex,
-              value: symbol,
-              ip,
-              stack,
-              chunk,
-            },
-            getPos(symbol) ?? instructionPos
-          )
-        }
-        const alias = symbol.name.slice(0, slashIdx)
-        const localName = symbol.name.slice(slashIdx + 1)
-        const nsEnv = getNamespaceEnv(env)
-        // Resolve alias: local :as alias first, then full namespace name
-        const targetNs =
-          nsEnv.ns?.aliases.get(alias) ?? ctx.resolveNs(alias) ?? null
-        if (!targetNs) {
-          throw new EvaluationError(
-            `No such namespace or alias: ${alias}`,
-            {
-              instruction,
-              constantIndex: symbolIndex,
-              value: symbol,
-              ip,
-              stack,
-              chunk,
-            },
-            getPos(symbol) ?? instructionPos
-          )
-        }
-        const theVar = targetNs.vars.get(localName)
-        if (theVar === undefined) {
-          throw new EvaluationError(
-            `Symbol ${symbol.name} not found`,
-            {
-              instruction,
-              constantIndex: symbolIndex,
-              value: symbol,
-              ip,
-              stack,
-              chunk,
-            },
-            getPos(symbol) ?? instructionPos
-          )
-        }
-        stack.push(derefValue(theVar))
-        break
-      }
-      case Op.Nil: {
-        stack.push(v.nil())
-        break
-      }
-      case Op.True: {
-        stack.push(v.boolean(true))
-        break
-      }
-      case Op.False: {
-        stack.push(v.boolean(false))
-        break
-      }
-      case Op.Pop: {
-        const value = stack.pop()
-        if (value === undefined) {
-          throw new EvaluationError(
-            'VM stack underflow on Pop',
-            {
-              instruction,
-              ip,
-              stack,
-              chunk,
-            },
-            instructionPos
-          )
-        }
-        break
-      }
-      case Op.MakeVector: {
-        const length = chunk.code[ip++]
-        assertCountOperand(
-          length,
-          'MakeVector',
-          instruction,
-          ip,
-          stack,
-          chunk,
-          instructionPos
-        )
-        if (length === 0) {
-          stack.push(v.vector([]))
-          break
-        }
-        if (stack.length < length) {
-          throw new EvaluationError(
-            'VM stack underflow on MakeVector, not enough elements',
-            {
-              instruction,
-              ip,
-              stack,
-              chunk,
-            },
-            instructionPos
-          )
-        }
+function runToCompletion(state: VmState): CljValue {
+  while (!state.done) {
+    executeInstruction(state)
+  }
+  return state.result ?? v.nil()
+}
 
-        const elements = stack.splice(stack.length - length, length)
-        stack.push(v.vector(elements))
-        break
-      }
-      case Op.MakeMap: {
-        const length = chunk.code[ip++]
-        assertCountOperand(
-          length,
-          'MakeMap',
-          instruction,
-          ip,
-          stack,
-          chunk,
-          instructionPos
-        )
-        if (length === 0) {
-          stack.push(v.map([]))
-          break
-        }
-        if (stack.length < length * 2) {
-          throw new EvaluationError(
-            'VM stack underflow on MakeMap, not enough entries',
-            {
-              instruction,
-              ip,
-              stack,
-              chunk,
-            },
-            instructionPos
-          )
-        }
+function executeInstruction(state: VmState): void {
+  const { chunk, env, ctx, stack, locals } = state
 
-        const entries = stack.splice(stack.length - length * 2, length * 2)
-        const pairs: [CljValue, CljValue][] = []
-        for (let i = 0; i < entries.length; i += 2) {
-          pairs.push([entries[i], entries[i + 1]])
-        }
-        stack.push(v.map(pairs))
-        break
-      }
-      case Op.MakeSet: {
-        const length = chunk.code[ip++]
-        assertCountOperand(
-          length,
-          'MakeSet',
-          instruction,
-          ip,
-          stack,
-          chunk,
-          instructionPos
-        )
-        if (length === 0) {
-          stack.push(v.set([]))
-          break
-        }
-        if (stack.length < length) {
-          throw new EvaluationError(
-            'VM stack underflow on MakeSet, not enough elements',
-            {
-              instruction,
-              ip,
-              stack,
-              chunk,
-            },
-            instructionPos
-          )
-        }
+  if (state.ip >= chunk.code.length) {
+    state.done = true
+    state.result = v.nil()
+    return
+  }
 
-        const elements = stack.splice(stack.length - length, length)
-        stack.push(v.set(elements))
-        break
-      }
-      case Op.Call: {
-        const argCount = chunk.code[ip++]
-        assertCountOperand(
-          argCount,
-          'Call',
-          instruction,
-          ip,
-          stack,
-          chunk,
-          instructionPos
-        )
-
-        if (stack.length < argCount + 1) {
-          throw new EvaluationError(
-            'VM stack underflow on Call, not enough arguments',
-            {
-              instruction,
-              ip,
-              stack,
-              chunk,
-            },
-            instructionPos
-          )
-        }
-
-        const args = stack.splice(stack.length - argCount, argCount)
-
-        const callable = stack.pop()
-
-        if (callable === undefined) {
-          throw new EvaluationError(
-            'VM stack underflow on Call, callable missing',
-            {
-              instruction,
-              ip,
-              stack,
-              chunk,
-            },
-            instructionPos
-          )
-        }
-
-        if (!is.callable(callable)) {
-          const name =
-            'name' in callable ? callable.name : printString(callable)
-          throw new EvaluationError(
-            `${name} is not callable`,
-            {
-              instruction,
-              ip,
-              stack,
-              chunk,
-            },
-            instructionPos
-          )
-        }
-
-        try {
-          const result = ctx.applyCallable(callable, args, env)
-          stack.push(result)
-        } catch (e) {
-          hydrateVmErrorPos(e, instructionPos)
-          throw e
-        }
-        break
-      }
-      case Op.Return: {
-        const value = stack.pop()
-        return value ?? v.nil()
-      }
-      case Op.Jump: {
-        const offset = chunk.code[ip++]
-        assertJumpOffset(offset, instruction, ip, stack, chunk, instructionPos)
-        ip += offset
-        break
-      }
-      case Op.JumpIfFalsy: {
-        const offset = chunk.code[ip++]
-        assertJumpOffset(offset, instruction, ip, stack, chunk, instructionPos)
-        const condition = stack.pop()
-
-        if (condition === undefined) {
-          throw new EvaluationError(
-            'VM stack underflow on JumpIfFalsy',
-            {
-              instruction,
-              ip,
-              stack,
-              chunk,
-            },
-            instructionPos
-          )
-        }
-        if (is.falsy(condition)) {
-          ip += offset
-        }
-
-        break
-      }
-      default: {
+  const instructionOffset = state.ip
+  const instruction = chunk.code[state.ip++]
+  const instructionPos = getInstructionPos(chunk, instructionOffset)
+  switch (instruction) {
+    case Op.Constant: {
+      const constantIndex = chunk.code[state.ip++]
+      const value = chunk.constants[constantIndex]
+      if (value === undefined) {
         throw new EvaluationError(
-          `Unknown VM opcode: ${opcodeName(instruction)}`,
+          `Invalid constant index: ${constantIndex}`,
+          { instruction, constantIndex, ip: state.ip, stack, chunk },
+          instructionPos
+        )
+      }
+      stack.push(value)
+      break
+    }
+    case Op.LoadLocal: {
+      const slot = chunk.code[state.ip++]
+      const value = locals[slot]
+      if (value === undefined) {
+        throw new EvaluationError(
+          `Invalid local index: ${slot}`,
+          { instruction, slot, ip: state.ip, stack, chunk },
+          instructionPos
+        )
+      }
+      stack.push(value)
+
+      break
+    }
+    case Op.StoreLocal: {
+      const slot = chunk.code[state.ip++]
+      if (slot === undefined || slot < 0 || slot >= locals.length) {
+        throw new EvaluationError(
+          `Invalid local index: ${slot}`,
+          { instruction, slot, ip: state.ip, stack, chunk },
+          instructionPos
+        )
+      }
+      const value = stack.pop()
+      if (value === undefined) {
+        throw new EvaluationError(
+          'VM stack underflow on StoreLocal',
+          { instruction, slot, ip: state.ip, stack, chunk },
+          instructionPos
+        )
+      }
+      locals[slot] = value
+      break
+    }
+    case Op.LoadGlobal: {
+      const symbolIndex = chunk.code[state.ip++]
+      const symbol = chunk.constants[symbolIndex]
+      if (symbol === undefined) {
+        throw new EvaluationError(
+          `Invalid constant index: ${symbolIndex}`,
           {
             instruction,
-            ip,
+            constantIndex: symbolIndex,
+            ip: state.ip,
             stack,
             chunk,
           },
           instructionPos
         )
       }
+      if (!is.symbol(symbol)) {
+        throw new EvaluationError(
+          `LoadGlobal expected symbol constant`,
+          {
+            instruction,
+            constantIndex: symbolIndex,
+            value: symbol,
+            ip: state.ip,
+            stack,
+            chunk,
+          },
+          instructionPos
+        )
+      }
+      try {
+        const value = lookup(symbol.name, env)
+        stack.push(value)
+      } catch (e) {
+        hydrateVmErrorPos(e, getPos(symbol) ?? instructionPos)
+        throw e
+      }
+
+      break
+    }
+    case Op.LoadQualified: {
+      const symbolIndex = chunk.code[state.ip++]
+      const symbol = chunk.constants[symbolIndex]
+      if (symbol === undefined) {
+        throw new EvaluationError(
+          `Invalid constant index: ${symbolIndex}`,
+          {
+            instruction,
+            constantIndex: symbolIndex,
+            ip: state.ip,
+            stack,
+            chunk,
+          },
+          instructionPos
+        )
+      }
+      if (!is.symbol(symbol)) {
+        throw new EvaluationError(
+          `LoadQualified expected symbol constant`,
+          {
+            instruction,
+            constantIndex: symbolIndex,
+            value: symbol,
+            ip: state.ip,
+            stack,
+            chunk,
+          },
+          instructionPos
+        )
+      }
+      const slashIdx = symbol.name.indexOf('/')
+      if (slashIdx <= 0 || slashIdx >= symbol.name.length - 1) {
+        throw new EvaluationError(
+          `Invalid qualified symbol: ${symbol.name}`,
+          {
+            instruction,
+            constantIndex: symbolIndex,
+            value: symbol,
+            ip: state.ip,
+            stack,
+            chunk,
+          },
+          getPos(symbol) ?? instructionPos
+        )
+      }
+      const alias = symbol.name.slice(0, slashIdx)
+      const localName = symbol.name.slice(slashIdx + 1)
+      const nsEnv = getNamespaceEnv(env)
+      // Resolve alias: local :as alias first, then full namespace name
+      const targetNs =
+        nsEnv.ns?.aliases.get(alias) ?? ctx.resolveNs(alias) ?? null
+      if (!targetNs) {
+        throw new EvaluationError(
+          `No such namespace or alias: ${alias}`,
+          {
+            instruction,
+            constantIndex: symbolIndex,
+            value: symbol,
+            ip: state.ip,
+            stack,
+            chunk,
+          },
+          getPos(symbol) ?? instructionPos
+        )
+      }
+      const theVar = targetNs.vars.get(localName)
+      if (theVar === undefined) {
+        throw new EvaluationError(
+          `Symbol ${symbol.name} not found`,
+          {
+            instruction,
+            constantIndex: symbolIndex,
+            value: symbol,
+            ip: state.ip,
+            stack,
+            chunk,
+          },
+          getPos(symbol) ?? instructionPos
+        )
+      }
+      stack.push(derefValue(theVar))
+      break
+    }
+    case Op.Nil: {
+      stack.push(v.nil())
+      break
+    }
+    case Op.True: {
+      stack.push(v.boolean(true))
+      break
+    }
+    case Op.False: {
+      stack.push(v.boolean(false))
+      break
+    }
+    case Op.Pop: {
+      const value = stack.pop()
+      if (value === undefined) {
+        throw new EvaluationError(
+          'VM stack underflow on Pop',
+          {
+            instruction,
+            ip: state.ip,
+            stack,
+            chunk,
+          },
+          instructionPos
+        )
+      }
+      break
+    }
+    case Op.MakeVector: {
+      const length = chunk.code[state.ip++]
+      assertCountOperand(
+        length,
+        'MakeVector',
+        instruction,
+        state.ip,
+        stack,
+        chunk,
+        instructionPos
+      )
+      if (length === 0) {
+        stack.push(v.vector([]))
+        break
+      }
+      if (stack.length < length) {
+        throw new EvaluationError(
+          'VM stack underflow on MakeVector, not enough elements',
+          {
+            instruction,
+            ip: state.ip,
+            stack,
+            chunk,
+          },
+          instructionPos
+        )
+      }
+
+      const elements = stack.splice(stack.length - length, length)
+      stack.push(v.vector(elements))
+      break
+    }
+    case Op.MakeMap: {
+      const length = chunk.code[state.ip++]
+      assertCountOperand(
+        length,
+        'MakeMap',
+        instruction,
+        state.ip,
+        stack,
+        chunk,
+        instructionPos
+      )
+      if (length === 0) {
+        stack.push(v.map([]))
+        break
+      }
+      if (stack.length < length * 2) {
+        throw new EvaluationError(
+          'VM stack underflow on MakeMap, not enough entries',
+          {
+            instruction,
+            ip: state.ip,
+            stack,
+            chunk,
+          },
+          instructionPos
+        )
+      }
+
+      const entries = stack.splice(stack.length - length * 2, length * 2)
+      const pairs: [CljValue, CljValue][] = []
+      for (let i = 0; i < entries.length; i += 2) {
+        pairs.push([entries[i], entries[i + 1]])
+      }
+      stack.push(v.map(pairs))
+      break
+    }
+    case Op.MakeSet: {
+      const length = chunk.code[state.ip++]
+      assertCountOperand(
+        length,
+        'MakeSet',
+        instruction,
+        state.ip,
+        stack,
+        chunk,
+        instructionPos
+      )
+      if (length === 0) {
+        stack.push(v.set([]))
+        break
+      }
+      if (stack.length < length) {
+        throw new EvaluationError(
+          'VM stack underflow on MakeSet, not enough elements',
+          {
+            instruction,
+            ip: state.ip,
+            stack,
+            chunk,
+          },
+          instructionPos
+        )
+      }
+
+      const elements = stack.splice(stack.length - length, length)
+      stack.push(v.set(elements))
+      break
+    }
+    case Op.Call: {
+      const argCount = chunk.code[state.ip++]
+      assertCountOperand(
+        argCount,
+        'Call',
+        instruction,
+        state.ip,
+        stack,
+        chunk,
+        instructionPos
+      )
+
+      if (stack.length < argCount + 1) {
+        throw new EvaluationError(
+          'VM stack underflow on Call, not enough arguments',
+          {
+            instruction,
+            ip: state.ip,
+            stack,
+            chunk,
+          },
+          instructionPos
+        )
+      }
+
+      const args = stack.splice(stack.length - argCount, argCount)
+
+      const callable = stack.pop()
+
+      if (callable === undefined) {
+        throw new EvaluationError(
+          'VM stack underflow on Call, callable missing',
+          {
+            instruction,
+            ip: state.ip,
+            stack,
+            chunk,
+          },
+          instructionPos
+        )
+      }
+
+      if (!is.callable(callable)) {
+        const name = 'name' in callable ? callable.name : printString(callable)
+        throw new EvaluationError(
+          `${name} is not callable`,
+          {
+            instruction,
+            ip: state.ip,
+            stack,
+            chunk,
+          },
+          instructionPos
+        )
+      }
+
+      try {
+        const result = ctx.applyCallable(callable, args, env)
+        stack.push(result)
+      } catch (e) {
+        hydrateVmErrorPos(e, instructionPos)
+        throw e
+      }
+      break
+    }
+    case Op.Return: {
+      const value = stack.pop()
+      state.done = true
+      state.result = value ?? v.nil()
+      break
+    }
+    case Op.Jump: {
+      const offset = chunk.code[state.ip++]
+      assertJumpOffset(
+        offset,
+        instruction,
+        state.ip,
+        stack,
+        chunk,
+        instructionPos
+      )
+      state.ip += offset
+      break
+    }
+    case Op.JumpIfFalsy: {
+      const offset = chunk.code[state.ip++]
+      assertJumpOffset(
+        offset,
+        instruction,
+        state.ip,
+        stack,
+        chunk,
+        instructionPos
+      )
+      const condition = stack.pop()
+
+      if (condition === undefined) {
+        throw new EvaluationError(
+          'VM stack underflow on JumpIfFalsy',
+          {
+            instruction,
+            ip: state.ip,
+            stack,
+            chunk,
+          },
+          instructionPos
+        )
+      }
+      if (is.falsy(condition)) {
+        state.ip += offset
+      }
+
+      break
+    }
+    default: {
+      throw new EvaluationError(
+        `Unknown VM opcode: ${opcodeName(instruction)}`,
+        {
+          instruction,
+          ip: state.ip,
+          stack,
+          chunk,
+        },
+        instructionPos
+      )
     }
   }
-
-  return v.nil()
 }
 
 function getInstructionPos(chunk: VmChunk, offset: number): Pos | undefined {

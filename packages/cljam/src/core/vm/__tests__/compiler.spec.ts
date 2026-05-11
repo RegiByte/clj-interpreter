@@ -66,11 +66,11 @@ function expectVmCompilesTo(code: string, expected: unknown) {
   expect(chunk).not.toBeNull()
   if (chunk === null) return
 
-  const result = executeChunk(
+  const result = executeChunk({
     chunk,
-    makeCallTestEnv(),
-    createEvaluationContext()
-  )
+    env: makeCallTestEnv(),
+    ctx: createEvaluationContext(),
+  })
   expect(result).toEqual(expected)
 }
 
@@ -81,11 +81,11 @@ function expectVmCallCompilesTo(code: string, expected: CljValue) {
   expect(chunk).not.toBeNull()
   if (chunk === null) return
 
-  const result = executeChunk(
+  const result = executeChunk({
     chunk,
-    makeCallTestEnv(),
-    createEvaluationContext()
-  )
+    env: makeCallTestEnv(),
+    ctx: createEvaluationContext(),
+  })
   expect(result).toEqual(expected)
 }
 
@@ -116,12 +116,12 @@ function expectVmFnBodyCompilesTo(
   expect(chunk).not.toBeNull()
   if (chunk === null) return
 
-  const result = executeChunk(
+  const result = executeChunk({
     chunk,
-    makeCallTestEnv(),
-    createEvaluationContext(),
-    locals
-  )
+    env: makeCallTestEnv(),
+    ctx: createEvaluationContext(),
+    locals,
+  })
 
   expect(result).toEqual(expected)
 }
@@ -216,9 +216,9 @@ describe('VM Symbols', () => {
     const env = makeEnv()
     define('x', v.number(42), env)
 
-    expect(executeChunk(chunk, env, createEvaluationContext())).toEqual(
-      v.number(42)
-    )
+    expect(
+      executeChunk({ chunk, env, ctx: createEvaluationContext() })
+    ).toEqual(v.number(42))
   })
 
   it.each([
@@ -261,7 +261,7 @@ describe('VM Symbols', () => {
     const ctx = createEvaluationContext()
     ctx.resolveNs = (name) => (name === 'source.ns' ? sourceNs : null)
 
-    expect(executeChunk(chunk, env, ctx)).toEqual(v.number(42))
+    expect(executeChunk({ chunk, env, ctx })).toEqual(v.number(42))
   })
 
   it('compiled qualified reads see later root redefinition', () => {
@@ -277,11 +277,11 @@ describe('VM Symbols', () => {
     const ctx = createEvaluationContext()
     ctx.resolveNs = (name) => (name === 'source.ns' ? sourceNs : null)
 
-    expect(executeChunk(chunk, makeEnv(), ctx)).toEqual(v.number(1))
+    expect(executeChunk({ chunk, env: makeEnv(), ctx })).toEqual(v.number(1))
 
     answer.value = v.number(2)
 
-    expect(executeChunk(chunk, makeEnv(), ctx)).toEqual(v.number(2))
+    expect(executeChunk({ chunk, env: makeEnv(), ctx })).toEqual(v.number(2))
   })
 
   it('compiles qualified symbols inside calls and collections', () => {
@@ -300,7 +300,7 @@ describe('VM Symbols', () => {
     expect(chunk).not.toBeNull()
     if (chunk === null) return
 
-    expect(executeChunk(chunk, env, ctx)).toEqual(
+    expect(executeChunk({ chunk, env, ctx })).toEqual(
       v.vector([v.number(42), v.number(40)])
     )
   })
@@ -342,10 +342,12 @@ describe('VM function body compilation', () => {
     )
 
     expect(
-      executeChunk(chunk, makeCallTestEnv(), createEvaluationContext(), [
-        v.number(10),
-        v.number(20),
-      ])
+      executeChunk({
+        chunk,
+        env: makeCallTestEnv(),
+        ctx: createEvaluationContext(),
+        locals: [v.number(10), v.number(20)],
+      })
     ).toEqual(v.number(20))
   })
 
@@ -367,9 +369,12 @@ describe('VM function body compilation', () => {
     )
 
     expect(
-      executeChunk(chunk, makeCallTestEnv(), createEvaluationContext(), [
-        v.number(40),
-      ])
+      executeChunk({
+        chunk,
+        env: makeCallTestEnv(),
+        ctx: createEvaluationContext(),
+        locals: [v.number(40)],
+      })
     ).toEqual(v.number(42))
   })
 
@@ -396,9 +401,12 @@ describe('VM function body compilation', () => {
     )
 
     expect(
-      executeChunk(chunk, makeCallTestEnv(), createEvaluationContext(), [
-        v.number(40),
-      ])
+      executeChunk({
+        chunk,
+        env: makeCallTestEnv(),
+        ctx: createEvaluationContext(),
+        locals: [v.number(40)],
+      })
     ).toEqual(v.number(42))
   })
 
@@ -427,9 +435,7 @@ describe('VM function body compilation', () => {
   )
 
   it('falls back for rest params until rest locals are explicitly modeled', () => {
-    expect(
-      compileFnBodyForTest(['x'], ['x'], { restParam: 'more' })
-    ).toBeNull()
+    expect(compileFnBodyForTest(['x'], ['x'], { restParam: 'more' })).toBeNull()
   })
 
   it('compiles let* by allocating slots after params', () => {
@@ -522,10 +528,12 @@ describe('VM function body compilation', () => {
     )
 
     expect(
-      executeChunk(chunk, makeCallTestEnv(), createEvaluationContext(), [
-        v.number(41),
-        v.nil(),
-      ])
+      executeChunk({
+        chunk,
+        env: makeCallTestEnv(),
+        ctx: createEvaluationContext(),
+        locals: [v.number(41), v.nil()],
+      })
     ).toEqual(v.number(41))
   })
 
@@ -537,7 +545,6 @@ describe('VM function body compilation', () => {
   ])('falls back for malformed let*: %s', (_label, code) => {
     expect(compileFnBodyForTest(['x'], [code])).toBeNull()
   })
-
 })
 
 describe('VM function body integration', () => {
@@ -627,11 +634,7 @@ describe('VM function body integration', () => {
       '((fn [x] (let* [y (+ x 1) z (+ y 1)] z)) 40)',
       v.number(42),
     ],
-    [
-      'local shadowing',
-      '((fn [x] (let* [x (+ x 1)] x)) 41)',
-      v.number(42),
-    ],
+    ['local shadowing', '((fn [x] (let* [x (+ x 1)] x)) 41)', v.number(42)],
     [
       'shadowing does not leak',
       '((fn [x] (let* [x (+ x 1)] x) x) 41)',
@@ -700,9 +703,9 @@ describe('VM do compilation', () => {
     const env = makeEnv()
     define('x', v.number(42), env)
 
-    expect(executeChunk(chunk, env, createEvaluationContext())).toEqual(
-      v.number(42)
-    )
+    expect(
+      executeChunk({ chunk, env, ctx: createEvaluationContext() })
+    ).toEqual(v.number(42))
   })
 
   it('falls back when any do child cannot compile', () => {
@@ -837,9 +840,9 @@ describe('VM call compilation', () => {
       env
     )
 
-    expect(executeChunk(chunk, env, createEvaluationContext())).toEqual(
-      v.number(3)
-    )
+    expect(
+      executeChunk({ chunk, env, ctx: createEvaluationContext() })
+    ).toEqual(v.number(3))
   })
 
   it.each([

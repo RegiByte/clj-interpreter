@@ -10,7 +10,6 @@ import { framesToClj, getLineCol, getPos } from '../positions'
 import type {
   CljList,
   CljMap,
-  CljSymbol,
   CljValue,
   Env,
   EvaluationContext,
@@ -289,27 +288,11 @@ function evaluateFnStar(
   const arities = parseArities(arityForms, env)
   const canUseVmBody = canCompileVmFnBodyInEnv(env)
   for (const arity of arities) {
-    for (const param of arity.params) {
-      if (!is.symbol(param)) {
-        throw new EvaluationError(
-          'fn* only supports simple symbol params; use fn for destructuring',
-          { param, env },
-          getPos(param) ?? getPos(list)
-        )
-      }
-    }
-    if (arity.restParam !== null && !is.symbol(arity.restParam)) {
-      throw new EvaluationError(
-        'fn* only supports simple symbol rest param; use fn for destructuring',
-        { restParam: arity.restParam, env },
-        getPos(arity.restParam) ?? getPos(list)
-      )
-    }
     assertRecurInTailPosition(arity.body)
 
     if (canUseVmBody) {
       const bytecodeBody = compileVmFnBody(
-        arity.params.map((param) => param as CljSymbol),
+        arity.params,
         arity.restParam,
         arity.body
       )
@@ -321,8 +304,8 @@ function evaluateFnStar(
     // (validated above). Compile with param slots to eliminate both bindParams
     // env allocation and lookup chain walks for params.
     const result = compileFnBody(
-      arity.params as CljSymbol[],
-      arity.restParam as CljSymbol | null,
+      arity.params,
+      arity.restParam,
       arity.body,
       compile
     )
