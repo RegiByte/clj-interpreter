@@ -29,6 +29,8 @@ type RecurTarget = {
   loopHeader: number
 }
 
+type IntrinsicName = '+' | '-' | '*' | '/' | '<' | '>' | '<=' | '>=' | '='
+
 type VmCompileEnv = {
   locals: Map<string, number>
   nextLocalSlot: number
@@ -56,6 +58,31 @@ const unsupportedVmSpecialForms = new Set<string>([
 
 function isUnsupportedVmSpecialForm(name: string): boolean {
   return unsupportedVmSpecialForms.has(name)
+}
+
+function intrinsicOpcodeFor(name: string): OpCode | null {
+  switch (name) {
+    case '+':
+      return Op.Add
+    case '-':
+      return Op.Sub
+    case '*':
+      return Op.Mul
+    case '/':
+      return Op.Div
+    case '<':
+      return Op.Lt
+    case '>':
+      return Op.Gt
+    case '<=':
+      return Op.Lte
+    case '>=':
+      return Op.Gte
+    case '=':
+      return Op.Eq
+    default:
+      return null
+  }
 }
 
 export function compileVm(node: CljValue): VmChunk | null {
@@ -247,6 +274,25 @@ function emitCall(
   return emitTransaction(chunk, () => {
     const callee = node.value[0]
     const args = node.value.slice(1)
+    if (
+      is.symbol(callee) &&
+      !isQualifiedSymbolName(callee.name) &&
+      compileEnv.locals.get(callee.name) === undefined
+    ) {
+      const intrinsicOpcode = intrinsicOpcodeFor(callee.name as IntrinsicName)
+      if (intrinsicOpcode !== null) {
+        for (let i = 0; i < args.length; i++) {
+          if (!emitExpression(chunk, args[i], compileEnv)) return false
+        }
+
+        const pos = getPos(node) ?? null
+        emit(chunk, intrinsicOpcode, pos)
+        emitOperand(chunk, args.length, pos)
+
+        return true
+      }
+    }
+
     if (!emitExpression(chunk, callee, compileEnv)) return false
 
     for (let i = 0; i < args.length; i++) {
@@ -259,6 +305,11 @@ function emitCall(
 
     return true
   })
+}
+
+function isQualifiedSymbolName(name: string): boolean {
+  const slashIdx = name.indexOf('/')
+  return slashIdx > 0 && slashIdx < name.length - 1
 }
 
 function emitVector(

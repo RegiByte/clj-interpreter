@@ -67,6 +67,19 @@ function disassembleInstruction(
       lines.push(`${formatOffset(offset)} ${name} ${operandOffset}`)
       return offset + 2
     }
+    case Op.Add:
+    case Op.Sub:
+    case Op.Mul:
+    case Op.Div:
+    case Op.Lt:
+    case Op.Lte:
+    case Op.Gt:
+    case Op.Gte:
+    case Op.Eq: {
+      const argc = chunk.code[offset + 1]
+      lines.push(`${formatOffset(offset)} ${name} ${argc}`)
+      return offset + 2
+    }
     case Op.Nil:
     case Op.True:
     case Op.False:

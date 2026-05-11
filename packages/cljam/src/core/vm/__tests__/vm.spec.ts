@@ -16,6 +16,36 @@ import { EvaluationError } from '../../errors'
 import type { CljValue, Pos } from '../../types'
 import { disassembleChunk } from '../debug'
 
+function makeIntrinsicRuntime(name: string) {
+  const op = v.nativeFn(name, () => v.nil())
+  const env = makeEnv()
+  const core = makeNamespace('clojure.core')
+  define(name, op, env)
+  core.vars.set(name, v.var('clojure.core', name, op))
+
+  const ctx = createEvaluationContext()
+  ctx.resolveNs = (nsName) => (nsName === 'clojure.core' ? core : null)
+
+  return { env, ctx }
+}
+
+function executeIntrinsicChunk(
+  op: number,
+  name: string,
+  args: CljValue[]
+): CljValue {
+  const chunk = makeChunk('intrinsic-test')
+  for (const arg of args) {
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, arg))
+  }
+  emit(chunk, op)
+  emitOperand(chunk, args.length)
+  emit(chunk, Op.Return)
+
+  return executeChunk({ chunk, ...makeIntrinsicRuntime(name) })
+}
+
 describe('VM Hand written chunks', () => {
   it('executes a constant return chunk', () => {
     const chunk = makeChunk('constant-test')
@@ -159,6 +189,134 @@ describe('VM Hand written chunks', () => {
       ].join('\n')
     )
   })
+
+  it.each([
+    ['Add', Op.Add],
+    ['Sub', Op.Sub],
+    ['Mul', Op.Mul],
+    ['Div', Op.Div],
+    ['Lt', Op.Lt],
+    ['Lte', Op.Lte],
+    ['Gt', Op.Gt],
+    ['Gte', Op.Gte],
+    ['Eq', Op.Eq],
+  ])('disassembles %s with argc', (name, op) => {
+    const chunk = makeChunk('intrinsic-disassemble-test')
+
+    emit(chunk, op)
+    emitOperand(chunk, 2)
+    emit(chunk, Op.Return)
+
+    expect(disassembleChunk(chunk)).toBe(
+      ['== intrinsic-disassemble-test ==', `0000 ${name} 2`, '0002 Return'].join(
+        '\n'
+      )
+    )
+  })
+
+  it.each([
+    ['zero-arg Add', Op.Add, '+', [], v.number(0)],
+    ['n-ary Add', Op.Add, '+', [v.number(1), v.number(2), v.number(3)], v.number(6)],
+    ['zero-arg Mul', Op.Mul, '*', [], v.number(1)],
+    ['n-ary Mul', Op.Mul, '*', [v.number(2), v.number(3), v.number(4)], v.number(24)],
+    ['unary Sub', Op.Sub, '-', [v.number(10)], v.number(-10)],
+    ['n-ary Sub', Op.Sub, '-', [v.number(20), v.number(3), v.number(4)], v.number(13)],
+    ['unary Div', Op.Div, '/', [v.number(10)], v.number(10)],
+    ['n-ary Div', Op.Div, '/', [v.number(100), v.number(5), v.number(2)], v.number(10)],
+    ['Lt true', Op.Lt, '<', [v.number(1), v.number(2), v.number(3)], v.boolean(true)],
+    ['Lt false', Op.Lt, '<', [v.number(1), v.number(3), v.number(2)], v.boolean(false)],
+    ['Gt true', Op.Gt, '>', [v.number(3), v.number(2), v.number(1)], v.boolean(true)],
+    ['Lte true', Op.Lte, '<=', [v.number(1), v.number(1), v.number(2)], v.boolean(true)],
+    ['Gte false', Op.Gte, '>=', [v.number(3), v.number(1), v.number(2)], v.boolean(false)],
+    [
+      'Eq structural true',
+      Op.Eq,
+      '=',
+      [v.vector([v.number(1)]), v.list([v.number(1)])],
+      v.boolean(true),
+    ],
+    [
+      'Eq structural false',
+      Op.Eq,
+      '=',
+      [v.map([[v.keyword(':a'), v.number(1)]]), v.map([[v.keyword(':a'), v.number(2)]])],
+      v.boolean(false),
+    ],
+  ])('executes intrinsic %s', (_label, op, name, args, expected) => {
+    expect(executeIntrinsicChunk(op, name, args)).toEqual(expected)
+  })
+
+  it('falls back to the visible callable when an intrinsic root is redefined', () => {
+    const chunk = makeChunk('intrinsic-fallback-test')
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, v.number(1)))
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, v.number(2)))
+    emit(chunk, Op.Add)
+    emitOperand(chunk, 2)
+    emit(chunk, Op.Return)
+
+    const env = makeEnv()
+    define(
+      '+',
+      v.nativeFn('+', () => v.number(99)),
+      env
+    )
+
+    expect(
+      executeChunk({ chunk, env, ctx: createEvaluationContext() })
+    ).toEqual(v.number(99))
+  })
+
+  it.each([
+    ['missing argc', Op.Add, undefined],
+    ['negative argc', Op.Add, -1],
+    ['non-integer argc', Op.Add, 1.5],
+  ])('throws when intrinsic has %s', (_label, op, argc) => {
+    const chunk = makeChunk('bad-intrinsic-count-test')
+    emit(chunk, op)
+    if (argc !== undefined) emitOperand(chunk, argc)
+
+    expect(() =>
+      executeChunk({ chunk, ...makeIntrinsicRuntime('+') })
+    ).toThrow(EvaluationError)
+  })
+
+  it('throws when intrinsic has fewer stack values than argc', () => {
+    const chunk = makeChunk('bad-intrinsic-underflow-test')
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, v.number(1)))
+    emit(chunk, Op.Add)
+    emitOperand(chunk, 2)
+
+    expect(() =>
+      executeChunk({ chunk, ...makeIntrinsicRuntime('+') })
+    ).toThrow(EvaluationError)
+  })
+
+  it.each([
+    ['Add non-number', Op.Add, '+', [v.number(1), v.string('x')], '+ expects all arguments to be numbers', 1],
+    ['Sub zero-arity', Op.Sub, '-', [], '- expects at least one argument', undefined],
+    ['Div zero-arity', Op.Div, '/', [], '/ expects at least one argument', undefined],
+    ['Div by zero', Op.Div, '/', [v.number(10), v.number(0)], 'division by zero', 1],
+    ['Lt invalid arity', Op.Lt, '<', [v.number(1)], '< expects at least two arguments', undefined],
+    ['Gte non-number', Op.Gte, '>=', [v.string('x'), v.number(1)], '>= expects all arguments to be numbers', 0],
+    ['Eq invalid arity', Op.Eq, '=', [v.number(1)], '= expects at least two arguments', undefined],
+  ])(
+    'throws for intrinsic semantic error %s',
+    (_label, op, name, args, message, argIndex) => {
+      let err: any
+      try {
+        executeIntrinsicChunk(op, name, args)
+      } catch (e) {
+        err = e
+      }
+
+      expect(err).toBeInstanceOf(EvaluationError)
+      expect(err.message).toContain(message)
+      if (argIndex !== undefined) expect(err.data?.argIndex).toBe(argIndex)
+    }
+  )
 
   it('executes LoadGlobal from env binding', () => {
     const chunk = makeChunk('load-global-test')

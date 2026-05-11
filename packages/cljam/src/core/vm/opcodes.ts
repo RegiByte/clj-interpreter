@@ -23,6 +23,16 @@ export const Op = {
   JumpIfFalsy: 41,
   Loop: 42,
   Recur: 43,
+
+  Add: 70,
+  Sub: 71,
+  Mul: 72,
+  Div: 73,
+  Lt: 74,
+  Lte: 75,
+  Gt: 76,
+  Gte: 77,
+  Eq: 78,
 } as const
 
 export const opNames = new Map<OpCode, string>(

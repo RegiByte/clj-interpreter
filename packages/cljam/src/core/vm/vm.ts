@@ -25,6 +25,8 @@ type VmState = {
   result: CljValue | null
 }
 
+type IntrinsicName = '+' | '-' | '*' | '/' | '<' | '>' | '<=' | '>=' | '='
+
 export function executeChunk(input: VmExecuteInput): CljValue {
   const state = createVmState(input)
   return runToCompletion(state)
@@ -426,6 +428,33 @@ function executeInstruction(state: VmState): void {
       }
       break
     }
+    case Op.Add:
+      executeIntrinsic(state, '+', instruction, instructionPos)
+      break
+    case Op.Sub:
+      executeIntrinsic(state, '-', instruction, instructionPos)
+      break
+    case Op.Mul:
+      executeIntrinsic(state, '*', instruction, instructionPos)
+      break
+    case Op.Div:
+      executeIntrinsic(state, '/', instruction, instructionPos)
+      break
+    case Op.Lt:
+      executeIntrinsic(state, '<', instruction, instructionPos)
+      break
+    case Op.Lte:
+      executeIntrinsic(state, '<=', instruction, instructionPos)
+      break
+    case Op.Gt:
+      executeIntrinsic(state, '>', instruction, instructionPos)
+      break
+    case Op.Gte:
+      executeIntrinsic(state, '>=', instruction, instructionPos)
+      break
+    case Op.Eq:
+      executeIntrinsic(state, '=', instruction, instructionPos)
+      break
     case Op.Return: {
       const value = stack.pop()
       state.done = true
@@ -564,6 +593,179 @@ function executeInstruction(state: VmState): void {
         },
         instructionPos
       )
+    }
+  }
+}
+
+function executeIntrinsic(
+  state: VmState,
+  name: IntrinsicName,
+  instruction: number,
+  instructionPos: Pos | undefined
+): void {
+  const argCount = state.chunk.code[state.ip++]
+  assertCountOperand(
+    argCount,
+    opcodeName(instruction),
+    instruction,
+    state.ip,
+    state.stack,
+    state.chunk,
+    instructionPos
+  )
+
+  if (state.stack.length < argCount) {
+    throw new EvaluationError(
+      `VM stack underflow on ${opcodeName(instruction)}, not enough arguments`,
+      {
+        instruction,
+        ip: state.ip,
+        stack: state.stack,
+        chunk: state.chunk,
+      },
+      instructionPos
+    )
+  }
+
+  const args = state.stack.splice(state.stack.length - argCount, argCount)
+
+  try {
+    const visibleOp = lookup(name, state.env)
+    if (isCurrentCoreIntrinsicRoot(name, visibleOp, state.ctx)) {
+      state.stack.push(applyIntrinsic(name, args))
+      return
+    }
+    if (!is.callable(visibleOp)) {
+      throw new EvaluationError(
+        `${name} is not callable`,
+        {
+          instruction,
+          ip: state.ip,
+          stack: state.stack,
+          chunk: state.chunk,
+        },
+        instructionPos
+      )
+    }
+    state.stack.push(state.ctx.applyCallable(visibleOp, args, state.env))
+  } catch (e) {
+    hydrateVmErrorPos(e, instructionPos)
+    throw e
+  }
+}
+
+function isCurrentCoreIntrinsicRoot(
+  name: IntrinsicName,
+  op: CljValue,
+  ctx: EvaluationContext
+): boolean {
+  const coreVar = ctx.resolveNs('clojure.core')?.vars.get(name)
+  return (
+    coreVar !== undefined &&
+    derefValue(coreVar) === op &&
+    is.nativeFunction(op) &&
+    op.name === name
+  )
+}
+
+function assertNumberArg(
+  name: IntrinsicName,
+  args: CljValue[],
+  index: number
+): number {
+  const arg = args[index]
+  if (!is.number(arg)) {
+    throw EvaluationError.atArg(
+      `${name} expects all arguments to be numbers`,
+      { args },
+      index
+    )
+  }
+  return arg.value
+}
+
+function applyIntrinsic(name: IntrinsicName, args: CljValue[]): CljValue {
+  switch (name) {
+    case '+': {
+      let result = 0
+      for (let i = 0; i < args.length; i++) {
+        result += assertNumberArg(name, args, i)
+      }
+      return v.number(result)
+    }
+    case '-': {
+      if (args.length === 0) {
+        throw new EvaluationError('- expects at least one argument', { args })
+      }
+      let result = assertNumberArg(name, args, 0)
+      if (args.length === 1) return v.number(-result)
+      for (let i = 1; i < args.length; i++) {
+        result -= assertNumberArg(name, args, i)
+      }
+      return v.number(result)
+    }
+    case '*': {
+      let result = 1
+      for (let i = 0; i < args.length; i++) {
+        result *= assertNumberArg(name, args, i)
+      }
+      return v.number(result)
+    }
+    case '/': {
+      if (args.length === 0) {
+        throw new EvaluationError('/ expects at least one argument', { args })
+      }
+      let result = assertNumberArg(name, args, 0)
+      for (let i = 1; i < args.length; i++) {
+        const divisor = assertNumberArg(name, args, i)
+        if (divisor === 0) {
+          throw EvaluationError.atArg('division by zero', { args }, i)
+        }
+        result /= divisor
+      }
+      return v.number(result)
+    }
+    case '<':
+    case '>':
+    case '<=':
+    case '>=': {
+      if (args.length < 2) {
+        throw new EvaluationError(`${name} expects at least two arguments`, {
+          args,
+        })
+      }
+      const nums = args.map((_, i) => assertNumberArg(name, args, i))
+      let prev = nums[0]
+      for (let i = 1; i < nums.length; i++) {
+        const current = nums[i]
+        let passed: boolean
+        switch (name) {
+          case '<':
+            passed = prev < current
+            break
+          case '>':
+            passed = prev > current
+            break
+          case '<=':
+            passed = prev <= current
+            break
+          case '>=':
+            passed = prev >= current
+            break
+        }
+        if (!passed) return v.boolean(false)
+        prev = current
+      }
+      return v.boolean(true)
+    }
+    case '=': {
+      if (args.length < 2) {
+        throw new EvaluationError('= expects at least two arguments', { args })
+      }
+      for (let i = 1; i < args.length; i++) {
+        if (!is.equal(args[i], args[i - 1])) return v.boolean(false)
+      }
+      return v.boolean(true)
     }
   }
 }

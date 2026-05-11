@@ -381,11 +381,10 @@ describe('VM function body compilation', () => {
     expect(disassembleChunk(chunk)).toBe(
       [
         '== vm-fn-body ==',
-        '0000 LoadGlobal 0 ; +',
-        '0002 LoadLocal 0',
-        '0004 Constant 1 ; 2',
-        '0006 Call 2',
-        '0008 Return',
+        '0000 LoadLocal 0',
+        '0002 Constant 0 ; 2',
+        '0004 Add 2',
+        '0006 Return',
       ].join('\n')
     )
 
@@ -408,16 +407,14 @@ describe('VM function body compilation', () => {
     expect(disassembleChunk(chunk)).toBe(
       [
         '== vm-fn-body ==',
-        '0000 LoadGlobal 0 ; +',
-        '0002 LoadLocal 0',
-        '0004 Constant 1 ; 1',
-        '0006 Call 2',
-        '0008 Pop',
-        '0009 LoadGlobal 2 ; +',
-        '0011 LoadLocal 0',
-        '0013 Constant 3 ; 2',
-        '0015 Call 2',
-        '0017 Return',
+        '0000 LoadLocal 0',
+        '0002 Constant 0 ; 1',
+        '0004 Add 2',
+        '0006 Pop',
+        '0007 LoadLocal 0',
+        '0009 Constant 1 ; 2',
+        '0011 Add 2',
+        '0013 Return',
       ].join('\n')
     )
 
@@ -467,13 +464,12 @@ describe('VM function body compilation', () => {
     expect(disassembleChunk(chunk)).toBe(
       [
         '== vm-fn-body ==',
-        '0000 LoadGlobal 0 ; +',
-        '0002 LoadLocal 0',
-        '0004 Constant 1 ; 1',
-        '0006 Call 2',
-        '0008 StoreLocal 1',
-        '0010 LoadLocal 1',
-        '0012 Return',
+        '0000 LoadLocal 0',
+        '0002 Constant 0 ; 1',
+        '0004 Add 2',
+        '0006 StoreLocal 1',
+        '0008 LoadLocal 1',
+        '0010 Return',
       ].join('\n')
     )
   })
@@ -500,18 +496,16 @@ describe('VM function body compilation', () => {
     expect(disassembleChunk(chunk)).toBe(
       [
         '== vm-fn-body ==',
-        '0000 LoadGlobal 0 ; +',
-        '0002 LoadLocal 0',
-        '0004 Constant 1 ; 1',
-        '0006 Call 2',
-        '0008 StoreLocal 1',
-        '0010 LoadGlobal 2 ; +',
-        '0012 LoadLocal 1',
-        '0014 Constant 3 ; 1',
-        '0016 Call 2',
-        '0018 StoreLocal 2',
-        '0020 LoadLocal 2',
-        '0022 Return',
+        '0000 LoadLocal 0',
+        '0002 Constant 0 ; 1',
+        '0004 Add 2',
+        '0006 StoreLocal 1',
+        '0008 LoadLocal 1',
+        '0010 Constant 1 ; 1',
+        '0012 Add 2',
+        '0014 StoreLocal 2',
+        '0016 LoadLocal 2',
+        '0018 Return',
       ].join('\n')
     )
   })
@@ -534,15 +528,14 @@ describe('VM function body compilation', () => {
     expect(disassembleChunk(chunk)).toBe(
       [
         '== vm-fn-body ==',
-        '0000 LoadGlobal 0 ; +',
-        '0002 LoadLocal 0',
-        '0004 Constant 1 ; 1',
-        '0006 Call 2',
-        '0008 StoreLocal 1',
-        '0010 LoadLocal 1',
-        '0012 Pop',
-        '0013 LoadLocal 0',
-        '0015 Return',
+        '0000 LoadLocal 0',
+        '0002 Constant 0 ; 1',
+        '0004 Add 2',
+        '0006 StoreLocal 1',
+        '0008 LoadLocal 1',
+        '0010 Pop',
+        '0011 LoadLocal 0',
+        '0013 Return',
       ].join('\n')
     )
 
@@ -598,19 +591,17 @@ describe('VM function body compilation', () => {
         '== vm-fn-body ==',
         '0000 Constant 0 ; 0',
         '0002 StoreLocal 0',
-        '0004 LoadGlobal 1 ; =',
-        '0006 LoadLocal 0',
-        '0008 Constant 2 ; 3',
-        '0010 Call 2',
-        '0012 JumpIfFalsy 4 -> 0018',
-        '0014 LoadLocal 0',
-        '0016 Jump 12 -> 0030',
-        '0018 LoadGlobal 3 ; +',
-        '0020 LoadLocal 0',
-        '0022 Constant 4 ; 1',
-        '0024 Call 2',
-        '0026 Recur 0 1 -> 0004',
-        '0030 Return',
+        '0004 LoadLocal 0',
+        '0006 Constant 1 ; 3',
+        '0008 Eq 2',
+        '0010 JumpIfFalsy 4 -> 0016',
+        '0012 LoadLocal 0',
+        '0014 Jump 10 -> 0026',
+        '0016 LoadLocal 0',
+        '0018 Constant 2 ; 1',
+        '0020 Add 2',
+        '0022 Recur 0 1 -> 0004',
+        '0026 Return',
       ].join('\n')
     )
   })
@@ -834,6 +825,33 @@ describe('VM function body integration', () => {
     expect(createSession().evaluate(code)).toEqual(expected)
   })
 
+  it('evaluates loop arithmetic through intrinsic bytecode shape', () => {
+    const code =
+      '((fn [n] (loop* [i 0 acc 0] (if (= i n) acc (recur (+ i 1) (+ acc i))))) 5)'
+    const fn = createSession().evaluate(
+      '(fn [n] (loop* [i 0 acc 0] (if (= i n) acc (recur (+ i 1) (+ acc i)))))'
+    )
+
+    expect(fn.kind).toBe('function')
+    if (fn.kind !== 'function') return
+
+    const bytecodeBody = fn.arities[0].bytecodeBody
+    expect(bytecodeBody).toBeDefined()
+    if (bytecodeBody === undefined) return
+
+    const disassembly = disassembleChunk(bytecodeBody)
+    expect(disassembly).toContain('Eq 2')
+    expect(disassembly).toContain('Add 2')
+    expect(createSession().evaluate(code)).toEqual(v.number(10))
+  })
+
+  it('falls back to namespace-redefined operators at intrinsic execution time', () => {
+    const s = createSession()
+    s.evaluate('(def + (fn [a b] 99))')
+
+    expect(s.evaluate('((fn [] (+ 1 2)))')).toEqual(v.number(99))
+  })
+
   it('does not store bytecodeBody for loop* destructuring until VM destructuring exists', () => {
     const fn = createSession().evaluate('(fn [] (loop* [[a b] [1 2]] a))')
 
@@ -1021,7 +1039,28 @@ describe('VM if compilation', () => {
 })
 
 describe('VM call compilation', () => {
-  it('compiles (+ 1 2) to Call plus Return', () => {
+  it.each([
+    ['(+ 1 2)', 'Add'],
+    ['(- 10 3)', 'Sub'],
+    ['(* 2 3)', 'Mul'],
+    ['(/ 10 2)', 'Div'],
+    ['(< 1 2)', 'Lt'],
+    ['(<= 1 1)', 'Lte'],
+    ['(> 2 1)', 'Gt'],
+    ['(>= 2 2)', 'Gte'],
+    ['(= 1 1)', 'Eq'],
+  ])('compiles %s to the %s intrinsic', (code, opcodeName) => {
+    const chunk = compileVm(formToNode(code))
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    const disassembly = disassembleChunk(chunk)
+    expect(disassembly).toContain(`${opcodeName} 2`)
+    expect(disassembly).not.toContain('Call 2')
+  })
+
+  it('compiles (+ 1 2) to Add plus Return', () => {
     const chunk = compileVm(formToNode('(+ 1 2)'))
 
     expect(chunk).not.toBeNull()
@@ -1030,11 +1069,10 @@ describe('VM call compilation', () => {
     expect(disassembleChunk(chunk)).toBe(
       [
         '== vm-expression ==',
-        '0000 LoadGlobal 0 ; +',
-        '0002 Constant 1 ; 1',
-        '0004 Constant 2 ; 2',
-        '0006 Call 2',
-        '0008 Return',
+        '0000 Constant 0 ; 1',
+        '0002 Constant 1 ; 2',
+        '0004 Add 2',
+        '0006 Return',
       ].join('\n')
     )
   })
@@ -1065,9 +1103,49 @@ describe('VM call compilation', () => {
     ['(+ 1)', v.number(1)],
     ['(+ 1 2 3)', v.number(6)],
     ['(- 10 3)', v.number(7)],
+    ['(* 2 3 4)', v.number(24)],
     ['(forty-two)', v.number(42)],
   ])('executes compiled call expression %s', (code, expected) => {
     expectVmCallCompilesTo(code, expected)
+  })
+
+  it.each([
+    '(/ 100 5 2)',
+    '(< 1 2 3)',
+    '(< 1 3 2)',
+    '(<= 1 1 2)',
+    '(> 3 2 1)',
+    '(>= 3 1 2)',
+    '(= [1 2] (list 1 2))',
+  ])('matches interpreter semantics for intrinsic call %s', (code) => {
+    expectVmEqualsInterpreter(code)
+  })
+
+  it('uses generic Call when an intrinsic operator is shadowed by a local', () => {
+    const chunk = compileVm(formToNode('(let* [+ :answer] (+ {:answer 99}))'))
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    const disassembly = disassembleChunk(chunk)
+    expect(disassembly).toContain('LoadLocal 0')
+    expect(disassembly).toContain('Call 1')
+    expect(disassembly).not.toContain('Add 1')
+    expect(createSession().evaluate('((fn [] (let* [+ :answer] (+ {:answer 99}))))')).toEqual(
+      v.number(99)
+    )
+  })
+
+  it('keeps qualified operators on the generic Call path', () => {
+    const chunk = compileVm(formToNode('(clojure.core/+ 1 2)'))
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    const disassembly = disassembleChunk(chunk)
+    expect(disassembly).toContain('LoadQualified 0 ; clojure.core/+')
+    expect(disassembly).toContain('Call 2')
+    expect(disassembly).not.toContain('Add 2')
   })
 
   it.each([
@@ -1141,12 +1219,11 @@ describe('VM collection compilation', () => {
       '[(+ 1 2)]',
       [
         '== vm-expression ==',
-        '0000 LoadGlobal 0 ; +',
-        '0002 Constant 1 ; 1',
-        '0004 Constant 2 ; 2',
-        '0006 Call 2',
-        '0008 MakeVector ; 1',
-        '0010 Return',
+        '0000 Constant 0 ; 1',
+        '0002 Constant 1 ; 2',
+        '0004 Add 2',
+        '0006 MakeVector ; 1',
+        '0008 Return',
       ],
     ],
     [
@@ -1154,17 +1231,15 @@ describe('VM collection compilation', () => {
       [
         '== vm-expression ==',
         '0000 Constant 0 ; :a',
-        '0002 LoadGlobal 1 ; +',
-        '0004 Constant 2 ; 1',
-        '0006 Constant 3 ; 2',
-        '0008 Call 2',
-        '0010 Constant 4 ; :b',
-        '0012 LoadGlobal 5 ; -',
-        '0014 Constant 6 ; 10',
-        '0016 Constant 7 ; 3',
-        '0018 Call 2',
-        '0020 MakeVector ; 4',
-        '0022 Return',
+        '0002 Constant 1 ; 1',
+        '0004 Constant 2 ; 2',
+        '0006 Add 2',
+        '0008 Constant 3 ; :b',
+        '0010 Constant 4 ; 10',
+        '0012 Constant 5 ; 3',
+        '0014 Sub 2',
+        '0016 MakeVector ; 4',
+        '0018 Return',
       ],
     ],
     [
@@ -1174,12 +1249,11 @@ describe('VM collection compilation', () => {
         '0000 Constant 0 ; :a',
         '0002 Constant 1 ; 1',
         '0004 Constant 2 ; :b',
-        '0006 LoadGlobal 3 ; +',
-        '0008 Constant 4 ; 2',
-        '0010 Constant 5 ; 3',
-        '0012 Call 2',
-        '0014 MakeMap ; 2',
-        '0016 Return',
+        '0006 Constant 3 ; 2',
+        '0008 Constant 4 ; 3',
+        '0010 Add 2',
+        '0012 MakeMap ; 2',
+        '0014 Return',
       ],
     ],
     [
@@ -1187,12 +1261,11 @@ describe('VM collection compilation', () => {
       [
         '== vm-expression ==',
         '0000 Constant 0 ; 1',
-        '0002 LoadGlobal 1 ; +',
-        '0004 Constant 2 ; 1',
-        '0006 Constant 3 ; 2',
-        '0008 Call 2',
-        '0010 MakeSet ; 2',
-        '0012 Return',
+        '0002 Constant 1 ; 1',
+        '0004 Constant 2 ; 2',
+        '0006 Add 2',
+        '0008 MakeSet ; 2',
+        '0010 Return',
       ],
     ],
     [
