@@ -10,6 +10,7 @@ import { applyFunctionWithContext } from '../../evaluator/apply'
 import { createSession } from '../../session'
 import { compileVm, compileVmFnBody } from '../compiler'
 import { disassembleChunk } from '../debug'
+import { Op } from '../opcodes'
 import { jsToClj } from '../../conversions'
 import { printString } from '../../printer'
 import { hofFunctions } from '../../modules/core/stdlib/hof'
@@ -41,6 +42,26 @@ function makeCallTestEnv() {
     v.nativeFn('-', (a: CljValue, b: CljValue) => {
       if (a.kind !== 'number' || b.kind !== 'number') return v.nil()
       return v.number(a.value - b.value)
+    }),
+    env
+  )
+  define(
+    '*',
+    v.nativeFn('*', (...args: CljValue[]) => {
+      const total = args.reduce((acc, arg) => {
+        if (arg.kind !== 'number') return acc
+        return acc * arg.value
+      }, 1)
+      return v.number(total)
+    }),
+    env
+  )
+  define(
+    '=',
+    v.nativeFn('=', (...args: CljValue[]) => {
+      if (args.length < 2) return v.boolean(true)
+      const first = printString(args[0])
+      return v.boolean(args.every((arg) => printString(arg) === first))
     }),
     env
   )
@@ -412,8 +433,6 @@ describe('VM function body compilation', () => {
 
   it.each([
     ['fn*', '(fn* [y] y)'],
-    ['loop*', '(loop* [y x] y)'],
-    ['recur', '(recur x)'],
     ['def', '(def y x)'],
     ['try', '(try x (catch :default e e))'],
     ['binding', '(binding [*out* *out*] x)'],
@@ -545,6 +564,141 @@ describe('VM function body compilation', () => {
   ])('falls back for malformed let*: %s', (_label, code) => {
     expect(compileFnBodyForTest(['x'], [code])).toBeNull()
   })
+
+  it('compiles loop* without recur as local initialization plus body evaluation', () => {
+    const chunk = compileFnBodyForTest([], ['(loop* [i 0] i)'])
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    expect(chunk.localCount).toBe(1)
+    expect(disassembleChunk(chunk)).toBe(
+      [
+        '== vm-fn-body ==',
+        '0000 Constant 0 ; 0',
+        '0002 StoreLocal 0',
+        '0004 LoadLocal 0',
+        '0006 Return',
+      ].join('\n')
+    )
+  })
+
+  it('compiles loop* recur with a stable loop header after initialization', () => {
+    const chunk = compileFnBodyForTest(
+      [],
+      ['(loop* [i 0] (if (= i 3) i (recur (+ i 1))))']
+    )
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    expect(chunk.localCount).toBe(1)
+    expect(disassembleChunk(chunk)).toBe(
+      [
+        '== vm-fn-body ==',
+        '0000 Constant 0 ; 0',
+        '0002 StoreLocal 0',
+        '0004 LoadGlobal 1 ; =',
+        '0006 LoadLocal 0',
+        '0008 Constant 2 ; 3',
+        '0010 Call 2',
+        '0012 JumpIfFalsy 4 -> 0018',
+        '0014 LoadLocal 0',
+        '0016 Jump 12 -> 0030',
+        '0018 LoadGlobal 3 ; +',
+        '0020 LoadLocal 0',
+        '0022 Constant 4 ; 1',
+        '0024 Call 2',
+        '0026 Recur 0 1 -> 0004',
+        '0030 Return',
+      ].join('\n')
+    )
+  })
+
+  it('uses localStart to target loop locals after function params', () => {
+    const chunk = compileFnBodyForTest(
+      ['base'],
+      ['(loop* [i 0 acc base] (if (= i 3) acc (recur (+ i 1) (+ acc 10))))']
+    )
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    expect(chunk.localCount).toBe(3)
+    const recurOffset = chunk.code.indexOf(Op.Recur)
+    expect(recurOffset).toBeGreaterThanOrEqual(0)
+    expect(chunk.code.slice(recurOffset, recurOffset + 4)).toEqual([
+      Op.Recur,
+      1,
+      2,
+      8,
+    ])
+  })
+
+  it('executes a compiled loop* recur function body', () => {
+    expectVmFnBodyCompilesTo(
+      [],
+      ['(loop* [i 0] (if (= i 3) i (recur (+ i 1))))'],
+      [v.nil()],
+      v.number(3)
+    )
+  })
+
+  it('executes recur updates as simultaneous assignment', () => {
+    expectVmFnBodyCompilesTo(
+      [],
+      ['(loop* [a 1 b 2 done false] (if done [a b] (recur b a true)))'],
+      [v.nil(), v.nil(), v.nil()],
+      v.vector([v.number(2), v.number(1)])
+    )
+  })
+
+  it('compiles nested loop* forms so inner recur targets the inner loop', () => {
+    const chunk = compileFnBodyForTest(
+      [],
+      [
+        '(loop* [i 0 total 0] (if (= i 3) total (recur (+ i 1) (+ total (loop* [j 0 inner 0] (if (= j i) inner (recur (+ j 1) (+ inner j))))))))',
+      ]
+    )
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    const recurOffsets = chunk.code
+      .map((cell, index) => (cell === Op.Recur ? index : -1))
+      .filter((index) => index >= 0)
+
+    expect(recurOffsets.length).toBe(2)
+
+    const outerRecur = chunk.code.slice(recurOffsets[1], recurOffsets[1] + 4)
+    const innerRecur = chunk.code.slice(recurOffsets[0], recurOffsets[0] + 4)
+
+    expect(innerRecur[1]).toBe(2)
+    expect(innerRecur[2]).toBe(2)
+    expect(innerRecur[3]).toBeGreaterThan(0)
+
+    expect(outerRecur).toEqual([Op.Recur, 0, 2, 8])
+  })
+
+  it('executes nested loop* forms with independent recur targets', () => {
+    expectVmFnBodyCompilesTo(
+      [],
+      [
+        '(loop* [i 0 total 0] (if (= i 3) total (recur (+ i 1) (+ total (loop* [j 0 inner 0] (if (= j i) inner (recur (+ j 1) (+ inner j))))))))',
+      ],
+      [v.nil(), v.nil(), v.nil(), v.nil()],
+      v.number(1)
+    )
+  })
+
+  it.each([
+    ['non-vector bindings', '(loop* :not-a-vector x)'],
+    ['odd binding count', '(loop* [i 0 acc] acc)'],
+    ['non-symbol binding name', '(loop* [:i 0] :i)'],
+    ['wrong recur arity', '(loop* [i 0 acc 0] (recur (+ i 1)))'],
+  ])('falls back for malformed or unsupported loop*: %s', (_label, code) => {
+    expect(compileFnBodyForTest([], [code])).toBeNull()
+  })
 })
 
 describe('VM function body integration', () => {
@@ -642,6 +796,67 @@ describe('VM function body integration', () => {
     ],
   ])('evaluates let* function body with %s', (_label, code, expected) => {
     expect(createSession().evaluate(code)).toEqual(expected)
+  })
+
+  it.each([
+    [
+      'counting loop',
+      '((fn [] (loop* [i 0] (if (= i 3) i (recur (+ i 1))))))',
+      v.number(3),
+    ],
+    [
+      'factorial accumulator',
+      '((fn [n] (loop* [i n acc 1] (if (= i 0) acc (recur (- i 1) (* acc i))))) 5)',
+      v.number(120),
+    ],
+    ['loop without recur', '((fn [] (loop* [x 41] (+ x 1))))', v.number(42)],
+    [
+      'simultaneous assignment',
+      '((fn [] (loop* [a 1 b 2 done false] (if done [a b] (recur b a true)))))',
+      v.vector([v.number(2), v.number(1)]),
+    ],
+    [
+      'loop can read params',
+      '((fn [base] (loop* [i 0 acc base] (if (= i 3) acc (recur (+ i 1) (+ acc 10))))) 5)',
+      v.number(35),
+    ],
+    [
+      'let* inside loop body',
+      '((fn [] (loop* [i 0] (let* [next (+ i 1)] (if (= next 3) next (recur next))))))',
+      v.number(3),
+    ],
+    [
+      'nested loop recur targets',
+      '((fn [] (loop* [i 0 total 0] (if (= i 3) total (recur (+ i 1) (+ total (loop* [j 0 inner 0] (if (= j i) inner (recur (+ j 1) (+ inner j))))))))))',
+      v.number(1),
+    ],
+  ])('evaluates loop* function body with %s', (_label, code, expected) => {
+    expect(createSession().evaluate(code)).toEqual(expected)
+  })
+
+  it('does not store bytecodeBody for loop* destructuring until VM destructuring exists', () => {
+    const fn = createSession().evaluate('(fn [] (loop* [[a b] [1 2]] a))')
+
+    expect(fn.kind).toBe('function')
+    if (fn.kind !== 'function') return
+
+    expect(fn.arities[0].bytecodeBody).toBeUndefined()
+  })
+
+  it('throws like the interpreter for non-tail recur in a loop* body', () => {
+    expect(() =>
+      createSession().evaluate(
+        '(fn [] (loop* [i 0] (+ 1 (recur (+ i 1)))))'
+      )
+    ).toThrow('Can only recur from tail position')
+  })
+
+  it('throws like the interpreter for loop* recur arity mismatch at runtime fallback', () => {
+    expect(() =>
+      createSession().evaluate(
+        '((fn [] (loop* [i 0 acc 0] (recur (+ i 1)))))'
+      )
+    ).toThrow('recur expects 2 arguments but got 1')
   })
 
   it('does not store bytecodeBody for rest-param arities', () => {

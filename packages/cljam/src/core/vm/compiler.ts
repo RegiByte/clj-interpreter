@@ -1,4 +1,5 @@
 import { is } from '../assertions'
+import { assertRecurInTailPosition } from '../evaluator/recur-check'
 import { v } from '../factories'
 import { specialFormKeywords, valueKeywords } from '../keywords'
 import { getPos } from '../positions'
@@ -22,9 +23,16 @@ import {
 } from './chunk'
 import { Op } from './opcodes'
 
+type RecurTarget = {
+  localStart: number
+  localCount: number
+  loopHeader: number
+}
+
 type VmCompileEnv = {
   locals: Map<string, number>
   nextLocalSlot: number
+  recurTarget: RecurTarget | null
 }
 
 const unsupportedVmSpecialForms = new Set<string>([
@@ -55,6 +63,7 @@ export function compileVm(node: CljValue): VmChunk | null {
   const compileEnv = {
     locals: new Map<string, number>(),
     nextLocalSlot: 0,
+    recurTarget: null,
   } as VmCompileEnv
 
   if (!emitExpression(chunk, node, compileEnv)) {
@@ -120,14 +129,21 @@ function emitExpression(
       if (node.value.length === 0) return false
       const head = node.value[0]
       if (!is.symbol(head)) return false
-      if (head.name === specialFormKeywords.do)
+      const name = head.name
+      if (name === specialFormKeywords.do)
         return emitDo(chunk, node, compileEnv)
-      if (head.name === specialFormKeywords.if)
+      if (name === specialFormKeywords.if)
         return emitIf(chunk, node, compileEnv)
-      if (head.name === specialFormKeywords['let*']) {
+      if (name === specialFormKeywords['let*']) {
         return emitLetStar(chunk, node, compileEnv)
       }
-      if (isUnsupportedVmSpecialForm(head.name)) {
+      if (name === specialFormKeywords['loop*']) {
+        return emitLoopStar(chunk, node, compileEnv)
+      }
+      if (name === specialFormKeywords['recur']) {
+        return emitRecur(chunk, node, compileEnv)
+      }
+      if (isUnsupportedVmSpecialForm(name)) {
         return false
       }
 
@@ -335,11 +351,11 @@ function emitLetStar(
       const slot = compileEnv.nextLocalSlot++
       // For each, compile init, then save local
       const name = bindings.value[i]
-      const expr = bindings.value[i + 1]
       if (!is.symbol(name)) return false
       if (!previousSlots.has(name.name)) {
         previousSlots.set(name.name, compileEnv.locals.get(name.name))
       }
+      const expr = bindings.value[i + 1]
       if (!emitExpression(chunk, expr, compileEnv)) return false
       emit(chunk, Op.StoreLocal)
       emitOperand(chunk, slot)
@@ -364,6 +380,99 @@ function emitLetStar(
   })
 }
 
+function emitLoopStar(
+  chunk: VmChunk,
+  node: CljList,
+  compileEnv: VmCompileEnv
+): boolean {
+  return emitTransaction(chunk, () => {
+    const bindings = node.value[1]
+    if (!bindings) return false
+    if (!is.vector(bindings) || bindings.value.length % 2 !== 0) return false
+    const body = node.value.slice(2)
+    assertRecurInTailPosition(body)
+
+    const localStart = compileEnv.nextLocalSlot
+    const localCount = bindings.value.length / 2
+
+    const previousSlots = new Map<string, number | undefined>()
+
+    // init loop bindings
+    for (let i = 0; i < bindings.value.length; i += 2) {
+      const slot = compileEnv.nextLocalSlot++
+      const name = bindings.value[i]
+      if (!is.symbol(name)) return false
+      if (!previousSlots.has(name.name)) {
+        previousSlots.set(name.name, compileEnv.locals.get(name.name))
+      }
+      const expr = bindings.value[i + 1]
+      if (!emitExpression(chunk, expr, compileEnv)) return false
+      emit(chunk, Op.StoreLocal)
+      emitOperand(chunk, slot)
+      compileEnv.locals.set(name.name, slot)
+      chunk.localCount = Math.max(chunk.localCount, compileEnv.nextLocalSlot)
+    }
+
+    const loopHeader = chunk.code.length
+
+    const recurTarget = {
+      localStart,
+      localCount,
+      loopHeader,
+    }
+
+    const previousRecurTarget = compileEnv.recurTarget
+    compileEnv.recurTarget = recurTarget
+    let bodyCompiled = true
+
+    for (let i = 0; i < body.length; i++) {
+      const form = body[i]
+      if (!emitExpression(chunk, form, compileEnv)) {
+        bodyCompiled = false
+        break
+      }
+    }
+    compileEnv.recurTarget = previousRecurTarget
+    if (!bodyCompiled) return false
+
+    for (const [name, previousSlot] of previousSlots) {
+      if (previousSlot === undefined) {
+        compileEnv.locals.delete(name)
+      } else {
+        compileEnv.locals.set(name, previousSlot)
+      }
+    }
+
+    return true
+  })
+}
+
+function emitRecur(
+  chunk: VmChunk,
+  node: CljList,
+  compileEnv: VmCompileEnv
+): boolean {
+  return emitTransaction(chunk, () => {
+    const recurTarget = compileEnv.recurTarget
+    if (recurTarget === null) return false
+    const args = node.value.slice(1)
+
+    if (args.length !== recurTarget.localCount) return false
+
+    // Emit expressions for the arguments that will be placed in the stack
+    for (let i = 0; i < args.length; i++) {
+      if (!emitExpression(chunk, args[i], compileEnv)) return false
+    }
+
+    emit(chunk, Op.Recur)
+    emitOperand(chunk, recurTarget.localStart)
+    emitOperand(chunk, recurTarget.localCount)
+    emitOperand(chunk, recurTarget.loopHeader)
+
+    return true
+  })
+}
+
 export function compileVmFnBody(
   params: CljSymbol[],
   restParam: CljSymbol | null,
@@ -372,6 +481,7 @@ export function compileVmFnBody(
   const compileEnv = {
     locals: new Map<string, number>(),
     nextLocalSlot: 0,
+    recurTarget: null,
   } as VmCompileEnv
 
   if (restParam !== null) {

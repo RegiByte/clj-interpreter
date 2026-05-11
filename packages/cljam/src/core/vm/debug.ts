@@ -82,6 +82,17 @@ function disassembleInstruction(
       lines.push(`${formatOffset(offset)} ${name} ; ${operandOffset}`)
       return offset + 2
     }
+    case Op.Recur: {
+      const localStart = chunk.code[offset + 1]
+      const localCount = chunk.code[offset + 2]
+      const loopHeader = chunk.code[offset + 3]
+
+      lines.push(
+        `${formatOffset(offset)} ${name} ${localStart} ${localCount} -> ${formatOffset(loopHeader)}`
+      )
+
+      return offset + 4
+    }
     default: {
       lines.push(
         `${formatOffset(offset)} ${name} ; [disassembleInstruction] unknown opcode`

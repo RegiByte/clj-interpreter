@@ -136,6 +136,30 @@ describe('VM Hand written chunks', () => {
     )
   })
 
+  it('disassembles recur with its loop target', () => {
+    const chunk = makeChunk('recur-disassemble-test')
+
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, v.number(2)))
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, v.number(1)))
+    emit(chunk, Op.Recur)
+    emitOperand(chunk, 0)
+    emitOperand(chunk, 2)
+    emitOperand(chunk, 8)
+    emit(chunk, Op.Return)
+
+    expect(disassembleChunk(chunk)).toBe(
+      [
+        '== recur-disassemble-test ==',
+        '0000 Constant 0 ; 2',
+        '0002 Constant 1 ; 1',
+        '0004 Recur 0 2 -> 0008',
+        '0008 Return',
+      ].join('\n')
+    )
+  })
+
   it('executes LoadGlobal from env binding', () => {
     const chunk = makeChunk('load-global-test')
     const index = addConstant(chunk, v.symbol('x'))
@@ -568,6 +592,84 @@ describe('VM Hand written chunks', () => {
 
     expect(() =>
       executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
+    ).toThrow(EvaluationError)
+  })
+
+  it('executes Recur by replacing a local slot range and jumping to the loop header', () => {
+    const chunk = makeChunk('recur-test')
+
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, v.number(2)))
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, v.number(1)))
+    emit(chunk, Op.Recur)
+    emitOperand(chunk, 0)
+    emitOperand(chunk, 2)
+    emitOperand(chunk, 8)
+    emit(chunk, Op.LoadLocal)
+    emitOperand(chunk, 0)
+    emit(chunk, Op.LoadLocal)
+    emitOperand(chunk, 1)
+    emit(chunk, Op.MakeVector)
+    emitOperand(chunk, 2)
+    emit(chunk, Op.Return)
+
+    expect(
+      executeChunk({
+        chunk,
+        env: makeEnv(),
+        ctx: createEvaluationContext(),
+        locals: [v.nil(), v.nil()],
+      })
+    ).toEqual(v.vector([v.number(2), v.number(1)]))
+  })
+
+  it.each([
+    [
+      'stack underflow',
+      (chunk: ReturnType<typeof makeChunk>) => {
+        emit(chunk, Op.Constant)
+        emitOperand(chunk, addConstant(chunk, v.number(1)))
+        emit(chunk, Op.Recur)
+        emitOperand(chunk, 0)
+        emitOperand(chunk, 2)
+        emitOperand(chunk, 8)
+      },
+    ],
+    [
+      'invalid local slot range',
+      (chunk: ReturnType<typeof makeChunk>) => {
+        emit(chunk, Op.Constant)
+        emitOperand(chunk, addConstant(chunk, v.number(1)))
+        emit(chunk, Op.Recur)
+        emitOperand(chunk, 1)
+        emitOperand(chunk, 1)
+        emitOperand(chunk, 8)
+      },
+    ],
+    [
+      'invalid loop header',
+      (chunk: ReturnType<typeof makeChunk>) => {
+        emit(chunk, Op.Constant)
+        emitOperand(chunk, addConstant(chunk, v.number(1)))
+        emit(chunk, Op.Recur)
+        emitOperand(chunk, 0)
+        emitOperand(chunk, 1)
+        emitOperand(chunk, 999)
+      },
+    ],
+  ])('throws when Recur has %s', (_label, buildChunk) => {
+    const chunk = makeChunk('bad-recur-test')
+    buildChunk(chunk)
+    emit(chunk, Op.Return)
+
+    expect(() =>
+      executeChunk({
+        chunk,
+        env: makeEnv(),
+        ctx: createEvaluationContext(),
+        locals: [v.nil()],
+      })
     ).toThrow(EvaluationError)
   })
 

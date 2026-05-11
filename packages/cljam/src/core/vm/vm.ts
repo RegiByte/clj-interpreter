@@ -475,6 +475,84 @@ function executeInstruction(state: VmState): void {
 
       break
     }
+    case Op.Recur: {
+      const localStart = chunk.code[state.ip++]
+      const localCount = chunk.code[state.ip++]
+      const loopHeader = chunk.code[state.ip++]
+
+      if (
+        localStart === undefined ||
+        localStart < 0 ||
+        localStart >= locals.length
+      ) {
+        throw new EvaluationError(
+          `Invalid local start index: ${localStart}`,
+          {
+            instruction,
+            localStart,
+            localCount,
+            loopHeader,
+          },
+          instructionPos
+        )
+      }
+      if (
+        localCount === undefined ||
+        localCount < 0 ||
+        localStart + localCount > locals.length
+      ) {
+        throw new EvaluationError(
+          `Invalid local count: ${localCount}`,
+          {
+            instruction,
+            localStart,
+            localCount,
+            loopHeader,
+          },
+          instructionPos
+        )
+      }
+
+      if (
+        loopHeader === undefined ||
+        loopHeader < 0 ||
+        loopHeader >= chunk.code.length
+      ) {
+        throw new EvaluationError(
+          `Invalid loop header index: ${loopHeader}`,
+          {
+            instruction,
+            localStart,
+            localCount,
+            loopHeader,
+          },
+          instructionPos
+        )
+      }
+
+      if (stack.length < localCount) {
+        throw new EvaluationError(
+          'VM stack underflow on Recur, not enough arguments',
+          {
+            instruction,
+            localStart,
+            localCount,
+            loopHeader,
+          },
+          instructionPos
+        )
+      }
+
+      const args = stack.splice(stack.length - localCount, localCount)
+
+      for (let i = 0; i < localCount; i++) {
+        locals[localStart + i] = args[i]
+      }
+
+      state.ip = loopHeader // jump to loop header!!
+
+      break
+    }
     default: {
       throw new EvaluationError(
         `Unknown VM opcode: ${opcodeName(instruction)}`,

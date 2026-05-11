@@ -21,6 +21,8 @@ export const Op = {
 
   Jump: 40,
   JumpIfFalsy: 41,
+  Loop: 42,
+  Recur: 43,
 } as const
 
 export const opNames = new Map<OpCode, string>(
