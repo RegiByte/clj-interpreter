@@ -100,6 +100,34 @@ describe('VM Hand written chunks', () => {
     )
   })
 
+  it('disassembles local loads', () => {
+    const chunk = makeChunk('load-local-disassemble-test')
+
+    emit(chunk, Op.LoadLocal)
+    emitOperand(chunk, 0)
+    emit(chunk, Op.Return)
+
+    expect(disassembleChunk(chunk)).toBe(
+      ['== load-local-disassemble-test ==', '0000 LoadLocal 0', '0002 Return'].join(
+        '\n'
+      )
+    )
+  })
+
+  it('disassembles local stores', () => {
+    const chunk = makeChunk('store-local-disassemble-test')
+
+    emit(chunk, Op.StoreLocal)
+    emitOperand(chunk, 0)
+    emit(chunk, Op.Return)
+
+    expect(disassembleChunk(chunk)).toBe(
+      ['== store-local-disassemble-test ==', '0000 StoreLocal 0', '0002 Return'].join(
+        '\n'
+      )
+    )
+  })
+
   it('executes LoadGlobal from env binding', () => {
     const chunk = makeChunk('load-global-test')
     const index = addConstant(chunk, v.symbol('x'))
@@ -848,6 +876,91 @@ describe('VM Hand written chunks', () => {
     expect(executeChunk(chunk, makeEnv(), createEvaluationContext())).toEqual(
       v.set([v.number(1), v.number(2), v.number(3)])
     )
+  })
+
+  it('loads a local slot by index [0]', () => {
+    const chunk = makeChunk('load-local-test')
+
+    emit(chunk, Op.LoadLocal)
+    emitOperand(chunk, 0)
+    emit(chunk, Op.Return)
+
+    const result = executeChunk(chunk, makeEnv(), createEvaluationContext(), [
+      v.number(42),
+    ])
+
+    expect(result).toEqual(v.number(42))
+  })
+
+  it('loads a local slot by index [1]', () => {
+    const chunk = makeChunk('load-local-test')
+
+    emit(chunk, Op.LoadLocal)
+    emitOperand(chunk, 1)
+    emit(chunk, Op.Return)
+
+    const result = executeChunk(chunk, makeEnv(), createEvaluationContext(), [
+      v.number(10),
+      v.number(20),
+    ])
+
+    expect(result).toEqual(v.number(20))
+  })
+
+  it('stores a stack value into a local slot', () => {
+    const chunk = makeChunk('store-local-test')
+    const index = addConstant(chunk, v.number(42))
+
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, index)
+    emit(chunk, Op.StoreLocal)
+    emitOperand(chunk, 1)
+    emit(chunk, Op.LoadLocal)
+    emitOperand(chunk, 1)
+    emit(chunk, Op.Return)
+
+    const result = executeChunk(chunk, makeEnv(), createEvaluationContext(), [
+      v.number(10),
+      v.nil(),
+    ])
+
+    expect(result).toEqual(v.number(42))
+  })
+
+  it('throws when StoreLocal has no stack value to store', () => {
+    const chunk = makeChunk('store-local-underflow-test')
+
+    emit(chunk, Op.StoreLocal)
+    emitOperand(chunk, 0)
+
+    expect(() =>
+      executeChunk(chunk, makeEnv(), createEvaluationContext(), [v.nil()])
+    ).toThrow(EvaluationError)
+  })
+
+  it('throws when StoreLocal targets a missing local slot', () => {
+    const chunk = makeChunk('store-local-invalid-slot-test')
+    const index = addConstant(chunk, v.number(42))
+
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, index)
+    emit(chunk, Op.StoreLocal)
+    emitOperand(chunk, 1)
+
+    expect(() =>
+      executeChunk(chunk, makeEnv(), createEvaluationContext(), [v.nil()])
+    ).toThrow(EvaluationError)
+  })
+
+  it('throws for invalid local index', () => {
+    const chunk = makeChunk('invalid-local-index-test')
+    emit(chunk, Op.LoadLocal)
+    emitOperand(chunk, 2)
+    emit(chunk, Op.Return)
+
+    expect(() =>
+      executeChunk(chunk, makeEnv(), createEvaluationContext(), [v.number(10)])
+    ).toThrow(EvaluationError)
   })
 })
 

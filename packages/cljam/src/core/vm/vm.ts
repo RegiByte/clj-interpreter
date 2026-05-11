@@ -10,7 +10,8 @@ import { Op, opcodeName } from './opcodes'
 export function executeChunk(
   chunk: VmChunk,
   env: Env,
-  ctx: EvaluationContext
+  ctx: EvaluationContext,
+  locals: CljValue[] = []
 ): CljValue {
   const stack: CljValue[] = []
   let ip = 0
@@ -33,27 +34,69 @@ export function executeChunk(
         stack.push(value)
         break
       }
+      case Op.LoadLocal: {
+        const slot = chunk.code[ip++]
+        const value = locals[slot]
+        if (value === undefined) {
+          throw new EvaluationError(
+            `Invalid local index: ${slot}`,
+            { instruction, slot, ip, stack, chunk },
+            instructionPos
+          )
+        }
+        stack.push(value)
+
+        break
+      }
+      case Op.StoreLocal: {
+        const slot = chunk.code[ip++]
+        if (slot === undefined || slot < 0 || slot >= locals.length) {
+          throw new EvaluationError(
+            `Invalid local index: ${slot}`,
+            { instruction, slot, ip, stack, chunk },
+            instructionPos
+          )
+        }
+        const value = stack.pop()
+        if (value === undefined) {
+          throw new EvaluationError(
+            'VM stack underflow on StoreLocal',
+            { instruction, slot, ip, stack, chunk },
+            instructionPos
+          )
+        }
+        locals[slot] = value
+        break
+      }
       case Op.LoadGlobal: {
         const symbolIndex = chunk.code[ip++]
         const symbol = chunk.constants[symbolIndex]
         if (symbol === undefined) {
-          throw new EvaluationError(`Invalid constant index: ${symbolIndex}`, {
-            instruction,
-            constantIndex: symbolIndex,
-            ip,
-            stack,
-            chunk,
-          }, instructionPos)
+          throw new EvaluationError(
+            `Invalid constant index: ${symbolIndex}`,
+            {
+              instruction,
+              constantIndex: symbolIndex,
+              ip,
+              stack,
+              chunk,
+            },
+            instructionPos
+          )
         }
         if (!is.symbol(symbol)) {
-          throw new EvaluationError(`LoadGlobal expected symbol constant`, {
-            instruction,
-            constantIndex: symbolIndex,
-            value: symbol,
-            ip,
-            stack,
-            chunk,
-          }, instructionPos)
+          throw new EvaluationError(
+            `LoadGlobal expected symbol constant`,
+            {
+              instruction,
+              constantIndex: symbolIndex,
+              value: symbol,
+              ip,
+              stack,
+              chunk,
+            },
+            instructionPos
+          )
         }
         try {
           const value = lookup(symbol.name, env)
@@ -69,23 +112,31 @@ export function executeChunk(
         const symbolIndex = chunk.code[ip++]
         const symbol = chunk.constants[symbolIndex]
         if (symbol === undefined) {
-          throw new EvaluationError(`Invalid constant index: ${symbolIndex}`, {
-            instruction,
-            constantIndex: symbolIndex,
-            ip,
-            stack,
-            chunk,
-          }, instructionPos)
+          throw new EvaluationError(
+            `Invalid constant index: ${symbolIndex}`,
+            {
+              instruction,
+              constantIndex: symbolIndex,
+              ip,
+              stack,
+              chunk,
+            },
+            instructionPos
+          )
         }
         if (!is.symbol(symbol)) {
-          throw new EvaluationError(`LoadQualified expected symbol constant`, {
-            instruction,
-            constantIndex: symbolIndex,
-            value: symbol,
-            ip,
-            stack,
-            chunk,
-          }, instructionPos)
+          throw new EvaluationError(
+            `LoadQualified expected symbol constant`,
+            {
+              instruction,
+              constantIndex: symbolIndex,
+              value: symbol,
+              ip,
+              stack,
+              chunk,
+            },
+            instructionPos
+          )
         }
         const slashIdx = symbol.name.indexOf('/')
         if (slashIdx <= 0 || slashIdx >= symbol.name.length - 1) {
@@ -109,25 +160,33 @@ export function executeChunk(
         const targetNs =
           nsEnv.ns?.aliases.get(alias) ?? ctx.resolveNs(alias) ?? null
         if (!targetNs) {
-          throw new EvaluationError(`No such namespace or alias: ${alias}`, {
-            instruction,
-            constantIndex: symbolIndex,
-            value: symbol,
-            ip,
-            stack,
-            chunk,
-          }, getPos(symbol) ?? instructionPos)
+          throw new EvaluationError(
+            `No such namespace or alias: ${alias}`,
+            {
+              instruction,
+              constantIndex: symbolIndex,
+              value: symbol,
+              ip,
+              stack,
+              chunk,
+            },
+            getPos(symbol) ?? instructionPos
+          )
         }
         const theVar = targetNs.vars.get(localName)
         if (theVar === undefined) {
-          throw new EvaluationError(`Symbol ${symbol.name} not found`, {
-            instruction,
-            constantIndex: symbolIndex,
-            value: symbol,
-            ip,
-            stack,
-            chunk,
-          }, getPos(symbol) ?? instructionPos)
+          throw new EvaluationError(
+            `Symbol ${symbol.name} not found`,
+            {
+              instruction,
+              constantIndex: symbolIndex,
+              value: symbol,
+              ip,
+              stack,
+              chunk,
+            },
+            getPos(symbol) ?? instructionPos
+          )
         }
         stack.push(derefValue(theVar))
         break
@@ -305,12 +364,16 @@ export function executeChunk(
         if (!is.callable(callable)) {
           const name =
             'name' in callable ? callable.name : printString(callable)
-          throw new EvaluationError(`${name} is not callable`, {
-            instruction,
-            ip,
-            stack,
-            chunk,
-          }, instructionPos)
+          throw new EvaluationError(
+            `${name} is not callable`,
+            {
+              instruction,
+              ip,
+              stack,
+              chunk,
+            },
+            instructionPos
+          )
         }
 
         try {

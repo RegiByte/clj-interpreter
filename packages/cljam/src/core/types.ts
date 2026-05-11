@@ -34,6 +34,7 @@ export type Arity = {
   restParam: DestructurePattern | null
   body: CljValue[]
   compiledBody?: CompiledExpr
+  bytecodeBody?: VmChunk
   paramSlots?: SlotRef[] // Phase 4b: set when body compiled with param slots
 }
 

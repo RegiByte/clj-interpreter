@@ -6,7 +6,9 @@ import type { CljValue } from '../../types'
 import { executeChunk } from '../vm'
 import { define, makeEnv } from '../../env'
 import { createEvaluationContext } from '../../evaluator'
-import { compileVm } from '../compiler'
+import { applyFunctionWithContext } from '../../evaluator/apply'
+import { createSession } from '../../session'
+import { compileVm, compileVmFnBody } from '../compiler'
 import { disassembleChunk } from '../debug'
 import { jsToClj } from '../../conversions'
 import { printString } from '../../printer'
@@ -84,6 +86,43 @@ function expectVmCallCompilesTo(code: string, expected: CljValue) {
     makeCallTestEnv(),
     createEvaluationContext()
   )
+  expect(result).toEqual(expected)
+}
+
+function compileFnBodyForTest(
+  paramNames: string[],
+  bodyCode: string[],
+  options: {
+    restParam?: string | null
+  } = {}
+) {
+  return compileVmFnBody(
+    paramNames.map((name) => v.symbol(name)),
+    options.restParam === undefined || options.restParam === null
+      ? null
+      : v.symbol(options.restParam),
+    bodyCode.map(formToNode)
+  )
+}
+
+function expectVmFnBodyCompilesTo(
+  paramNames: string[],
+  bodyCode: string[],
+  locals: CljValue[],
+  expected: CljValue
+) {
+  const chunk = compileFnBodyForTest(paramNames, bodyCode)
+
+  expect(chunk).not.toBeNull()
+  if (chunk === null) return
+
+  const result = executeChunk(
+    chunk,
+    makeCallTestEnv(),
+    createEvaluationContext(),
+    locals
+  )
+
   expect(result).toEqual(expected)
 }
 
@@ -272,6 +311,356 @@ describe('VM Symbols', () => {
       expect(compileVm(formToNode(code))).toBeNull()
     }
   )
+})
+
+describe('VM function body compilation', () => {
+  it('compiles a parameter reference to LoadLocal', () => {
+    const chunk = compileFnBodyForTest(['x'], ['x'])
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    expect(chunk.localCount).toBe(1)
+    expect(disassembleChunk(chunk)).toBe(
+      ['== vm-fn-body ==', '0000 LoadLocal 0', '0002 Return'].join('\n')
+    )
+  })
+
+  it('executes a compiled parameter reference', () => {
+    expectVmFnBodyCompilesTo(['x'], ['x'], [v.number(42)], v.number(42))
+  })
+
+  it('resolves each parameter to its own local slot', () => {
+    const chunk = compileFnBodyForTest(['x', 'y'], ['y'])
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    expect(chunk.localCount).toBe(2)
+    expect(disassembleChunk(chunk)).toBe(
+      ['== vm-fn-body ==', '0000 LoadLocal 1', '0002 Return'].join('\n')
+    )
+
+    expect(
+      executeChunk(chunk, makeCallTestEnv(), createEvaluationContext(), [
+        v.number(10),
+        v.number(20),
+      ])
+    ).toEqual(v.number(20))
+  })
+
+  it('compiles calls that read parameter locals', () => {
+    const chunk = compileFnBodyForTest(['x'], ['(+ x 2)'])
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    expect(disassembleChunk(chunk)).toBe(
+      [
+        '== vm-fn-body ==',
+        '0000 LoadGlobal 0 ; +',
+        '0002 LoadLocal 0',
+        '0004 Constant 1 ; 2',
+        '0006 Call 2',
+        '0008 Return',
+      ].join('\n')
+    )
+
+    expect(
+      executeChunk(chunk, makeCallTestEnv(), createEvaluationContext(), [
+        v.number(40),
+      ])
+    ).toEqual(v.number(42))
+  })
+
+  it('compiles multi-form function bodies with Pop between forms', () => {
+    const chunk = compileFnBodyForTest(['x'], ['(+ x 1)', '(+ x 2)'])
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    expect(disassembleChunk(chunk)).toBe(
+      [
+        '== vm-fn-body ==',
+        '0000 LoadGlobal 0 ; +',
+        '0002 LoadLocal 0',
+        '0004 Constant 1 ; 1',
+        '0006 Call 2',
+        '0008 Pop',
+        '0009 LoadGlobal 2 ; +',
+        '0011 LoadLocal 0',
+        '0013 Constant 3 ; 2',
+        '0015 Call 2',
+        '0017 Return',
+      ].join('\n')
+    )
+
+    expect(
+      executeChunk(chunk, makeCallTestEnv(), createEvaluationContext(), [
+        v.number(40),
+      ])
+    ).toEqual(v.number(42))
+  })
+
+  it.each([
+    ['fn*', '(fn* [y] y)'],
+    ['loop*', '(loop* [y x] y)'],
+    ['recur', '(recur x)'],
+    ['def', '(def y x)'],
+    ['try', '(try x (catch :default e e))'],
+    ['binding', '(binding [*out* *out*] x)'],
+    ['set!', '(set! *out* x)'],
+    ['quote', '(quote x)'],
+    ['var', '(var x)'],
+    ['lazy-seq', '(lazy-seq x)'],
+    ['async', '(async x)'],
+    ['JS interop dot', '(. x foo)'],
+    ['JS constructor interop', '(js/new Date)'],
+    ['ns', '(ns demo.vm-test)'],
+    ['defmacro', '(defmacro m [] x)'],
+    ['letfn*', '(letfn* [f (fn* [] x)] (f))'],
+  ])(
+    'falls back when a function body contains unsupported %s',
+    (_label, code) => {
+      expect(compileFnBodyForTest(['x'], [code])).toBeNull()
+    }
+  )
+
+  it('falls back for rest params until rest locals are explicitly modeled', () => {
+    expect(
+      compileFnBodyForTest(['x'], ['x'], { restParam: 'more' })
+    ).toBeNull()
+  })
+
+  it('compiles let* by allocating slots after params', () => {
+    const chunk = compileFnBodyForTest(['x'], ['(let* [y (+ x 1)] y)'])
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    expect(chunk.localCount).toBe(2)
+    expect(disassembleChunk(chunk)).toBe(
+      [
+        '== vm-fn-body ==',
+        '0000 LoadGlobal 0 ; +',
+        '0002 LoadLocal 0',
+        '0004 Constant 1 ; 1',
+        '0006 Call 2',
+        '0008 StoreLocal 1',
+        '0010 LoadLocal 1',
+        '0012 Return',
+      ].join('\n')
+    )
+  })
+
+  it('executes a compiled let* local binding', () => {
+    expectVmFnBodyCompilesTo(
+      ['x'],
+      ['(let* [y (+ x 1)] y)'],
+      [v.number(41), v.nil()],
+      v.number(42)
+    )
+  })
+
+  it('compiles sequential let* bindings where later init expressions see earlier locals', () => {
+    const chunk = compileFnBodyForTest(
+      ['x'],
+      ['(let* [y (+ x 1) z (+ y 1)] z)']
+    )
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    expect(chunk.localCount).toBe(3)
+    expect(disassembleChunk(chunk)).toBe(
+      [
+        '== vm-fn-body ==',
+        '0000 LoadGlobal 0 ; +',
+        '0002 LoadLocal 0',
+        '0004 Constant 1 ; 1',
+        '0006 Call 2',
+        '0008 StoreLocal 1',
+        '0010 LoadGlobal 2 ; +',
+        '0012 LoadLocal 1',
+        '0014 Constant 3 ; 1',
+        '0016 Call 2',
+        '0018 StoreLocal 2',
+        '0020 LoadLocal 2',
+        '0022 Return',
+      ].join('\n')
+    )
+  })
+
+  it('lets inner let* bindings shadow params without changing the param slot', () => {
+    expectVmFnBodyCompilesTo(
+      ['x'],
+      ['(let* [x (+ x 1)] x)'],
+      [v.number(41), v.nil()],
+      v.number(42)
+    )
+  })
+
+  it('restores shadowed local mappings after leaving let* scope', () => {
+    const chunk = compileFnBodyForTest(['x'], ['(let* [x (+ x 1)] x)', 'x'])
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    expect(disassembleChunk(chunk)).toBe(
+      [
+        '== vm-fn-body ==',
+        '0000 LoadGlobal 0 ; +',
+        '0002 LoadLocal 0',
+        '0004 Constant 1 ; 1',
+        '0006 Call 2',
+        '0008 StoreLocal 1',
+        '0010 LoadLocal 1',
+        '0012 Pop',
+        '0013 LoadLocal 0',
+        '0015 Return',
+      ].join('\n')
+    )
+
+    expect(
+      executeChunk(chunk, makeCallTestEnv(), createEvaluationContext(), [
+        v.number(41),
+        v.nil(),
+      ])
+    ).toEqual(v.number(41))
+  })
+
+  it.each([
+    ['missing binding vector', '(let*)'],
+    ['non-vector bindings', '(let* :not-a-vector x)'],
+    ['odd binding count', '(let* [y 1 z] z)'],
+    ['non-symbol binding name', '(let* [:y 1] :y)'],
+  ])('falls back for malformed let*: %s', (_label, code) => {
+    expect(compileFnBodyForTest(['x'], [code])).toBeNull()
+  })
+
+})
+
+describe('VM function body integration', () => {
+  it('stores bytecodeBody on fn arities with VM-compilable bodies', () => {
+    const fn = createSession().evaluate('(fn [x] (+ x 1))')
+
+    expect(fn.kind).toBe('function')
+    if (fn.kind !== 'function') return
+
+    expect(fn.arities[0].bytecodeBody).toBeDefined()
+    expect(fn.arities[0].bytecodeBody?.localCount).toBe(1)
+  })
+
+  it('executes bytecodeBody through normal function application', () => {
+    const fn = createSession().evaluate('(fn [x] (+ x 2))')
+
+    expect(fn.kind).toBe('function')
+    if (fn.kind !== 'function') return
+
+    expect(fn.arities[0].bytecodeBody).toBeDefined()
+    fn.arities[0].compiledBody = () => {
+      throw new Error('compiledBody should not run when bytecodeBody exists')
+    }
+
+    const result = applyFunctionWithContext(
+      fn,
+      [v.number(40)],
+      createEvaluationContext(),
+      fn.env
+    )
+
+    expect(result).toEqual(v.number(42))
+  })
+
+  it.each([
+    ['identity fn', '((fn [x] x) 42)', v.number(42)],
+    ['two-arg fn', '((fn [x y] y) 10 20)', v.number(20)],
+    ['if body', '((fn [x] (if x 1 2)) true)', v.number(1)],
+    ['multi-form body', '((fn [x] (+ x 1) (+ x 2)) 40)', v.number(42)],
+    [
+      'collection body',
+      '((fn [x] [x (+ x 1)]) 4)',
+      v.vector([v.number(4), v.number(5)]),
+    ],
+  ])('evaluates %s through the session', (_label, code, expected) => {
+    expect(createSession().evaluate(code)).toEqual(expected)
+  })
+
+  it('stores bytecodeBody for let* bodies and evaluates them through normal application', () => {
+    const fn = createSession().evaluate('(fn [x] (let* [y (+ x 1)] y))')
+
+    expect(fn.kind).toBe('function')
+    if (fn.kind !== 'function') return
+
+    expect(fn.arities[0].bytecodeBody).toBeDefined()
+    expect(
+      applyFunctionWithContext(
+        fn,
+        [v.number(41)],
+        createEvaluationContext(),
+        fn.env
+      )
+    ).toEqual(v.number(42))
+  })
+
+  it('does not store bytecodeBody for unsupported bodies and still evaluates', () => {
+    const fn = createSession().evaluate('(fn [x] (try x (catch :default e e)))')
+
+    expect(fn.kind).toBe('function')
+    if (fn.kind !== 'function') return
+
+    expect(fn.arities[0].bytecodeBody).toBeUndefined()
+    expect(
+      applyFunctionWithContext(
+        fn,
+        [v.number(42)],
+        createEvaluationContext(),
+        fn.env
+      )
+    ).toEqual(v.number(42))
+  })
+
+  it.each([
+    ['single local', '((fn [x] (let* [y (+ x 1)] y)) 41)', v.number(42)],
+    [
+      'sequential locals',
+      '((fn [x] (let* [y (+ x 1) z (+ y 1)] z)) 40)',
+      v.number(42),
+    ],
+    [
+      'local shadowing',
+      '((fn [x] (let* [x (+ x 1)] x)) 41)',
+      v.number(42),
+    ],
+    [
+      'shadowing does not leak',
+      '((fn [x] (let* [x (+ x 1)] x) x) 41)',
+      v.number(41),
+    ],
+  ])('evaluates let* function body with %s', (_label, code, expected) => {
+    expect(createSession().evaluate(code)).toEqual(expected)
+  })
+
+  it('does not store bytecodeBody for rest-param arities', () => {
+    const fn = createSession().evaluate('(fn [x & more] x)')
+
+    expect(fn.kind).toBe('function')
+    if (fn.kind !== 'function') return
+
+    expect(fn.arities[0].bytecodeBody).toBeUndefined()
+  })
+
+  it('does not store bytecodeBody when the body closes over an outer local', () => {
+    const fn = createSession().evaluate('(let* [x 10] (fn [] x))')
+
+    expect(fn.kind).toBe('function')
+    if (fn.kind !== 'function') return
+
+    expect(fn.arities[0].bytecodeBody).toBeUndefined()
+    expect(createSession().evaluate('((let* [x 10] (fn [] x)))')).toEqual(
+      v.number(10)
+    )
+  })
 })
 
 describe('VM do compilation', () => {

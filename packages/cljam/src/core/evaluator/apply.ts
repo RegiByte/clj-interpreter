@@ -11,7 +11,13 @@ import type {
   Env,
   EvaluationContext,
 } from '../types'
-import { bindParams, RecurSignal, resolveArity, slotValuesForArity } from './arity'
+import { executeChunk } from '../vm/vm'
+import {
+  bindParams,
+  RecurSignal,
+  resolveArity,
+  slotValuesForArity,
+} from './arity'
 import { cljToJs, jsToClj } from './js-interop'
 
 export function applyFunctionWithContext(
@@ -29,6 +35,15 @@ export function applyFunctionWithContext(
   }
   if (fn.kind === valueKeywords.function) {
     const arity = resolveArity(fn.arities, args.length)
+
+    if (arity.bytecodeBody) {
+      let locals = slotValuesForArity(arity, args)
+      const localCount = arity.bytecodeBody.localCount
+      while (locals.length < localCount) {
+        locals.push(cljNil())
+      }
+      return executeChunk(arity.bytecodeBody, fn.env, ctx, locals)
+    }
 
     // Phase 4b fast path: param slots compiled into body — no Env allocation,
     // no lookup chain walks, no RecurSignal (while(true) is inside compiledBody).

@@ -7,6 +7,8 @@ export const Op = {
   False: 3,
   Pop: 4,
 
+  LoadLocal: 10,
+  StoreLocal: 11,
   LoadGlobal: 12,
   LoadQualified: 13,
 
