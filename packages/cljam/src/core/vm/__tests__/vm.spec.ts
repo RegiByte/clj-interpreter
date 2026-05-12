@@ -12,7 +12,7 @@ import { Op, opcodeName } from '../opcodes'
 import { executeChunk } from '../vm'
 import { define, internVar, makeEnv, makeNamespace } from '../../env'
 import { createEvaluationContext } from '../../evaluator'
-import { EvaluationError } from '../../errors'
+import { EvaluationError, isEvaluationError } from '../../errors'
 import type {
   CljFunction,
   CljValue,
@@ -77,6 +77,21 @@ function executeIntrinsicChunk(
   emit(chunk, Op.Return)
 
   return executeChunk({ chunk, ...makeIntrinsicRuntime(name) })
+}
+
+function expectEvaluationError(fn: () => unknown): EvaluationError {
+  try {
+    fn()
+  } catch (error) {
+    expect(isEvaluationError(error)).toBe(true)
+    if (isEvaluationError(error)) return error
+    throw error
+  }
+  throw new Error('Expected EvaluationError')
+}
+
+function frameNames(error: EvaluationError): Array<string | null> {
+  return (error.frames ?? []).map((frame) => frame.fnName)
 }
 
 describe('VM Hand written chunks', () => {
@@ -1074,6 +1089,89 @@ describe('VM Hand written chunks', () => {
     ).toThrow(
       'Stack overflow: exceeded 10000 VM call frames. Use loop/recur for unbounded iteration.'
     )
+  })
+
+  it('synthesizes active VM frames when a nested bytecode frame throws', () => {
+    const env = makeEnv()
+    const calleeChunk = makeChunk('boom-body')
+    emit(calleeChunk, Op.Constant)
+    emitOperand(calleeChunk, addConstant(calleeChunk, v.number(1)))
+    emit(calleeChunk, Op.Constant)
+    emitOperand(calleeChunk, addConstant(calleeChunk, v.number(0)))
+    emit(calleeChunk, Op.Div)
+    emitOperand(calleeChunk, 2)
+    emit(calleeChunk, Op.Return)
+    const fn = makeBytecodeFunction(calleeChunk, [], env)
+    fn.name = 'boom'
+
+    const chunk = makeChunk('root-body')
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, fn))
+    emit(chunk, Op.Call)
+    emitOperand(chunk, 0)
+    emit(chunk, Op.Return)
+
+    const error = expectEvaluationError(() =>
+      executeChunk({ chunk, env, ctx: createNoDelegateContext() })
+    )
+    expect(frameNames(error)).toEqual(['boom', 'root-body'])
+  })
+
+  it('bridges delegated VM calls through ctx.frameStack', () => {
+    const env = makeEnv()
+    const chunk = makeChunk('delegating-root')
+    const nativeFn = v.nativeFn('explode', () => v.nil())
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, nativeFn))
+    emit(chunk, Op.Call)
+    emitOperand(chunk, 0)
+    emit(chunk, Op.Return)
+
+    const ctx = createEvaluationContext()
+    ctx.applyCallable = () => {
+      throw new EvaluationError('delegated boom', {})
+    }
+
+    const error = expectEvaluationError(() => executeChunk({ chunk, env, ctx }))
+    expect(frameNames(error)).toEqual(['explode', 'delegating-root'])
+    expect(ctx.frameStack).toEqual([])
+  })
+
+  it('keeps outer VM context for mixed VM native VM errors', () => {
+    const env = makeEnv()
+    const innerChunk = makeChunk('inner-body')
+    emit(innerChunk, Op.Constant)
+    emitOperand(innerChunk, addConstant(innerChunk, v.number(1)))
+    emit(innerChunk, Op.Constant)
+    emitOperand(innerChunk, addConstant(innerChunk, v.number(0)))
+    emit(innerChunk, Op.Div)
+    emitOperand(innerChunk, 2)
+    emit(innerChunk, Op.Return)
+    const innerFn = makeBytecodeFunction(innerChunk, [], env)
+    innerFn.name = 'inner'
+
+    const bridgeFn = v.nativeFn('bridge', () => v.nil())
+    const rootChunk = makeChunk('outer-body')
+    emit(rootChunk, Op.Constant)
+    emitOperand(rootChunk, addConstant(rootChunk, bridgeFn))
+    emit(rootChunk, Op.Call)
+    emitOperand(rootChunk, 0)
+    emit(rootChunk, Op.Return)
+
+    const ctx = createEvaluationContext()
+    const applyCallable = ctx.applyCallable
+    ctx.applyCallable = (callable, args, callEnv) => {
+      if (callable === bridgeFn) {
+        return applyCallable(innerFn, [], callEnv)
+      }
+      return applyCallable(callable, args, callEnv)
+    }
+
+    const error = expectEvaluationError(() =>
+      executeChunk({ chunk: rootChunk, env, ctx })
+    )
+    expect(frameNames(error)).toEqual(['inner', 'bridge'])
+    expect(ctx.frameStack).toEqual([])
   })
 
   it.each([

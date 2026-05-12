@@ -11,6 +11,7 @@ import type {
   Env,
   EvaluationContext,
   Pos,
+  StackFrame,
   VmChunk,
   VmExecuteInput,
 } from '../types'
@@ -33,13 +34,20 @@ type VmCallFrame = {
   locals: CljValue[]
   ip: number
   stackBase: number
+  fnName: string | null
+  callPos: Pos | null
 }
 
 type IntrinsicName = '+' | '-' | '*' | '/' | '<' | '>' | '<=' | '>=' | '='
 
 export function executeChunk(input: VmExecuteInput): CljValue {
   const state = createVmState(input)
-  return runToCompletion(state)
+  try {
+    return runToCompletion(state)
+  } catch (e) {
+    captureVmFrames(e, state)
+    throw e
+  }
 }
 
 function createVmState(input: VmExecuteInput): VmState {
@@ -53,6 +61,8 @@ function createVmState(input: VmExecuteInput): VmState {
         locals: input.locals ?? [],
         ip: 0,
         stackBase: 0,
+        fnName: input.rootFnName ?? input.chunk.name ?? null,
+        callPos: null,
       },
     ],
     done: false,
@@ -439,10 +449,11 @@ function executeInstruction(state: VmState): void {
         if (tryPushBytecodeFrame(state, callable, args, instructionPos)) {
           break
         }
-        const result = ctx.applyCallable(callable, args, env)
+        const result = delegateCall(state, callable, args, env, instructionPos)
         stack.push(result)
       } catch (e) {
         hydrateVmErrorPos(e, instructionPos)
+        captureVmFrames(e, state)
         throw e
       }
       break
@@ -694,7 +705,98 @@ function pushBytecodeFrame(
     locals,
     ip: 0,
     stackBase: state.stack.length,
+    fnName: fn.name ?? chunk.name ?? null,
+    callPos: callPos ?? null,
   })
+}
+
+function delegateCall(
+  state: VmState,
+  callable: CljValue,
+  args: CljValue[],
+  env: Env,
+  callPos: Pos | undefined
+): CljValue {
+  const frame: StackFrame = {
+    fnName: callableDisplayName(callable),
+    line: null,
+    col: null,
+    source: state.ctx.currentFile ?? null,
+    pos: callPos ?? null,
+  }
+  state.ctx.frameStack.push(frame)
+  try {
+    return state.ctx.applyCallable(callable, args, env)
+  } catch (e) {
+    captureDelegatedVmFrames(e, state)
+    throw e
+  } finally {
+    state.ctx.frameStack.pop()
+  }
+}
+
+function callableDisplayName(callable: CljValue): string | null {
+  if (
+    is.function(callable) ||
+    is.nativeFunction(callable) ||
+    is.multiMethod(callable)
+  ) {
+    return callable.name ?? null
+  }
+  if (is.keyword(callable)) return callable.name
+  return null
+}
+
+function captureVmFrames(error: unknown, state: VmState): void {
+  if (!isEvaluationError(error)) return
+  if (error.frames) return
+
+  const outerFrames = [...state.ctx.frameStack].reverse()
+  const includeRootVmFrame = shouldIncludeRootVmFrame(outerFrames, state.frames)
+  error.frames = [
+    ...vmFramesToStackFrames(state.frames, includeRootVmFrame),
+    ...outerFrames,
+  ]
+}
+
+function captureDelegatedVmFrames(error: unknown, state: VmState): void {
+  if (!isEvaluationError(error)) return
+  if (error.frames) return
+
+  const outerFrames = [...state.ctx.frameStack].reverse()
+  const includeRootVmFrame = shouldIncludeRootVmFrame(outerFrames, state.frames)
+  error.frames = [
+    ...outerFrames,
+    ...vmFramesToStackFrames(state.frames, includeRootVmFrame),
+  ]
+}
+
+function shouldIncludeRootVmFrame(
+  outerFrames: StackFrame[],
+  vmFrames: VmCallFrame[]
+): boolean {
+  if (outerFrames.length === 0) return true
+  const rootFrame = vmFrames[0]
+  if (rootFrame === undefined) return false
+  const outerFrame = outerFrames[0]
+  return outerFrame.fnName !== rootFrame.fnName
+}
+
+function vmFramesToStackFrames(
+  frames: VmCallFrame[],
+  includeRoot: boolean
+): StackFrame[] {
+  const startIndex = includeRoot ? 0 : 1
+  return frames
+    .slice(startIndex)
+    .reverse()
+    .map((frame) => ({
+      fnName: frame.fnName,
+      line: null,
+      col: null,
+      source: null,
+      pos: frame.callPos,
+    }))
 }
 
 function executeIntrinsic(
@@ -748,9 +850,10 @@ function executeIntrinsic(
         instructionPos
       )
     }
-    state.stack.push(state.ctx.applyCallable(visibleOp, args, frame.env))
+    state.stack.push(delegateCall(state, visibleOp, args, frame.env, instructionPos))
   } catch (e) {
     hydrateVmErrorPos(e, instructionPos)
+    captureVmFrames(e, state)
     throw e
   }
 }

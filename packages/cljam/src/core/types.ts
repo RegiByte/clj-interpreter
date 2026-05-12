@@ -490,4 +490,5 @@ export type VmExecuteInput = {
   env: Env
   ctx: EvaluationContext
   locals?: CljValue[]
+  rootFnName?: string | null
 }

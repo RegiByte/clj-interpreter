@@ -908,6 +908,41 @@ describe('VM function body integration', () => {
     expect(s.evaluate('(twice 40)')).toEqual(v.number(42))
   })
 
+  it('reports nested bytecode function frames in caught runtime errors', () => {
+    const s = createSession()
+    s.evaluate('(defn trace-inner [] (/ 1 0))')
+    s.evaluate('(defn trace-outer [] (trace-inner))')
+
+    const result = s.evaluate(
+      '(try (trace-outer) (catch :error/runtime e (mapv :fn (:frames e))))'
+    )
+
+    expect(result).toEqual(
+      v.vector([
+        v.string('/'),
+        v.string('trace-inner'),
+        v.string('trace-outer'),
+      ])
+    )
+  })
+
+  it('does not accumulate synthesized VM frames across repeated failures', () => {
+    const s = createSession()
+    s.evaluate('(defn repeat-inner [] (/ 1 0))')
+    s.evaluate('(defn repeat-outer [] (repeat-inner))')
+
+    expect(
+      s.evaluate(
+        '(try (repeat-outer) (catch :error/runtime e (count (:frames e))))'
+      )
+    ).toEqual(v.number(3))
+    expect(
+      s.evaluate(
+        '(try (repeat-outer) (catch :error/runtime e (count (:frames e))))'
+      )
+    ).toEqual(v.number(3))
+  })
+
   it('keeps locals isolated across recursive bytecode frames', () => {
     const s = createSession()
     s.evaluate(

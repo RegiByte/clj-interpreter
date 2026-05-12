@@ -47,6 +47,7 @@ export function applyFunctionWithContext(
         env: fn.env,
         ctx,
         locals,
+        rootFnName: fn.name ?? null,
       })
     }
 
