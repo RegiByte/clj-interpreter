@@ -1,18 +1,22 @@
 import { is } from '../assertions'
+import { parseArities } from '../evaluator/arity'
 import { assertRecurInTailPosition } from '../evaluator/recur-check'
 import { v } from '../factories'
 import { specialFormKeywords, valueKeywords } from '../keywords'
 import { getPos } from '../positions'
 import type {
+  Arity,
   CljList,
   CljMap,
   CljSet,
   CljSymbol,
   CljValue,
+  Env,
   CljVector,
   OpCode,
   Pos,
   VmChunk,
+  VmFunctionTemplate,
 } from '../types'
 import {
   addConstant,
@@ -37,12 +41,13 @@ type IntrinsicName = '+' | '-' | '*' | '/' | '<' | '>' | '<=' | '>=' | '='
 
 type VmCompileEnv = {
   locals: Map<string, number>
+  blockedOuterLocals: Set<string>
   nextLocalSlot: number
   recurTarget: RecurTarget | null
+  allowNestedFn: boolean
 }
 
 const unsupportedVmSpecialForms = new Set<string>([
-  specialFormKeywords['fn*'],
   specialFormKeywords['def'],
   specialFormKeywords['try'],
   specialFormKeywords['binding'],
@@ -91,8 +96,10 @@ export function compileVm(node: CljValue): VmChunk | null {
   const chunk = makeChunk('vm-expression')
   const compileEnv = {
     locals: new Map<string, number>(),
+    blockedOuterLocals: new Set<string>(),
     nextLocalSlot: 0,
     recurTarget: null,
+    allowNestedFn: false,
   } as VmCompileEnv
 
   if (!emitExpression(chunk, node, compileEnv)) {
@@ -131,6 +138,9 @@ function emitExpression(
         emit(chunk, Op.LoadLocal)
         emitOperand(chunk, slot)
         return true
+      }
+      if (compileEnv.blockedOuterLocals.has(node.name)) {
+        return false
       }
 
       const symbolName = node.name
@@ -172,6 +182,9 @@ function emitExpression(
       if (name === specialFormKeywords['recur']) {
         return emitRecur(chunk, node, compileEnv)
       }
+      if (name === specialFormKeywords['fn*']) {
+        return emitFnStar(chunk, node, compileEnv)
+      }
       if (isUnsupportedVmSpecialForm(name)) {
         return false
       }
@@ -190,6 +203,72 @@ function emitExpression(
     default:
       return false
   }
+}
+
+function emitFnStar(
+  chunk: VmChunk,
+  node: CljList,
+  compileEnv: VmCompileEnv
+): boolean {
+  if (!compileEnv.allowNestedFn) return false
+
+  return emitTransaction(chunk, () => {
+    const rest = node.value.slice(1)
+    if (rest[0] && is.symbol(rest[0])) {
+      return false
+    }
+
+    let arities: Arity[]
+    try {
+      arities = parseArities(rest, emptyEnvForVmParsing())
+    } catch {
+      return false
+    }
+
+    const templateArityChunks = []
+    const blockedOuterLocals = blockedLocalsForNestedFn(compileEnv)
+
+    for (const arity of arities) {
+      assertRecurInTailPosition(arity.body)
+      const arityChunk = compileVmFnBodyInternal(
+        arity.params,
+        arity.restParam,
+        arity.body,
+        {
+          blockedOuterLocals,
+          allowNestedFn: true,
+        }
+      )
+      if (arityChunk === null) return false
+      templateArityChunks.push({
+        params: arity.params,
+        restParam: arity.restParam,
+        chunk: arityChunk,
+      })
+    }
+
+    const template: VmFunctionTemplate = {
+      arities: templateArityChunks,
+      upvalueDescriptors: [],
+    }
+    const templateIndex = chunk.innerFunctions.length
+    chunk.innerFunctions.push(template)
+    emit(chunk, Op.Closure, getPos(node) ?? null)
+    emitOperand(chunk, templateIndex, getPos(node) ?? null)
+
+    return true
+  })
+}
+
+function blockedLocalsForNestedFn(compileEnv: VmCompileEnv): Set<string> {
+  return new Set([
+    ...compileEnv.blockedOuterLocals,
+    ...compileEnv.locals.keys(),
+  ])
+}
+
+function emptyEnvForVmParsing(): Env {
+  return { bindings: new Map(), outer: null }
 }
 
 function emitDo(
@@ -550,13 +629,30 @@ export function compileVmFnBody(
   restParam: CljSymbol | null,
   body: CljValue[]
 ): VmChunk | null {
+  return compileVmFnBodyInternal(params, restParam, body, {
+    blockedOuterLocals: new Set<string>(),
+    allowNestedFn: true,
+  })
+}
+
+function compileVmFnBodyInternal(
+  params: CljSymbol[],
+  restParam: CljSymbol | null,
+  body: CljValue[],
+  options: {
+    blockedOuterLocals: Set<string>
+    allowNestedFn: boolean
+  }
+): VmChunk | null {
   const compileEnv = {
     locals: new Map<string, number>(),
+    blockedOuterLocals: options.blockedOuterLocals,
     nextLocalSlot: 0,
     recurTarget: {
       kind: 'fn',
       paramCount: params.length,
     },
+    allowNestedFn: options.allowNestedFn,
   } as VmCompileEnv
 
   if (restParam !== null) {

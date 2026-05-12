@@ -67,6 +67,11 @@ function disassembleInstruction(
       lines.push(`${formatOffset(offset)} ${name} ${operandOffset}`)
       return offset + 2
     }
+    case Op.Closure: {
+      const templateIndex = chunk.code[offset + 1]
+      lines.push(`${formatOffset(offset)} ${name} ${templateIndex}`)
+      return offset + 2
+    }
     case Op.Add:
     case Op.Sub:
     case Op.Mul:

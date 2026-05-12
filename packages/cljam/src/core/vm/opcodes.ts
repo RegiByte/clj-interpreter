@@ -17,6 +17,7 @@ export const Op = {
   MakeSet: 22,
 
   Call: 30,
+  Closure: 31,
   Return: 32,
 
   Jump: 40,

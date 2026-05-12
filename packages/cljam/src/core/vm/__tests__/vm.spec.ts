@@ -19,6 +19,7 @@ import type {
   Env,
   EvaluationContext,
   Pos,
+  VmFunctionTemplate,
 } from '../../types'
 import { disassembleChunk } from '../debug'
 
@@ -218,6 +219,28 @@ describe('VM Hand written chunks', () => {
     expect(chunk.positions).toEqual([])
   })
 
+  it('restores inner function templates when rolling back chunks', () => {
+    const chunk = makeChunk('inner-function-rollback-test')
+    const snapshot = snapshotChunk(chunk)
+    const innerChunk = makeChunk('inner')
+    const template: VmFunctionTemplate = {
+      arities: [
+        {
+          params: [],
+          restParam: null,
+          chunk: innerChunk,
+        },
+      ],
+      upvalueDescriptors: [],
+    }
+
+    chunk.innerFunctions.push(template)
+
+    rollbackChunk(chunk, snapshot)
+
+    expect(chunk.innerFunctions).toEqual([])
+  })
+
   it('disassembles constants and returns', () => {
     const chunk = makeChunk('disassemble-test')
     const index = addConstant(chunk, v.number(42))
@@ -285,6 +308,22 @@ describe('VM Hand written chunks', () => {
         '0002 Constant 1 ; 1',
         '0004 Recur 0 2 -> 0008',
         '0008 Return',
+      ].join('\n')
+    )
+  })
+
+  it('disassembles closures with their template index', () => {
+    const chunk = makeChunk('closure-disassemble-test')
+
+    emit(chunk, Op.Closure)
+    emitOperand(chunk, 0)
+    emit(chunk, Op.Return)
+
+    expect(disassembleChunk(chunk)).toBe(
+      [
+        '== closure-disassemble-test ==',
+        '0000 Closure 0',
+        '0002 Return',
       ].join('\n')
     )
   })
@@ -990,6 +1029,40 @@ describe('VM Hand written chunks', () => {
         locals: [v.number(1), v.number(2), v.boolean(false)],
       })
     ).toEqual(v.vector([v.number(2), v.number(1)]))
+  })
+
+  it('executes Closure by pushing a normal bytecode-backed function', () => {
+    const innerChunk = makeChunk('inner-closure-body')
+    emit(innerChunk, Op.LoadLocal)
+    emitOperand(innerChunk, 0)
+    emit(innerChunk, Op.Return)
+    innerChunk.localCount = 1
+
+    const chunk = makeChunk('closure-test')
+    chunk.innerFunctions.push({
+      arities: [
+        {
+          params: [v.symbol('x')],
+          restParam: null,
+          chunk: innerChunk,
+        },
+      ],
+      upvalueDescriptors: [],
+    })
+    emit(chunk, Op.Closure)
+    emitOperand(chunk, 0)
+    emit(chunk, Op.Return)
+
+    const result = executeChunk({
+      chunk,
+      env: makeEnv(),
+      ctx: createEvaluationContext(),
+    })
+
+    expect(result.kind).toBe('function')
+    if (result.kind !== 'function') return
+    expect(result.arities[0].bytecodeBody).toBe(innerChunk)
+    expect(result.arities[0].body).toEqual([])
   })
 
   it.each([

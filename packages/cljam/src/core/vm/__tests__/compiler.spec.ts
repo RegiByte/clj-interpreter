@@ -429,7 +429,6 @@ describe('VM function body compilation', () => {
   })
 
   it.each([
-    ['fn*', '(fn* [y] y)'],
     ['def', '(def y x)'],
     ['try', '(try x (catch :default e e))'],
     ['binding', '(binding [*out* *out*] x)'],
@@ -449,6 +448,64 @@ describe('VM function body compilation', () => {
       expect(compileFnBodyForTest(['x'], [code])).toBeNull()
     }
   )
+
+  it('compiles nested non-capturing fn* to Closure', () => {
+    const chunk = compileFnBodyForTest([], ['(fn* [y] (+ y 1))'])
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    expect(chunk.innerFunctions).toHaveLength(1)
+    expect(chunk.innerFunctions[0].upvalueDescriptors).toEqual([])
+    expect(chunk.innerFunctions[0].arities[0].chunk.localCount).toBe(1)
+    expect(disassembleChunk(chunk)).toBe(
+      ['== vm-fn-body ==', '0000 Closure 0', '0002 Return'].join('\n')
+    )
+  })
+
+  it('compiles and executes calls to nested non-capturing fn*', () => {
+    expect(
+      createSession().evaluate('((fn [x] ((fn* [y] (+ y 1)) x)) 41)')
+    ).toEqual(v.number(42))
+  })
+
+  it('compiles multi-arity nested fn* as one closure template', () => {
+    const chunk = compileFnBodyForTest(
+      [],
+      ['(fn* ([x] (+ x 1)) ([x y] (+ x y)))']
+    )
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    expect(chunk.innerFunctions).toHaveLength(1)
+    expect(chunk.innerFunctions[0].arities).toHaveLength(2)
+    expect(
+      createSession().evaluate(
+        '((fn [argc] (let* [f (fn* ([x] (+ x 1)) ([x y] (+ x y)))] (if (= argc 1) (f 41) (f 20 22)))) 2)'
+      )
+    ).toEqual(v.number(42))
+  })
+
+  it('falls back for nested fn* with an unsupported body and rolls back the template', () => {
+    const chunk = compileFnBodyForTest(
+      [],
+      ['(do (fn* [] (try 1 (catch :default e e))) 42)']
+    )
+
+    expect(chunk).toBeNull()
+  })
+
+  it('falls back when nested fn* captures an outer local', () => {
+    expect(compileFnBodyForTest(['x'], ['(fn* [] x)'])).toBeNull()
+    expect(createSession().evaluate('((let* [x 10] (fn [] x)))')).toEqual(
+      v.number(10)
+    )
+  })
+
+  it('falls back for named anonymous fn* until VM self-reference is designed', () => {
+    expect(compileFnBodyForTest([], ['(fn* local-name [] 42)'])).toBeNull()
+  })
 
   it('falls back for rest params until rest locals are explicitly modeled', () => {
     expect(compileFnBodyForTest(['x'], ['x'], { restParam: 'more' })).toBeNull()

@@ -389,6 +389,49 @@ function executeInstruction(state: VmState): void {
       stack.push(v.set(elements))
       break
     }
+    case Op.Closure: {
+      const templateIndex = chunk.code[frame.ip++]
+      if (
+        templateIndex === undefined ||
+        !Number.isInteger(templateIndex) ||
+        templateIndex < 0 ||
+        templateIndex >= chunk.innerFunctions.length
+      ) {
+        throw new EvaluationError(
+          `Invalid closure template index: ${templateIndex}`,
+          {
+            instruction,
+            templateIndex,
+            ip: frame.ip,
+            stack,
+            chunk,
+          },
+          instructionPos
+        )
+      }
+
+      const template = chunk.innerFunctions[templateIndex]
+      const vmClosure = {
+        env,
+        upvalues: [],
+        name: template.name,
+      }
+      const fn = v.multiArityFunction(
+        template.arities.map((arityTemplate) => ({
+          params: arityTemplate.params,
+          restParam: arityTemplate.restParam,
+          body: [],
+          bytecodeBody: arityTemplate.chunk,
+          vmClosure,
+        })),
+        env
+      )
+      if (template.name) fn.name = template.name
+      if (template.meta) fn.meta = template.meta
+
+      stack.push(fn)
+      break
+    }
     case Op.Call: {
       const argCount = chunk.code[frame.ip++]
       assertCountOperand(

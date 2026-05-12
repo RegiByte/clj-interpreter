@@ -34,6 +34,7 @@ export type Arity = {
   compiledBody?: CompiledExpr
   bytecodeBody?: VmChunk
   paramSlots?: SlotRef[] // Phase 4b: set when body compiled with param slots
+  vmClosure?: VmFunctionClosure
 }
 
 export type CljFunction = {
@@ -476,6 +477,36 @@ export type CompileEnv = {
 
 export type OpCode = number
 
+export type VmUpvalueDescriptor = {
+  isLocal: boolean
+  index: number
+}
+
+export type VmUpvalue = {
+  frame: unknown | null
+  slot: number
+  closedValue: CljValue | null
+}
+
+export type VmFunctionClosure = {
+  env: Env
+  upvalues: VmUpvalue[]
+  name?: string
+}
+
+export type VmArityTemplate = {
+  params: CljSymbol[]
+  restParam: CljSymbol | null
+  chunk: VmChunk
+}
+
+export type VmFunctionTemplate = {
+  arities: VmArityTemplate[]
+  upvalueDescriptors: VmUpvalueDescriptor[]
+  name?: string
+  meta?: CljMap
+}
+
 export type VmChunk = {
   code: number[]
   constants: CljValue[]
@@ -483,6 +514,7 @@ export type VmChunk = {
   name?: string
   maxStack: number
   localCount: number
+  innerFunctions: VmFunctionTemplate[]
 }
 
 export type VmExecuteInput = {
