@@ -747,6 +747,107 @@ describe('VM function body compilation', () => {
   })
 })
 
+describe('VM function-level recur compilation', () => {
+  it('compiles tail-position function-level recur to FnRecur', () => {
+    const chunk = compileFnBodyForTest(
+      ['n', 'acc'],
+      ['(if (= n 0) acc (recur (- n 1) (+ acc n)))']
+    )
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    expect(chunk.localCount).toBe(2)
+    expect(disassembleChunk(chunk)).toBe(
+      [
+        '== vm-fn-body ==',
+        '0000 LoadLocal 0',
+        '0002 Constant 0 ; 0',
+        '0004 Eq 2',
+        '0006 JumpIfFalsy 4 -> 0012',
+        '0008 LoadLocal 1',
+        '0010 Jump 14 -> 0026',
+        '0012 LoadLocal 0',
+        '0014 Constant 1 ; 1',
+        '0016 Sub 2',
+        '0018 LoadLocal 1',
+        '0020 LoadLocal 0',
+        '0022 Add 2',
+        '0024 FnRecur 2 -> 0000',
+        '0026 Return',
+      ].join('\n')
+    )
+  })
+
+  it('executes function-level recur without growing VM frames', () => {
+    expectVmFnBodyCompilesTo(
+      ['n', 'acc'],
+      ['(if (= n 0) acc (recur (- n 1) (+ acc n)))'],
+      [v.number(5), v.number(0)],
+      v.number(15)
+    )
+  })
+
+  it('executes function-level recur updates as simultaneous assignment', () => {
+    expectVmFnBodyCompilesTo(
+      ['a', 'b', 'done'],
+      ['(if done [a b] (recur b a true))'],
+      [v.number(1), v.number(2), v.boolean(false)],
+      v.vector([v.number(2), v.number(1)])
+    )
+  })
+
+  it('pops intermediate function body forms before tail-position recur', () => {
+    const chunk = compileFnBodyForTest(
+      ['n'],
+      ['(+ n 10)', '(if (= n 0) n (recur (- n 1)))']
+    )
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    expect(disassembleChunk(chunk)).toContain('0006 Pop')
+    expect(disassembleChunk(chunk)).toContain('FnRecur 1 -> 0000')
+    expect(
+      executeChunk({
+        chunk,
+        env: makeCallTestEnv(),
+        ctx: createEvaluationContext(),
+        locals: [v.number(3)],
+      })
+    ).toEqual(v.number(0))
+  })
+
+  it('keeps nested loop* recur targeted at the loop, not the function', () => {
+    const chunk = compileFnBodyForTest(
+      ['n'],
+      ['(loop* [i n] (if (= i 0) i (recur (- i 1))))']
+    )
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    expect(chunk.code).toContain(Op.Recur)
+    expect(chunk.code).not.toContain(Op.FnRecur)
+    expect(
+      executeChunk({
+        chunk,
+        env: makeCallTestEnv(),
+        ctx: createEvaluationContext(),
+        locals: [v.number(3), v.nil()],
+      })
+    ).toEqual(v.number(0))
+  })
+
+  it('falls back for function-level recur arity mismatch', () => {
+    expect(compileFnBodyForTest(['n'], ['(recur n n)'])).toBeNull()
+  })
+
+  it('keeps top-level VM recur unsupported', () => {
+    expectVmFallsBack('(recur 1)')
+  })
+})
+
 describe('VM function body integration', () => {
   it('stores bytecodeBody on fn arities with VM-compilable bodies', () => {
     const fn = createSession().evaluate('(fn [x] (+ x 1))')
@@ -950,6 +1051,42 @@ describe('VM function body integration', () => {
     )
 
     expect(s.evaluate('(triangle 4 0)')).toEqual(v.number(10))
+  })
+
+  it('evaluates function-level recur through bytecodeBody', () => {
+    const s = createSession()
+    const fn = s.evaluate(
+      '(fn [n acc] (if (= n 0) acc (recur (- n 1) (+ acc n))))'
+    )
+
+    expect(fn.kind).toBe('function')
+    if (fn.kind !== 'function') return
+
+    expect(fn.arities[0].bytecodeBody).toBeDefined()
+    expect(
+      s.evaluate(
+        '((fn [n acc] (if (= n 0) acc (recur (- n 1) (+ acc n)))) 5 0)'
+      )
+    ).toEqual(v.number(15))
+  })
+
+  it('runs function-level recur past the VM frame limit without pushing frames', () => {
+    const s = createSession()
+    s.evaluate('(def down (fn [n] (if (= n 0) n (recur (- n 1)))))')
+
+    expect(s.evaluate('(down 10005)')).toEqual(v.number(0))
+  })
+
+  it('falls back and preserves runtime arity behavior for function-level recur mismatch', () => {
+    const fn = createSession().evaluate('(fn [n] (recur n n))')
+
+    expect(fn.kind).toBe('function')
+    if (fn.kind !== 'function') return
+
+    expect(fn.arities[0].bytecodeBody).toBeUndefined()
+    expect(() => createSession().evaluate('((fn [n] (recur n n)) 1)')).toThrow(
+      'Arguments length mismatch: fn accepts 1 arguments, but 2 were provided'
+    )
   })
 
   it('preserves arity mismatch errors for bytecode-backed functions', () => {

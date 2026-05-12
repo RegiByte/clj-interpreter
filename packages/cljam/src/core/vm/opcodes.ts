@@ -23,6 +23,7 @@ export const Op = {
   JumpIfFalsy: 41,
   Loop: 42,
   Recur: 43,
+  FnRecur: 44,
 
   Add: 70,
   Sub: 71,

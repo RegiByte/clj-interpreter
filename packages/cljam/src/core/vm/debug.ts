@@ -106,6 +106,11 @@ function disassembleInstruction(
 
       return offset + 4
     }
+    case Op.FnRecur: {
+      const argc = chunk.code[offset + 1]
+      lines.push(`${formatOffset(offset)} ${name} ${argc} -> 0000`)
+      return offset + 2
+    }
     default: {
       lines.push(
         `${formatOffset(offset)} ${name} ; [disassembleInstruction] unknown opcode`

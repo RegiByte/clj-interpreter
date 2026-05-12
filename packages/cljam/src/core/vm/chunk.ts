@@ -147,6 +147,8 @@ function getOperandCount(opcode: number): number {
       return 1
     case Op.Recur:
       return 3
+    case Op.FnRecur:
+      return 1
     default:
       return 0
   }
@@ -186,6 +188,8 @@ function getStackDelta(opcode: number, operands: number[]): number {
       return 1 - countOperand(operands[0])
     case Op.Recur:
       return -countOperand(operands[1])
+    case Op.FnRecur:
+      return -countOperand(operands[0])
     default:
       return 0
   }

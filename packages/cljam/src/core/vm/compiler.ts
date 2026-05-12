@@ -24,9 +24,13 @@ import {
 import { Op } from './opcodes'
 
 type RecurTarget = {
+  kind: 'loop'
   localStart: number
   localCount: number
   loopHeader: number
+} | {
+  kind: 'fn'
+  paramCount: number
 }
 
 type IntrinsicName = '+' | '-' | '*' | '/' | '<' | '>' | '<=' | '>=' | '='
@@ -469,10 +473,11 @@ function emitLoopStar(
     const loopHeader = chunk.code.length
 
     const recurTarget = {
+      kind: 'loop',
       localStart,
       localCount,
       loopHeader,
-    }
+    } satisfies RecurTarget
 
     const previousRecurTarget = compileEnv.recurTarget
     compileEnv.recurTarget = recurTarget
@@ -514,17 +519,27 @@ function emitRecur(
     if (recurTarget === null) return false
     const args = node.value.slice(1)
 
-    if (args.length !== recurTarget.localCount) return false
+    const expectedArgCount =
+      recurTarget.kind === 'loop'
+        ? recurTarget.localCount
+        : recurTarget.paramCount
+
+    if (args.length !== expectedArgCount) return false
 
     // Emit expressions for the arguments that will be placed in the stack
     for (let i = 0; i < args.length; i++) {
       if (!emitExpression(chunk, args[i], compileEnv)) return false
     }
 
-    emit(chunk, Op.Recur)
-    emitOperand(chunk, recurTarget.localStart)
-    emitOperand(chunk, recurTarget.localCount)
-    emitOperand(chunk, recurTarget.loopHeader)
+    if (recurTarget.kind === 'loop') {
+      emit(chunk, Op.Recur)
+      emitOperand(chunk, recurTarget.localStart)
+      emitOperand(chunk, recurTarget.localCount)
+      emitOperand(chunk, recurTarget.loopHeader)
+    } else {
+      emit(chunk, Op.FnRecur)
+      emitOperand(chunk, recurTarget.paramCount)
+    }
 
     return true
   })
@@ -538,7 +553,10 @@ export function compileVmFnBody(
   const compileEnv = {
     locals: new Map<string, number>(),
     nextLocalSlot: 0,
-    recurTarget: null,
+    recurTarget: {
+      kind: 'fn',
+      paramCount: params.length,
+    },
   } as VmCompileEnv
 
   if (restParam !== null) {

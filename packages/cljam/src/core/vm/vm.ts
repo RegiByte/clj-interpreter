@@ -611,6 +611,45 @@ function executeInstruction(state: VmState): void {
 
       break
     }
+    case Op.FnRecur: {
+      const argCount = chunk.code[frame.ip++]
+
+      if (
+        argCount === undefined ||
+        argCount < 0 ||
+        argCount > locals.length
+      ) {
+        throw new EvaluationError(
+          `Invalid function recur argument count: ${argCount}`,
+          {
+            instruction,
+            argCount,
+          },
+          instructionPos
+        )
+      }
+
+      if (stack.length < argCount) {
+        throw new EvaluationError(
+          'VM stack underflow on FnRecur, not enough arguments',
+          {
+            instruction,
+            argCount,
+          },
+          instructionPos
+        )
+      }
+
+      const args = stack.splice(stack.length - argCount, argCount)
+
+      for (let i = 0; i < argCount; i++) {
+        locals[i] = args[i]
+      }
+
+      frame.ip = 0
+
+      break
+    }
     default: {
       throw new EvaluationError(
         `Unknown VM opcode: ${opcodeName(instruction)}`,

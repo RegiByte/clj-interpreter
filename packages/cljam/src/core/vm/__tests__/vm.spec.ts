@@ -930,6 +930,100 @@ describe('VM Hand written chunks', () => {
     ).toThrow(EvaluationError)
   })
 
+  it('executes FnRecur by replacing function parameter slots and jumping to the body entry', () => {
+    const chunk = makeChunk('fn-recur-test')
+
+    emit(chunk, Op.LoadLocal)
+    emitOperand(chunk, 2)
+    emit(chunk, Op.JumpIfFalsy)
+    emitOperand(chunk, 3)
+    emit(chunk, Op.LoadLocal)
+    emitOperand(chunk, 1)
+    emit(chunk, Op.Return)
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, v.number(99)))
+    emit(chunk, Op.LoadLocal)
+    emitOperand(chunk, 1)
+    emit(chunk, Op.True)
+    emit(chunk, Op.FnRecur)
+    emitOperand(chunk, 3)
+    emit(chunk, Op.Return)
+
+    expect(
+      executeChunk({
+        chunk,
+        env: makeEnv(),
+        ctx: createEvaluationContext(),
+        locals: [v.number(4), v.number(42), v.boolean(false)],
+      })
+    ).toEqual(v.number(42))
+  })
+
+  it('executes FnRecur updates as simultaneous assignment', () => {
+    const chunk = makeChunk('fn-recur-simultaneous-test')
+
+    emit(chunk, Op.LoadLocal)
+    emitOperand(chunk, 2)
+    emit(chunk, Op.JumpIfFalsy)
+    emitOperand(chunk, 7)
+    emit(chunk, Op.LoadLocal)
+    emitOperand(chunk, 0)
+    emit(chunk, Op.LoadLocal)
+    emitOperand(chunk, 1)
+    emit(chunk, Op.MakeVector)
+    emitOperand(chunk, 2)
+    emit(chunk, Op.Return)
+    emit(chunk, Op.LoadLocal)
+    emitOperand(chunk, 1)
+    emit(chunk, Op.LoadLocal)
+    emitOperand(chunk, 0)
+    emit(chunk, Op.True)
+    emit(chunk, Op.FnRecur)
+    emitOperand(chunk, 3)
+    emit(chunk, Op.Return)
+
+    expect(
+      executeChunk({
+        chunk,
+        env: makeEnv(),
+        ctx: createEvaluationContext(),
+        locals: [v.number(1), v.number(2), v.boolean(false)],
+      })
+    ).toEqual(v.vector([v.number(2), v.number(1)]))
+  })
+
+  it.each([
+    [
+      'stack underflow',
+      (chunk: ReturnType<typeof makeChunk>) => {
+        emit(chunk, Op.Constant)
+        emitOperand(chunk, addConstant(chunk, v.number(1)))
+        emit(chunk, Op.FnRecur)
+        emitOperand(chunk, 2)
+      },
+    ],
+    [
+      'invalid argument count',
+      (chunk: ReturnType<typeof makeChunk>) => {
+        emit(chunk, Op.FnRecur)
+        emitOperand(chunk, 2)
+      },
+    ],
+  ])('throws when FnRecur has %s', (_label, buildChunk) => {
+    const chunk = makeChunk('bad-fn-recur-test')
+    buildChunk(chunk)
+    emit(chunk, Op.Return)
+
+    expect(() =>
+      executeChunk({
+        chunk,
+        env: makeEnv(),
+        ctx: createEvaluationContext(),
+        locals: [v.nil()],
+      })
+    ).toThrow(EvaluationError)
+  })
+
   it.each([
     ['zero arguments', [], v.number(42)],
     ['one argument', [v.number(41)], v.number(42)],
