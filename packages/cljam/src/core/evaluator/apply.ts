@@ -125,7 +125,8 @@ export function applyMacroWithContext(
 }
 
 /**
- * Invokes any IFn value — functions, native functions, keywords, and maps.
+ * Invokes any IFn value — functions, native functions, keywords, collections,
+ * vars, and host callables.
  * Used by comp, partial, and any other HOF that needs to call an arbitrary
  * callable without going through the full list-evaluation dispatch.
  */
@@ -161,6 +162,32 @@ export function applyCallableWithContext(
       return entry ? entry[1] : defaultVal
     }
     return defaultVal
+  }
+  if (is.vector(fn)) {
+    if (args.length !== 1) {
+      throw new EvaluationError(
+        `Vector used as function requires exactly one argument, got ${args.length}`,
+        { fn, args }
+      )
+    }
+    const index = args[0]
+    if (!is.number(index) || !Number.isInteger(index.value)) {
+      const err = new EvaluationError(
+        `Vector used as function expects a number index, got ${printString(index)}`,
+        { fn, args }
+      )
+      err.data = { argIndex: 0 }
+      throw err
+    }
+    if (index.value < 0 || index.value >= fn.value.length) {
+      const err = new EvaluationError(
+        `nth index ${index.value} is out of bounds for collection of length ${fn.value.length}`,
+        { fn, args }
+      )
+      err.data = { argIndex: 0 }
+      throw err
+    }
+    return fn.value[index.value]
   }
   if (is.record(fn)) {
     if (args.length === 0) {

@@ -154,7 +154,7 @@ export type EvaluationContext = {
     args: CljValue[],
     callEnv: Env
   ) => CljValue
-  /** Invokes any IFn value: functions, native functions, keywords, and maps. */
+  /** Invokes any IFn value: functions, native functions, keywords, collections, vars, and host callables. */
   applyCallable: (fn: CljValue, args: CljValue[], callEnv: Env) => CljValue
   applyMacro: (macro: CljMacro, rawArgs: CljValue[]) => CljValue
   expandAll: (form: CljValue, env: Env) => CljValue

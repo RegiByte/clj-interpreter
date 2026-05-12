@@ -75,6 +75,7 @@ export const isJsValue = (value: CljValue): value is CljJsValue =>
 export const isCallable = (value: CljValue): boolean =>
   isAFunction(value) ||
   isKeyword(value) ||
+  isVector(value) ||
   isMap(value) ||
   isRecord(value) ||
   isSet(value) ||

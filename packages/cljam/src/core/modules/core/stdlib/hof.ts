@@ -180,7 +180,7 @@ export const hofFunctions: Record<string, CljValue> = {
       const badIdx = fns.findIndex((f) => !is.callable(f))
       if (badIdx !== -1) {
         throw EvaluationError.atArg(
-          'comp expects functions or other callable values (keywords, maps)',
+          'comp expects functions or other callable values (keywords, collections)',
           { fns },
           badIdx
         )
@@ -203,7 +203,7 @@ export const hofFunctions: Record<string, CljValue> = {
     })
     .withMeta([
       ...docMeta({
-        doc: 'Returns the composition of fns, applied right-to-left. (comp f g) is equivalent to (fn [x] (f (g x))). Accepts any callable: functions, keywords, and maps.',
+        doc: 'Returns the composition of fns, applied right-to-left. (comp f g) is equivalent to (fn [x] (f (g x))). Accepts any callable: functions, keywords, and collections.',
         arglists: [[], ['f'], ['f', 'g'], ['f', 'g', '&', 'fns']],
         docGroup: DocGroups.higher_order,
       }),

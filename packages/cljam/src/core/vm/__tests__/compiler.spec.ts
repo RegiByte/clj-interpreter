@@ -163,11 +163,15 @@ describe('VM compiler equivalence helpers', () => {
     '[1 (+ 2 3)]',
     '{:a 1 :b (+ 2 3)}',
     '#{1 (+ 1 2)}',
+    '(:k {:k 1})',
+    '([1 2] 0)',
+    '((if true + -) 1 2)',
+    '((if false + -) 1 2)',
   ])('matches interpreter result for %s', (code) => {
     expectVmEqualsInterpreter(code)
   })
 
-  it.each(['js/Math.pow', '([1 2] 0)', '(if true 1 2 3)'])(
+  it.each(['js/Math.pow', '(if true 1 2 3)'])(
     'expects VM fallback for %s',
     (code) => {
       expectVmFallsBack(code)
@@ -1650,6 +1654,17 @@ describe('VM call compilation', () => {
     expect(disassembly).not.toContain('Add 2')
   })
 
+  it('compiles non-symbol callee expressions through generic Call', () => {
+    const chunk = compileVm(formToNode('([1 2] 0)'))
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    const disassembly = disassembleChunk(chunk)
+    expect(disassembly).toContain('MakeVector ; 2')
+    expect(disassembly).toContain('Call 1')
+  })
+
   it.each([
     ['(+ (+ 1 2) 3)', v.number(6)],
     ['(+ 1 (+ 2 3))', v.number(6)],
@@ -1670,7 +1685,6 @@ describe('VM call compilation', () => {
   })
 
   it.each([
-    ['([1 2] 0)', 'unsupported callee expression'],
     ['(+ 1 foo/bar.baz)', 'unsupported dotted qualified argument symbol'],
   ])('falls back for %s: %s', (code) => {
     expect(compileVm(formToNode(code))).toBeNull()

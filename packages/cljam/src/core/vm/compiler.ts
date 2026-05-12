@@ -187,26 +187,27 @@ function emitExpression(
     case valueKeywords.list: {
       if (node.value.length === 0) return false
       const head = node.value[0]
-      if (!is.symbol(head)) return false
-      const name = head.name
-      if (name === specialFormKeywords.do)
-        return emitDo(chunk, node, compileEnv)
-      if (name === specialFormKeywords.if)
-        return emitIf(chunk, node, compileEnv)
-      if (name === specialFormKeywords['let*']) {
-        return emitLetStar(chunk, node, compileEnv)
-      }
-      if (name === specialFormKeywords['loop*']) {
-        return emitLoopStar(chunk, node, compileEnv)
-      }
-      if (name === specialFormKeywords['recur']) {
-        return emitRecur(chunk, node, compileEnv)
-      }
-      if (name === specialFormKeywords['fn*']) {
-        return emitFnStar(chunk, node, compileEnv)
-      }
-      if (isUnsupportedVmSpecialForm(name)) {
-        return false
+      if (is.symbol(head)) {
+        const name = head.name
+        if (name === specialFormKeywords.do)
+          return emitDo(chunk, node, compileEnv)
+        if (name === specialFormKeywords.if)
+          return emitIf(chunk, node, compileEnv)
+        if (name === specialFormKeywords['let*']) {
+          return emitLetStar(chunk, node, compileEnv)
+        }
+        if (name === specialFormKeywords['loop*']) {
+          return emitLoopStar(chunk, node, compileEnv)
+        }
+        if (name === specialFormKeywords['recur']) {
+          return emitRecur(chunk, node, compileEnv)
+        }
+        if (name === specialFormKeywords['fn*']) {
+          return emitFnStar(chunk, node, compileEnv)
+        }
+        if (isUnsupportedVmSpecialForm(name)) {
+          return false
+        }
       }
 
       return emitCall(chunk, node, compileEnv)

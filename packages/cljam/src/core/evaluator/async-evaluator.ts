@@ -609,6 +609,6 @@ async function applyCallableAsync(
     return dispatchMultiMethod(fn, args, asyncCtx.syncCtx, callEnv)
   }
 
-  // keyword, map, and other callables: delegate to sync
+  // Data-structure and wrapper callables delegate to the sync IFn hub.
   return asyncCtx.syncCtx.applyCallable(fn, args, callEnv)
 }
