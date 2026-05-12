@@ -1712,9 +1712,41 @@ describe('VM collection compilation', () => {
     ['#{1 2 3}', v.set([v.number(1), v.number(2), v.number(3)])],
     ['#{1 (+ 1 2)}', v.set([v.number(1), v.number(3)])],
     ['(do [1 2] [3 4])', v.vector([v.number(3), v.number(4)])],
+    [
+      '^:fast []',
+      {
+        ...v.vector([]),
+        meta: v.map([[v.keyword(':fast'), v.boolean(true)]]),
+      },
+    ],
+    [
+      '^:fast [1 (+ 2 3)]',
+      {
+        ...v.vector([v.number(1), v.number(5)]),
+        meta: v.map([[v.keyword(':fast'), v.boolean(true)]]),
+      },
+    ],
+    [
+      '^{:a 1} {}',
+      { ...v.map([]), meta: v.map([[v.keyword(':a'), v.number(1)]]) },
+    ],
+    [
+      '^{:a 1} {:b 2}',
+      {
+        ...v.map([[v.keyword(':b'), v.number(2)]]),
+        meta: v.map([[v.keyword(':a'), v.number(1)]]),
+      },
+    ],
   ])('executes compiled collection expressions %s', (code, expected) => {
     expectVmCallCompilesTo(code, expected)
   })
+
+  it.each(['(meta ^:fast [])', '(meta ^:fast {:b 2})'])(
+    'matches interpreter metadata result for %s',
+    (code) => {
+      expectVmEqualsInterpreter(code)
+    }
+  )
 
   it.each([
     [
@@ -1768,6 +1800,48 @@ describe('VM collection compilation', () => {
         '0006 Add 2',
         '0008 MakeSet ; 2',
         '0010 Return',
+      ],
+    ],
+    [
+      '^:fast []',
+      [
+        '== vm-expression ==',
+        '0000 MakeVector ; 0',
+        '0002 WithMeta 0 ; {:fast true}',
+        '0004 Return',
+      ],
+    ],
+    [
+      '^:fast [1 (+ 2 3)]',
+      [
+        '== vm-expression ==',
+        '0000 Constant 0 ; 1',
+        '0002 Constant 1 ; 2',
+        '0004 Constant 2 ; 3',
+        '0006 Add 2',
+        '0008 MakeVector ; 2',
+        '0010 WithMeta 3 ; {:fast true}',
+        '0012 Return',
+      ],
+    ],
+    [
+      '^{:a 1} {}',
+      [
+        '== vm-expression ==',
+        '0000 MakeMap ; 0',
+        '0002 WithMeta 0 ; {:a 1}',
+        '0004 Return',
+      ],
+    ],
+    [
+      '^{:a 1} {:b 2}',
+      [
+        '== vm-expression ==',
+        '0000 Constant 0 ; :b',
+        '0002 Constant 1 ; 2',
+        '0004 MakeMap ; 1',
+        '0006 WithMeta 2 ; {:a 1}',
+        '0008 Return',
       ],
     ],
     [

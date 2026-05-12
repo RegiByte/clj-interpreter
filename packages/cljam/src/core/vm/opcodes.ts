@@ -16,6 +16,7 @@ export const Op = {
   MakeVector: 20,
   MakeMap: 21,
   MakeSet: 22,
+  WithMeta: 23,
 
   Call: 30,
   Closure: 31,

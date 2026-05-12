@@ -415,20 +415,22 @@ function emitVector(
 ): boolean {
   return emitTransaction(chunk, () => {
     const elements = node.value
+    const pos = getPos(node) ?? null
     if (elements.length === 0) {
       // Emits an empty MakeVector 0 to return an empty vector
       // could just bail here too, may do that later
-      emit(chunk, Op.MakeVector, getPos(node) ?? null)
-      emitOperand(chunk, 0, getPos(node) ?? null)
+      emit(chunk, Op.MakeVector, pos)
+      emitOperand(chunk, 0, pos)
+      emitMeta(chunk, node.meta, pos)
       return true
     }
     for (let i = 0; i < elements.length; i++) {
       if (!emitExpression(chunk, elements[i], compileEnv)) return false
     }
 
-    const pos = getPos(node) ?? null
     emit(chunk, Op.MakeVector, pos)
     emitOperand(chunk, elements.length, pos)
+    emitMeta(chunk, node.meta, pos)
     return true
   })
 }
@@ -440,9 +442,11 @@ function emitMap(
 ): boolean {
   return emitTransaction(chunk, () => {
     const entries = node.entries
+    const pos = getPos(node) ?? null
     if (entries.length === 0) {
-      emit(chunk, Op.MakeMap, getPos(node) ?? null)
-      emitOperand(chunk, 0, getPos(node) ?? null)
+      emit(chunk, Op.MakeMap, pos)
+      emitOperand(chunk, 0, pos)
+      emitMeta(chunk, node.meta, pos)
       return true
     }
 
@@ -451,11 +455,17 @@ function emitMap(
       if (!emitExpression(chunk, value, compileEnv)) return false
     }
 
-    const pos = getPos(node) ?? null
     emit(chunk, Op.MakeMap, pos)
     emitOperand(chunk, entries.length, pos)
+    emitMeta(chunk, node.meta, pos)
     return true
   })
+}
+
+function emitMeta(chunk: VmChunk, meta: CljMap | undefined, pos: Pos | null) {
+  if (!meta) return
+  emit(chunk, Op.WithMeta, pos)
+  emitOperand(chunk, addConstant(chunk, meta), pos)
 }
 
 function emitSet(

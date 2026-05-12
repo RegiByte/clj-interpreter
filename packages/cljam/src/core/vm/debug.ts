@@ -68,6 +68,16 @@ function disassembleInstruction(
       lines.push(`${formatOffset(offset)} ${name} ${operandOffset}`)
       return offset + 2
     }
+    case Op.WithMeta: {
+      const constantIndex = chunk.code[offset + 1]
+      const constant = chunk.constants[constantIndex]
+      const rendered =
+        constant === undefined ? '<missing>' : printString(constant)
+      lines.push(
+        `${formatOffset(offset)} ${name} ${constantIndex} ; ${rendered}`
+      )
+      return offset + 2
+    }
     case Op.Closure: {
       const templateIndex = chunk.code[offset + 1]
       lines.push(`${formatOffset(offset)} ${name} ${templateIndex}`)

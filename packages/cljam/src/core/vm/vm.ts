@@ -399,6 +399,43 @@ function executeInstruction(state: VmState): void {
       stack.push(v.set(elements))
       break
     }
+    case Op.WithMeta: {
+      const metaIndex = chunk.code[frame.ip++]
+      const meta = chunk.constants[metaIndex]
+      if (meta === undefined) {
+        throw new EvaluationError(
+          `Invalid metadata constant index: ${metaIndex}`,
+          { instruction, metaIndex, ip: frame.ip, stack, chunk },
+          instructionPos
+        )
+      }
+      if (!is.map(meta)) {
+        throw new EvaluationError(
+          `VM WithMeta expected metadata map, got ${printString(meta)}`,
+          { instruction, metaIndex, meta, ip: frame.ip, stack, chunk },
+          instructionPos
+        )
+      }
+      if (stack.length < 1) {
+        throw new EvaluationError(
+          'VM stack underflow on WithMeta, no value to attach metadata to',
+          { instruction, metaIndex, ip: frame.ip, stack, chunk },
+          instructionPos
+        )
+      }
+
+      const value = stack[stack.length - 1]
+      if (!is.vector(value) && !is.map(value)) {
+        throw new EvaluationError(
+          `VM WithMeta does not support ${value.kind}`,
+          { instruction, metaIndex, value, ip: frame.ip, stack, chunk },
+          instructionPos
+        )
+      }
+
+      stack[stack.length - 1] = { ...value, meta }
+      break
+    }
     case Op.Closure: {
       const templateIndex = chunk.code[frame.ip++]
       if (

@@ -137,6 +137,7 @@ function getOperandCount(opcode: number): number {
     case Op.MakeVector:
     case Op.MakeMap:
     case Op.MakeSet:
+    case Op.WithMeta:
     case Op.Call:
     case Op.Closure:
     case Op.Jump:
@@ -184,6 +185,8 @@ function getStackDelta(opcode: number, operands: number[]): number {
       return 1 - countOperand(operands[0])
     case Op.MakeMap:
       return 1 - countOperand(operands[0]) * 2
+    case Op.WithMeta:
+      return 0
     case Op.Call:
       return -countOperand(operands[0])
     case Op.Add:
