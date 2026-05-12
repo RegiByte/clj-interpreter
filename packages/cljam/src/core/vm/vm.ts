@@ -677,6 +677,8 @@ function executeInstruction(state: VmState): void {
 
       const args = stack.splice(stack.length - localCount, localCount)
 
+      closeUpvaluesForFrame(state, frame, localStart)
+
       for (let i = 0; i < localCount; i++) {
         locals[localStart + i] = args[i]
       }
@@ -719,6 +721,55 @@ function executeInstruction(state: VmState): void {
       for (let i = 0; i < argCount; i++) {
         locals[i] = args[i]
       }
+
+      frame.ip = 0
+
+      break
+    }
+    case Op.FnRecurRest: {
+      const argCount = chunk.code[frame.ip++]
+      const fixedParamCount = chunk.code[frame.ip++]
+
+      if (
+        argCount === undefined ||
+        argCount < 0 ||
+        fixedParamCount === undefined ||
+        fixedParamCount < 0 ||
+        fixedParamCount >= locals.length ||
+        argCount < fixedParamCount
+      ) {
+        throw new EvaluationError(
+          `Invalid variadic function recur operands: ${argCount}, ${fixedParamCount}`,
+          {
+            instruction,
+            argCount,
+            fixedParamCount,
+          },
+          instructionPos
+        )
+      }
+
+      if (stack.length < argCount) {
+        throw new EvaluationError(
+          'VM stack underflow on FnRecurRest, not enough arguments',
+          {
+            instruction,
+            argCount,
+            fixedParamCount,
+          },
+          instructionPos
+        )
+      }
+
+      const args = stack.splice(stack.length - argCount, argCount)
+
+      for (let i = 0; i < fixedParamCount; i++) {
+        locals[i] = args[i]
+      }
+
+      const restArgs = args.slice(fixedParamCount)
+      locals[fixedParamCount] =
+        restArgs.length > 0 ? v.list(restArgs) : v.nil()
 
       frame.ip = 0
 

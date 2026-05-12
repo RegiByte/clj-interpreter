@@ -1031,6 +1031,68 @@ describe('VM Hand written chunks', () => {
     ).toEqual(v.vector([v.number(2), v.number(1)]))
   })
 
+  it('executes FnRecurRest by packing extra arguments into the rest slot', () => {
+    const chunk = makeChunk('fn-recur-rest-test')
+
+    emit(chunk, Op.LoadLocal)
+    emitOperand(chunk, 0)
+    emit(chunk, Op.JumpIfFalsy)
+    emitOperand(chunk, 3)
+    emit(chunk, Op.LoadLocal)
+    emitOperand(chunk, 2)
+    emit(chunk, Op.Return)
+    emit(chunk, Op.True)
+    emit(chunk, Op.LoadLocal)
+    emitOperand(chunk, 1)
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, v.number(2)))
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, v.number(3)))
+    emit(chunk, Op.FnRecurRest)
+    emitOperand(chunk, 4)
+    emitOperand(chunk, 2)
+    emit(chunk, Op.Return)
+
+    expect(
+      executeChunk({
+        chunk,
+        env: makeEnv(),
+        ctx: createEvaluationContext(),
+        locals: [v.boolean(false), v.number(1), v.nil()],
+      })
+    ).toEqual(v.list([v.number(2), v.number(3)]))
+  })
+
+  it('executes FnRecurRest with nil for an empty rest', () => {
+    const chunk = makeChunk('fn-recur-rest-empty-test')
+
+    emit(chunk, Op.LoadLocal)
+    emitOperand(chunk, 0)
+    emit(chunk, Op.JumpIfFalsy)
+    emitOperand(chunk, 3)
+    emit(chunk, Op.LoadLocal)
+    emitOperand(chunk, 2)
+    emit(chunk, Op.Return)
+    emit(chunk, Op.True)
+    emit(chunk, Op.LoadLocal)
+    emitOperand(chunk, 1)
+    emit(chunk, Op.FnRecurRest)
+    emitOperand(chunk, 2)
+    emitOperand(chunk, 2)
+    emit(chunk, Op.LoadLocal)
+    emitOperand(chunk, 2)
+    emit(chunk, Op.Return)
+
+    expect(
+      executeChunk({
+        chunk,
+        env: makeEnv(),
+        ctx: createEvaluationContext(),
+        locals: [v.boolean(false), v.number(1), v.list([v.number(9)])],
+      })
+    ).toEqual(v.nil())
+  })
+
   it('executes Closure by pushing a normal bytecode-backed function', () => {
     const innerChunk = makeChunk('inner-closure-body')
     emit(innerChunk, Op.LoadLocal)
@@ -1114,6 +1176,24 @@ describe('VM Hand written chunks', () => {
       (chunk: ReturnType<typeof makeChunk>) => {
         emit(chunk, Op.FnRecur)
         emitOperand(chunk, 2)
+      },
+    ],
+    [
+      'variadic stack underflow',
+      (chunk: ReturnType<typeof makeChunk>) => {
+        emit(chunk, Op.Constant)
+        emitOperand(chunk, addConstant(chunk, v.number(1)))
+        emit(chunk, Op.FnRecurRest)
+        emitOperand(chunk, 2)
+        emitOperand(chunk, 0)
+      },
+    ],
+    [
+      'invalid variadic operands',
+      (chunk: ReturnType<typeof makeChunk>) => {
+        emit(chunk, Op.FnRecurRest)
+        emitOperand(chunk, 1)
+        emitOperand(chunk, 1)
       },
     ],
   ])('throws when FnRecur has %s', (_label, buildChunk) => {

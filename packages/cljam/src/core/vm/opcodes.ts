@@ -26,6 +26,7 @@ export const Op = {
   Loop: 42,
   Recur: 43,
   FnRecur: 44,
+  FnRecurRest: 45,
 
   Add: 70,
   Sub: 71,

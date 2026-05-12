@@ -36,6 +36,7 @@ type RecurTarget = {
 } | {
   kind: 'fn'
   paramCount: number
+  hasRestParam: boolean
 }
 
 type IntrinsicName = '+' | '-' | '*' | '/' | '<' | '>' | '<=' | '>=' | '='
@@ -58,9 +59,7 @@ type VmCompileEnv = {
   functionDepth: number
 }
 
-const capturedLoopLocal = Symbol('captured-loop-local')
-
-type UpvalueResolution = number | null | typeof capturedLoopLocal
+type UpvalueResolution = number | null
 
 const unsupportedVmSpecialForms = new Set<string>([
   specialFormKeywords['def'],
@@ -158,9 +157,6 @@ function emitExpression(
         return true
       }
       const upvalueSlot = resolveUpvalue(compileEnv, node.name)
-      if (upvalueSlot === capturedLoopLocal) {
-        return false
-      }
       if (upvalueSlot !== null) {
         emit(chunk, Op.LoadUpvalue)
         emitOperand(chunk, upvalueSlot)
@@ -617,12 +613,13 @@ function emitRecur(
     if (recurTarget === null) return false
     const args = node.value.slice(1)
 
-    const expectedArgCount =
-      recurTarget.kind === 'loop'
-        ? recurTarget.localCount
-        : recurTarget.paramCount
-
-    if (args.length !== expectedArgCount) return false
+    if (recurTarget.kind === 'loop') {
+      if (args.length !== recurTarget.localCount) return false
+    } else if (recurTarget.hasRestParam) {
+      if (args.length < recurTarget.paramCount) return false
+    } else if (args.length !== recurTarget.paramCount) {
+      return false
+    }
 
     // Emit expressions for the arguments that will be placed in the stack
     for (let i = 0; i < args.length; i++) {
@@ -634,6 +631,10 @@ function emitRecur(
       emitOperand(chunk, recurTarget.localStart)
       emitOperand(chunk, recurTarget.localCount)
       emitOperand(chunk, recurTarget.loopHeader)
+    } else if (recurTarget.hasRestParam) {
+      emit(chunk, Op.FnRecurRest)
+      emitOperand(chunk, args.length)
+      emitOperand(chunk, recurTarget.paramCount)
     } else {
       emit(chunk, Op.FnRecur)
       emitOperand(chunk, recurTarget.paramCount)
@@ -672,23 +673,25 @@ function compileVmFnBodyInternal(
     recurTarget: {
       kind: 'fn',
       paramCount: params.length,
+      hasRestParam: restParam !== null,
     },
     allowNestedFn: options.allowNestedFn,
     enclosing: options.enclosing,
     functionDepth: (options.enclosing?.functionDepth ?? -1) + 1,
   } as VmCompileEnv
 
-  if (restParam !== null) {
-    return null
-  }
-
   params.forEach((param, index) => {
     declareLocal(compileEnv, param.name, index, false)
   })
 
+  if (restParam !== null) {
+    declareLocal(compileEnv, restParam.name, params.length, false)
+  }
+
   const chunk = makeChunk('vm-fn-body')
-  chunk.localCount = params.length
-  compileEnv.nextLocalSlot = params.length
+  const paramSlotCount = params.length + (restParam === null ? 0 : 1)
+  chunk.localCount = paramSlotCount
+  compileEnv.nextLocalSlot = paramSlotCount
 
   for (let i = 0; i < body.length; i++) {
     const form = body[i]
@@ -729,18 +732,12 @@ function resolveUpvalue(
   const local = enclosing.locals.get(name)
   if (local !== undefined) {
     const localInfo = enclosing.localInfo[local]
-    if (localInfo?.loopLocal) return capturedLoopLocal
     if (localInfo !== undefined) localInfo.captured = true
     return addUpvalueDescriptor(compileEnv, { isLocal: true, index: local })
   }
 
   const enclosingUpvalue = resolveUpvalue(enclosing, name)
-  if (
-    enclosingUpvalue === null ||
-    enclosingUpvalue === capturedLoopLocal
-  ) {
-    return enclosingUpvalue
-  }
+  if (enclosingUpvalue === null) return null
 
   return addUpvalueDescriptor(compileEnv, {
     isLocal: false,

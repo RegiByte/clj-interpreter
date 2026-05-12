@@ -130,9 +130,12 @@ function expectVmFnBodyCompilesTo(
   paramNames: string[],
   bodyCode: string[],
   locals: CljValue[],
-  expected: CljValue
+  expected: CljValue,
+  options: {
+    restParam?: string | null
+  } = {}
 ) {
-  const chunk = compileFnBodyForTest(paramNames, bodyCode)
+  const chunk = compileFnBodyForTest(paramNames, bodyCode, options)
 
   expect(chunk).not.toBeNull()
   if (chunk === null) return
@@ -559,8 +562,16 @@ describe('VM function body compilation', () => {
     expect(compileFnBodyForTest([], ['(fn* local-name [] 42)'])).toBeNull()
   })
 
-  it('falls back for rest params until rest locals are explicitly modeled', () => {
-    expect(compileFnBodyForTest(['x'], ['x'], { restParam: 'more' })).toBeNull()
+  it('compiles rest params into the slot after fixed params', () => {
+    const chunk = compileFnBodyForTest(['x'], ['more'], { restParam: 'more' })
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    expect(chunk.localCount).toBe(2)
+    expect(disassembleChunk(chunk)).toBe(
+      ['== vm-fn-body ==', '0000 LoadLocal 1', '0002 Return'].join('\n')
+    )
   })
 
   it('compiles let* by allocating slots after params', () => {
@@ -906,6 +917,49 @@ describe('VM function-level recur compilation', () => {
     )
   })
 
+  it('compiles variadic function-level recur to FnRecurRest', () => {
+    const chunk = compileFnBodyForTest(
+      ['done', 'x'],
+      ['(if done more (recur true x 2 3))'],
+      { restParam: 'more' }
+    )
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    expect(disassembleChunk(chunk)).toContain('FnRecurRest 4 2 -> 0000')
+  })
+
+  it('repackages extra variadic function-level recur args into the rest slot', () => {
+    expectVmFnBodyCompilesTo(
+      ['done', 'x'],
+      ['(if done more (recur true x 2 3))'],
+      [v.boolean(false), v.number(1), v.nil()],
+      v.list([v.number(2), v.number(3)]),
+      { restParam: 'more' }
+    )
+  })
+
+  it('repackages empty variadic function-level recur rest as nil', () => {
+    expectVmFnBodyCompilesTo(
+      ['done', 'x'],
+      ['(if done more (recur true x))'],
+      [v.boolean(false), v.number(1), v.list([v.number(9)])],
+      v.nil(),
+      { restParam: 'more' }
+    )
+  })
+
+  it('evaluates variadic recur arguments before rewriting function slots', () => {
+    expectVmFnBodyCompilesTo(
+      ['done', 'a', 'b'],
+      ['(if done [a b more] (recur true b a b))'],
+      [v.boolean(false), v.number(1), v.number(2), v.nil()],
+      v.vector([v.number(2), v.number(1), v.list([v.number(2)])]),
+      { restParam: 'more' }
+    )
+  })
+
   it('pops intermediate function body forms before tail-position recur', () => {
     const chunk = compileFnBodyForTest(
       ['n'],
@@ -1198,6 +1252,18 @@ describe('VM function body integration', () => {
     )
   })
 
+  it('falls back and preserves runtime arity behavior for too few variadic recur args', () => {
+    const fn = createSession().evaluate('(fn [x & more] (recur))')
+
+    expect(fn.kind).toBe('function')
+    if (fn.kind !== 'function') return
+
+    expect(fn.arities[0].bytecodeBody).toBeUndefined()
+    expect(() => createSession().evaluate('((fn [x & more] (recur)) 1)')).toThrow(
+      'Arguments length mismatch: fn expects at least 1 arguments, but 0 were provided'
+    )
+  })
+
   it('preserves arity mismatch errors for bytecode-backed functions', () => {
     expect(() =>
       createSession().evaluate('(let* [f (fn [x] x)] (f))')
@@ -1236,13 +1302,53 @@ describe('VM function body integration', () => {
     ).toThrow('recur expects 2 arguments but got 1')
   })
 
-  it('does not store bytecodeBody for rest-param arities', () => {
-    const fn = createSession().evaluate('(fn [x & more] x)')
+  it('stores bytecodeBody for rest-param arities', () => {
+    const fn = createSession().evaluate('(fn [x & more] more)')
 
     expect(fn.kind).toBe('function')
     if (fn.kind !== 'function') return
 
-    expect(fn.arities[0].bytecodeBody).toBeUndefined()
+    expect(fn.arities[0].bytecodeBody).toBeDefined()
+    expect(fn.arities[0].bytecodeBody?.localCount).toBe(2)
+  })
+
+  it('evaluates empty and non-empty rest params through bytecodeBody', () => {
+    const s = createSession()
+
+    s.evaluate('(def resty (fn [x & more] more))')
+
+    expect(s.evaluate('(resty 1)')).toEqual(v.nil())
+    expect(s.evaluate('(resty 1 2 3)')).toEqual(
+      v.list([v.number(2), v.number(3)])
+    )
+  })
+
+  it('prefers exact bytecode arity over variadic bytecode arity', () => {
+    const s = createSession()
+    const fn = s.evaluate('(fn ([x] :exact) ([x & more] more))')
+
+    expect(fn.kind).toBe('function')
+    if (fn.kind !== 'function') return
+
+    expect(fn.arities[0].bytecodeBody).toBeDefined()
+    expect(fn.arities[1].bytecodeBody).toBeDefined()
+    expect(s.evaluate('((fn ([x] :exact) ([x & more] more)) 1)')).toEqual(
+      v.keyword(':exact')
+    )
+    expect(s.evaluate('((fn ([x] :exact) ([x & more] more)) 1 2)')).toEqual(
+      v.list([v.number(2)])
+    )
+  })
+
+  it('compiles nested rest-param fn* closures', () => {
+    const chunk = compileFnBodyForTest([], ['(fn* [x & more] more)'])
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    expect(chunk.innerFunctions).toHaveLength(1)
+    expect(chunk.innerFunctions[0].arities[0].restParam?.name).toBe('more')
+    expect(chunk.innerFunctions[0].arities[0].chunk.localCount).toBe(2)
   })
 
   it('does not store bytecodeBody when the body closes over an outer local', () => {
@@ -1257,20 +1363,41 @@ describe('VM function body integration', () => {
     )
   })
 
-  it('falls back when a nested fn* captures loop-local slots', () => {
+  it('executes a nested fn* that captures loop-local slots', () => {
     const fn = createSession().evaluate(
-      '(fn [] (loop* [i 0] (if (= i 1) ((fn* [] i)) (recur (+ i 1)))))'
+      '(fn [] (loop* [i 0] (if (= i 1) (let* [f (fn* [] i)] (f)) (recur (+ i 1)))))'
     )
 
     expect(fn.kind).toBe('function')
     if (fn.kind !== 'function') return
 
-    expect(fn.arities[0].bytecodeBody).toBeUndefined()
+    expect(fn.arities[0].bytecodeBody).toBeDefined()
     expect(
       createSession().evaluate(
-        '((fn [] (loop* [i 0] (if (= i 1) ((fn* [] i)) (recur (+ i 1))))))'
+        '((fn [] (loop* [i 0] (if (= i 1) (let* [f (fn* [] i)] (f)) (recur (+ i 1))))))'
       )
     ).toEqual(v.number(1))
+  })
+
+  it('closes captured loop locals before recur rewrites the slots', () => {
+    expect(
+      createSession().evaluate(
+        '((fn [] (let* [fns (loop* [i 0 fns []] (if (= i 3) fns (recur (+ i 1) (conj fns (fn* [] i))))) f0 (nth fns 0) f1 (nth fns 1) f2 (nth fns 2)] [(f0) (f1) (f2)])))'
+      )
+    ).toEqual(v.vector([v.number(0), v.number(1), v.number(2)]))
+  })
+
+  it('closes multiple captured loop locals together before recur', () => {
+    expect(
+      createSession().evaluate(
+        '((fn [] (let* [fns (loop* [i 0 j 10 fns []] (if (= i 2) fns (recur (+ i 1) (+ j 10) (conj fns (fn* [] [i j]))))) f0 (nth fns 0) f1 (nth fns 1)] [(f0) (f1)])))'
+      )
+    ).toEqual(
+      v.vector([
+        v.vector([v.number(0), v.number(10)]),
+        v.vector([v.number(1), v.number(20)]),
+      ])
+    )
   })
 })
 
