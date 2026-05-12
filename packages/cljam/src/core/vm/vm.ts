@@ -12,8 +12,11 @@ import type {
   EvaluationContext,
   Pos,
   StackFrame,
+  VmCallFrame,
   VmChunk,
   VmExecuteInput,
+  VmFunctionClosure,
+  VmUpvalue,
 } from '../types'
 import { resolveArity, slotValuesForArity } from '../evaluator/arity'
 import { Op, opcodeName } from './opcodes'
@@ -26,16 +29,7 @@ type VmState = {
   frames: VmCallFrame[]
   done: boolean
   result: CljValue | null
-}
-
-type VmCallFrame = {
-  chunk: VmChunk
-  env: Env
-  locals: CljValue[]
-  ip: number
-  stackBase: number
-  fnName: string | null
-  callPos: Pos | null
+  openUpvalues: VmUpvalue[]
 }
 
 type IntrinsicName = '+' | '-' | '*' | '/' | '<' | '>' | '<=' | '>=' | '='
@@ -63,10 +57,12 @@ function createVmState(input: VmExecuteInput): VmState {
         stackBase: 0,
         fnName: input.rootFnName ?? input.chunk.name ?? null,
         callPos: null,
+        closure: input.closure ?? null,
       },
     ],
     done: false,
     result: null,
+    openUpvalues: [],
   }
 }
 
@@ -115,6 +111,20 @@ function executeInstruction(state: VmState): void {
         )
       }
       stack.push(value)
+
+      break
+    }
+    case Op.LoadUpvalue: {
+      const slot = chunk.code[frame.ip++]
+      const upvalue = frame.closure?.upvalues[slot]
+      if (upvalue === undefined) {
+        throw new EvaluationError(
+          `Invalid upvalue index: ${slot}`,
+          { instruction, slot, ip: frame.ip, stack, chunk },
+          instructionPos
+        )
+      }
+      stack.push(readUpvalue(upvalue))
 
       break
     }
@@ -411,9 +421,30 @@ function executeInstruction(state: VmState): void {
       }
 
       const template = chunk.innerFunctions[templateIndex]
-      const vmClosure = {
+      const upvalues = template.upvalueDescriptors.map((descriptor) => {
+        if (descriptor.isLocal) {
+          return captureUpvalue(state, frame, descriptor.index)
+        }
+        const upvalue = frame.closure?.upvalues[descriptor.index]
+        if (upvalue === undefined) {
+          throw new EvaluationError(
+            `Invalid enclosing upvalue index: ${descriptor.index}`,
+            {
+              instruction,
+              descriptor,
+              templateIndex,
+              ip: frame.ip,
+              stack,
+              chunk,
+            },
+            instructionPos
+          )
+        }
+        return upvalue
+      })
+      const vmClosure: VmFunctionClosure = {
         env,
-        upvalues: [],
+        upvalues,
         name: template.name,
       }
       const fn = v.multiArityFunction(
@@ -720,6 +751,7 @@ function currentFrame(state: VmState): VmCallFrame {
 
 function returnFromFrame(state: VmState, value: CljValue): void {
   const frame = currentFrame(state)
+  closeUpvaluesForFrame(state, frame, 0)
   state.stack.length = frame.stackBase
   state.frames.pop()
 
@@ -789,7 +821,51 @@ function pushBytecodeFrame(
     stackBase: state.stack.length,
     fnName: fn.name ?? chunk.name ?? null,
     callPos: callPos ?? null,
+    closure: arity.vmClosure ?? null,
   })
+}
+
+function readUpvalue(upvalue: VmUpvalue): CljValue {
+  if (upvalue.frame !== null) {
+    return upvalue.frame.locals[upvalue.slot] ?? v.nil()
+  }
+  return upvalue.closedValue ?? v.nil()
+}
+
+function captureUpvalue(
+  state: VmState,
+  frame: VmCallFrame,
+  slot: number
+): VmUpvalue {
+  const existing = state.openUpvalues.find(
+    (upvalue) => upvalue.frame === frame && upvalue.slot === slot
+  )
+  if (existing !== undefined) return existing
+
+  const upvalue: VmUpvalue = {
+    frame,
+    slot,
+    closedValue: null,
+  }
+  state.openUpvalues.push(upvalue)
+  return upvalue
+}
+
+function closeUpvaluesForFrame(
+  state: VmState,
+  frame: VmCallFrame,
+  fromLocal: number
+): void {
+  const remaining: VmUpvalue[] = []
+  for (const upvalue of state.openUpvalues) {
+    if (upvalue.frame === frame && upvalue.slot >= fromLocal) {
+      upvalue.closedValue = frame.locals[upvalue.slot] ?? v.nil()
+      upvalue.frame = null
+    } else {
+      remaining.push(upvalue)
+    }
+  }
+  state.openUpvalues = remaining
 }
 
 function delegateCall(

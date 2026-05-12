@@ -34,7 +34,8 @@ function disassembleInstruction(
       return offset + 2
     }
     case Op.StoreLocal:
-    case Op.LoadLocal: {
+    case Op.LoadLocal:
+    case Op.LoadUpvalue: {
       const slot = chunk.code[offset + 1]
       lines.push(`${formatOffset(offset)} ${name} ${slot}`)
       return offset + 2

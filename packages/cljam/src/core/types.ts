@@ -482,8 +482,19 @@ export type VmUpvalueDescriptor = {
   index: number
 }
 
+export type VmCallFrame = {
+  chunk: VmChunk
+  env: Env
+  locals: CljValue[]
+  ip: number
+  stackBase: number
+  fnName: string | null
+  callPos: Pos | null
+  closure: VmFunctionClosure | null
+}
+
 export type VmUpvalue = {
-  frame: unknown | null
+  frame: VmCallFrame | null
   slot: number
   closedValue: CljValue | null
 }
@@ -523,4 +534,5 @@ export type VmExecuteInput = {
   ctx: EvaluationContext
   locals?: CljValue[]
   rootFnName?: string | null
+  closure?: VmFunctionClosure | null
 }

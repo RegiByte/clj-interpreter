@@ -17,6 +17,7 @@ import type {
   Pos,
   VmChunk,
   VmFunctionTemplate,
+  VmUpvalueDescriptor,
 } from '../types'
 import {
   addConstant,
@@ -39,13 +40,27 @@ type RecurTarget = {
 
 type IntrinsicName = '+' | '-' | '*' | '/' | '<' | '>' | '<=' | '>=' | '='
 
+type VmLocal = {
+  name: string
+  slot: number
+  captured: boolean
+  loopLocal: boolean
+}
+
 type VmCompileEnv = {
   locals: Map<string, number>
-  blockedOuterLocals: Set<string>
+  localInfo: VmLocal[]
+  upvalueDescriptors: VmUpvalueDescriptor[]
   nextLocalSlot: number
   recurTarget: RecurTarget | null
   allowNestedFn: boolean
+  enclosing: VmCompileEnv | null
+  functionDepth: number
 }
+
+const capturedLoopLocal = Symbol('captured-loop-local')
+
+type UpvalueResolution = number | null | typeof capturedLoopLocal
 
 const unsupportedVmSpecialForms = new Set<string>([
   specialFormKeywords['def'],
@@ -96,10 +111,13 @@ export function compileVm(node: CljValue): VmChunk | null {
   const chunk = makeChunk('vm-expression')
   const compileEnv = {
     locals: new Map<string, number>(),
-    blockedOuterLocals: new Set<string>(),
+    localInfo: [],
+    upvalueDescriptors: [],
     nextLocalSlot: 0,
     recurTarget: null,
     allowNestedFn: false,
+    enclosing: null,
+    functionDepth: 0,
   } as VmCompileEnv
 
   if (!emitExpression(chunk, node, compileEnv)) {
@@ -139,8 +157,14 @@ function emitExpression(
         emitOperand(chunk, slot)
         return true
       }
-      if (compileEnv.blockedOuterLocals.has(node.name)) {
+      const upvalueSlot = resolveUpvalue(compileEnv, node.name)
+      if (upvalueSlot === capturedLoopLocal) {
         return false
+      }
+      if (upvalueSlot !== null) {
+        emit(chunk, Op.LoadUpvalue)
+        emitOperand(chunk, upvalueSlot)
+        return true
       }
 
       const symbolName = node.name
@@ -226,7 +250,7 @@ function emitFnStar(
     }
 
     const templateArityChunks = []
-    const blockedOuterLocals = blockedLocalsForNestedFn(compileEnv)
+    const upvalueDescriptors: VmUpvalueDescriptor[] = []
 
     for (const arity of arities) {
       assertRecurInTailPosition(arity.body)
@@ -235,8 +259,9 @@ function emitFnStar(
         arity.restParam,
         arity.body,
         {
-          blockedOuterLocals,
           allowNestedFn: true,
+          enclosing: compileEnv,
+          upvalueDescriptors,
         }
       )
       if (arityChunk === null) return false
@@ -249,7 +274,7 @@ function emitFnStar(
 
     const template: VmFunctionTemplate = {
       arities: templateArityChunks,
-      upvalueDescriptors: [],
+      upvalueDescriptors: [...upvalueDescriptors],
     }
     const templateIndex = chunk.innerFunctions.length
     chunk.innerFunctions.push(template)
@@ -258,13 +283,6 @@ function emitFnStar(
 
     return true
   })
-}
-
-function blockedLocalsForNestedFn(compileEnv: VmCompileEnv): Set<string> {
-  return new Set([
-    ...compileEnv.blockedOuterLocals,
-    ...compileEnv.locals.keys(),
-  ])
 }
 
 function emptyEnvForVmParsing(): Env {
@@ -358,7 +376,8 @@ function emitCall(
     if (
       is.symbol(callee) &&
       !isQualifiedSymbolName(callee.name) &&
-      compileEnv.locals.get(callee.name) === undefined
+      compileEnv.locals.get(callee.name) === undefined &&
+      !hasEnclosingLocal(compileEnv, callee.name)
     ) {
       const intrinsicOpcode = intrinsicOpcodeFor(callee.name as IntrinsicName)
       if (intrinsicOpcode !== null) {
@@ -491,7 +510,7 @@ function emitLetStar(
       if (!emitExpression(chunk, expr, compileEnv)) return false
       emit(chunk, Op.StoreLocal)
       emitOperand(chunk, slot)
-      compileEnv.locals.set(name.name, slot)
+      declareLocal(compileEnv, name.name, slot, false)
       chunk.localCount = Math.max(chunk.localCount, compileEnv.nextLocalSlot)
     }
 
@@ -545,7 +564,7 @@ function emitLoopStar(
       if (!emitExpression(chunk, expr, compileEnv)) return false
       emit(chunk, Op.StoreLocal)
       emitOperand(chunk, slot)
-      compileEnv.locals.set(name.name, slot)
+      declareLocal(compileEnv, name.name, slot, true)
       chunk.localCount = Math.max(chunk.localCount, compileEnv.nextLocalSlot)
     }
 
@@ -630,8 +649,8 @@ export function compileVmFnBody(
   body: CljValue[]
 ): VmChunk | null {
   return compileVmFnBodyInternal(params, restParam, body, {
-    blockedOuterLocals: new Set<string>(),
     allowNestedFn: true,
+    enclosing: null,
   })
 }
 
@@ -640,19 +659,23 @@ function compileVmFnBodyInternal(
   restParam: CljSymbol | null,
   body: CljValue[],
   options: {
-    blockedOuterLocals: Set<string>
     allowNestedFn: boolean
+    enclosing: VmCompileEnv | null
+    upvalueDescriptors?: VmUpvalueDescriptor[]
   }
 ): VmChunk | null {
   const compileEnv = {
     locals: new Map<string, number>(),
-    blockedOuterLocals: options.blockedOuterLocals,
+    localInfo: [],
+    upvalueDescriptors: options.upvalueDescriptors ?? [],
     nextLocalSlot: 0,
     recurTarget: {
       kind: 'fn',
       paramCount: params.length,
     },
     allowNestedFn: options.allowNestedFn,
+    enclosing: options.enclosing,
+    functionDepth: (options.enclosing?.functionDepth ?? -1) + 1,
   } as VmCompileEnv
 
   if (restParam !== null) {
@@ -660,7 +683,7 @@ function compileVmFnBodyInternal(
   }
 
   params.forEach((param, index) => {
-    compileEnv.locals.set(param.name, index)
+    declareLocal(compileEnv, param.name, index, false)
   })
 
   const chunk = makeChunk('vm-fn-body')
@@ -679,4 +702,72 @@ function compileVmFnBodyInternal(
   emit(chunk, Op.Return)
 
   return chunk
+}
+
+function declareLocal(
+  compileEnv: VmCompileEnv,
+  name: string,
+  slot: number,
+  loopLocal: boolean
+): void {
+  compileEnv.locals.set(name, slot)
+  compileEnv.localInfo[slot] = {
+    name,
+    slot,
+    captured: false,
+    loopLocal,
+  }
+}
+
+function resolveUpvalue(
+  compileEnv: VmCompileEnv,
+  name: string
+): UpvalueResolution {
+  const enclosing = compileEnv.enclosing
+  if (enclosing === null) return null
+
+  const local = enclosing.locals.get(name)
+  if (local !== undefined) {
+    const localInfo = enclosing.localInfo[local]
+    if (localInfo?.loopLocal) return capturedLoopLocal
+    if (localInfo !== undefined) localInfo.captured = true
+    return addUpvalueDescriptor(compileEnv, { isLocal: true, index: local })
+  }
+
+  const enclosingUpvalue = resolveUpvalue(enclosing, name)
+  if (
+    enclosingUpvalue === null ||
+    enclosingUpvalue === capturedLoopLocal
+  ) {
+    return enclosingUpvalue
+  }
+
+  return addUpvalueDescriptor(compileEnv, {
+    isLocal: false,
+    index: enclosingUpvalue,
+  })
+}
+
+function addUpvalueDescriptor(
+  compileEnv: VmCompileEnv,
+  descriptor: VmUpvalueDescriptor
+): number {
+  const existingIndex = compileEnv.upvalueDescriptors.findIndex(
+    (existing) =>
+      existing.isLocal === descriptor.isLocal &&
+      existing.index === descriptor.index
+  )
+  if (existingIndex !== -1) return existingIndex
+
+  compileEnv.upvalueDescriptors.push(descriptor)
+  return compileEnv.upvalueDescriptors.length - 1
+}
+
+function hasEnclosingLocal(compileEnv: VmCompileEnv, name: string): boolean {
+  let current = compileEnv.enclosing
+  while (current !== null) {
+    if (current.locals.has(name)) return true
+    current = current.enclosing
+  }
+  return false
 }

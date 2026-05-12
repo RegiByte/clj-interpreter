@@ -48,6 +48,7 @@ export function applyFunctionWithContext(
         ctx,
         locals,
         rootFnName: fn.name ?? null,
+        closure: arity.vmClosure ?? null,
       })
     }
 

@@ -1065,6 +1065,40 @@ describe('VM Hand written chunks', () => {
     expect(result.arities[0].body).toEqual([])
   })
 
+  it('executes Closure with captured local upvalues', () => {
+    const innerChunk = makeChunk('capturing-closure-body')
+    emit(innerChunk, Op.LoadUpvalue)
+    emitOperand(innerChunk, 0)
+    emit(innerChunk, Op.Return)
+
+    const chunk = makeChunk('capturing-closure-test')
+    chunk.localCount = 1
+    chunk.innerFunctions.push({
+      arities: [
+        {
+          params: [],
+          restParam: null,
+          chunk: innerChunk,
+        },
+      ],
+      upvalueDescriptors: [{ isLocal: true, index: 0 }],
+    })
+    emit(chunk, Op.Closure)
+    emitOperand(chunk, 0)
+    emit(chunk, Op.Call)
+    emitOperand(chunk, 0)
+    emit(chunk, Op.Return)
+
+    expect(
+      executeChunk({
+        chunk,
+        env: makeEnv(),
+        ctx: createNoDelegateContext(),
+        locals: [v.number(42)],
+      })
+    ).toEqual(v.number(42))
+  })
+
   it.each([
     [
       'stack underflow',

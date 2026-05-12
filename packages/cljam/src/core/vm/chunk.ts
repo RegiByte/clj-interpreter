@@ -133,6 +133,7 @@ function getOperandCount(opcode: number): number {
     case Op.StoreLocal:
     case Op.LoadGlobal:
     case Op.LoadQualified:
+    case Op.LoadUpvalue:
     case Op.MakeVector:
     case Op.MakeMap:
     case Op.MakeSet:
@@ -168,6 +169,7 @@ function getStackDelta(opcode: number, operands: number[]): number {
     case Op.LoadLocal:
     case Op.LoadGlobal:
     case Op.LoadQualified:
+    case Op.LoadUpvalue:
     case Op.Closure:
       return 1
     case Op.Pop:

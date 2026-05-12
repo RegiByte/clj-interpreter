@@ -11,6 +11,7 @@ export const Op = {
   StoreLocal: 11,
   LoadGlobal: 12,
   LoadQualified: 13,
+  LoadUpvalue: 14,
 
   MakeVector: 20,
   MakeMap: 21,
