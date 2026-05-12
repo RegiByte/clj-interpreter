@@ -900,6 +900,29 @@ describe('VM function body integration', () => {
     expect(createSession().evaluate(code)).toEqual(v.number(10))
   })
 
+  it('evaluates bytecode function calls from another bytecode function', () => {
+    const s = createSession()
+    s.evaluate('(def inc1 (fn [x] (+ x 1)))')
+    s.evaluate('(def twice (fn [x] (inc1 (inc1 x))))')
+
+    expect(s.evaluate('(twice 40)')).toEqual(v.number(42))
+  })
+
+  it('keeps locals isolated across recursive bytecode frames', () => {
+    const s = createSession()
+    s.evaluate(
+      '(def triangle (fn [n acc] (if (= n 0) acc (triangle (- n 1) (+ acc n)))))'
+    )
+
+    expect(s.evaluate('(triangle 4 0)')).toEqual(v.number(10))
+  })
+
+  it('preserves arity mismatch errors for bytecode-backed functions', () => {
+    expect(() =>
+      createSession().evaluate('(let* [f (fn [x] x)] (f))')
+    ).toThrow('No matching arity for 0 arguments. Available arities: 1')
+  })
+
   it('falls back to namespace-redefined operators at intrinsic execution time', () => {
     const s = createSession()
     s.evaluate('(def + (fn [a b] 99))')

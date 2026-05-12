@@ -5,6 +5,8 @@ import { v } from '../factories'
 import { getPos } from '../positions'
 import { printString } from '../printer'
 import type {
+  Arity,
+  CljFunction,
   CljValue,
   Env,
   EvaluationContext,
@@ -12,17 +14,25 @@ import type {
   VmChunk,
   VmExecuteInput,
 } from '../types'
+import { resolveArity, slotValuesForArity } from '../evaluator/arity'
 import { Op, opcodeName } from './opcodes'
 
+const DEFAULT_VM_FRAME_LIMIT = 10000
+
 type VmState = {
-  chunk: VmChunk
-  env: Env
   ctx: EvaluationContext
   stack: CljValue[]
-  locals: CljValue[]
-  ip: number
+  frames: VmCallFrame[]
   done: boolean
   result: CljValue | null
+}
+
+type VmCallFrame = {
+  chunk: VmChunk
+  env: Env
+  locals: CljValue[]
+  ip: number
+  stackBase: number
 }
 
 type IntrinsicName = '+' | '-' | '*' | '/' | '<' | '>' | '<=' | '>=' | '='
@@ -34,12 +44,17 @@ export function executeChunk(input: VmExecuteInput): CljValue {
 
 function createVmState(input: VmExecuteInput): VmState {
   return {
-    chunk: input.chunk,
-    env: input.env,
     ctx: input.ctx,
     stack: [],
-    locals: input.locals ?? [],
-    ip: 0,
+    frames: [
+      {
+        chunk: input.chunk,
+        env: input.env,
+        locals: input.locals ?? [],
+        ip: 0,
+        stackBase: 0,
+      },
+    ],
     done: false,
     result: null,
   }
@@ -53,25 +68,26 @@ function runToCompletion(state: VmState): CljValue {
 }
 
 function executeInstruction(state: VmState): void {
-  const { chunk, env, ctx, stack, locals } = state
+  const frame = currentFrame(state)
+  const { chunk, env, locals } = frame
+  const { ctx, stack } = state
 
-  if (state.ip >= chunk.code.length) {
-    state.done = true
-    state.result = v.nil()
+  if (frame.ip >= chunk.code.length) {
+    returnFromFrame(state, v.nil())
     return
   }
 
-  const instructionOffset = state.ip
-  const instruction = chunk.code[state.ip++]
+  const instructionOffset = frame.ip
+  const instruction = chunk.code[frame.ip++]
   const instructionPos = getInstructionPos(chunk, instructionOffset)
   switch (instruction) {
     case Op.Constant: {
-      const constantIndex = chunk.code[state.ip++]
+      const constantIndex = chunk.code[frame.ip++]
       const value = chunk.constants[constantIndex]
       if (value === undefined) {
         throw new EvaluationError(
           `Invalid constant index: ${constantIndex}`,
-          { instruction, constantIndex, ip: state.ip, stack, chunk },
+          { instruction, constantIndex, ip: frame.ip, stack, chunk },
           instructionPos
         )
       }
@@ -79,12 +95,12 @@ function executeInstruction(state: VmState): void {
       break
     }
     case Op.LoadLocal: {
-      const slot = chunk.code[state.ip++]
+      const slot = chunk.code[frame.ip++]
       const value = locals[slot]
       if (value === undefined) {
         throw new EvaluationError(
           `Invalid local index: ${slot}`,
-          { instruction, slot, ip: state.ip, stack, chunk },
+          { instruction, slot, ip: frame.ip, stack, chunk },
           instructionPos
         )
       }
@@ -93,11 +109,11 @@ function executeInstruction(state: VmState): void {
       break
     }
     case Op.StoreLocal: {
-      const slot = chunk.code[state.ip++]
+      const slot = chunk.code[frame.ip++]
       if (slot === undefined || slot < 0 || slot >= locals.length) {
         throw new EvaluationError(
           `Invalid local index: ${slot}`,
-          { instruction, slot, ip: state.ip, stack, chunk },
+          { instruction, slot, ip: frame.ip, stack, chunk },
           instructionPos
         )
       }
@@ -105,7 +121,7 @@ function executeInstruction(state: VmState): void {
       if (value === undefined) {
         throw new EvaluationError(
           'VM stack underflow on StoreLocal',
-          { instruction, slot, ip: state.ip, stack, chunk },
+          { instruction, slot, ip: frame.ip, stack, chunk },
           instructionPos
         )
       }
@@ -113,7 +129,7 @@ function executeInstruction(state: VmState): void {
       break
     }
     case Op.LoadGlobal: {
-      const symbolIndex = chunk.code[state.ip++]
+      const symbolIndex = chunk.code[frame.ip++]
       const symbol = chunk.constants[symbolIndex]
       if (symbol === undefined) {
         throw new EvaluationError(
@@ -121,7 +137,7 @@ function executeInstruction(state: VmState): void {
           {
             instruction,
             constantIndex: symbolIndex,
-            ip: state.ip,
+            ip: frame.ip,
             stack,
             chunk,
           },
@@ -135,7 +151,7 @@ function executeInstruction(state: VmState): void {
             instruction,
             constantIndex: symbolIndex,
             value: symbol,
-            ip: state.ip,
+            ip: frame.ip,
             stack,
             chunk,
           },
@@ -153,7 +169,7 @@ function executeInstruction(state: VmState): void {
       break
     }
     case Op.LoadQualified: {
-      const symbolIndex = chunk.code[state.ip++]
+      const symbolIndex = chunk.code[frame.ip++]
       const symbol = chunk.constants[symbolIndex]
       if (symbol === undefined) {
         throw new EvaluationError(
@@ -161,7 +177,7 @@ function executeInstruction(state: VmState): void {
           {
             instruction,
             constantIndex: symbolIndex,
-            ip: state.ip,
+            ip: frame.ip,
             stack,
             chunk,
           },
@@ -175,7 +191,7 @@ function executeInstruction(state: VmState): void {
             instruction,
             constantIndex: symbolIndex,
             value: symbol,
-            ip: state.ip,
+            ip: frame.ip,
             stack,
             chunk,
           },
@@ -190,7 +206,7 @@ function executeInstruction(state: VmState): void {
             instruction,
             constantIndex: symbolIndex,
             value: symbol,
-            ip: state.ip,
+            ip: frame.ip,
             stack,
             chunk,
           },
@@ -210,7 +226,7 @@ function executeInstruction(state: VmState): void {
             instruction,
             constantIndex: symbolIndex,
             value: symbol,
-            ip: state.ip,
+            ip: frame.ip,
             stack,
             chunk,
           },
@@ -225,7 +241,7 @@ function executeInstruction(state: VmState): void {
             instruction,
             constantIndex: symbolIndex,
             value: symbol,
-            ip: state.ip,
+            ip: frame.ip,
             stack,
             chunk,
           },
@@ -254,7 +270,7 @@ function executeInstruction(state: VmState): void {
           'VM stack underflow on Pop',
           {
             instruction,
-            ip: state.ip,
+            ip: frame.ip,
             stack,
             chunk,
           },
@@ -264,12 +280,12 @@ function executeInstruction(state: VmState): void {
       break
     }
     case Op.MakeVector: {
-      const length = chunk.code[state.ip++]
+      const length = chunk.code[frame.ip++]
       assertCountOperand(
         length,
         'MakeVector',
         instruction,
-        state.ip,
+        frame.ip,
         stack,
         chunk,
         instructionPos
@@ -283,7 +299,7 @@ function executeInstruction(state: VmState): void {
           'VM stack underflow on MakeVector, not enough elements',
           {
             instruction,
-            ip: state.ip,
+            ip: frame.ip,
             stack,
             chunk,
           },
@@ -296,12 +312,12 @@ function executeInstruction(state: VmState): void {
       break
     }
     case Op.MakeMap: {
-      const length = chunk.code[state.ip++]
+      const length = chunk.code[frame.ip++]
       assertCountOperand(
         length,
         'MakeMap',
         instruction,
-        state.ip,
+        frame.ip,
         stack,
         chunk,
         instructionPos
@@ -315,7 +331,7 @@ function executeInstruction(state: VmState): void {
           'VM stack underflow on MakeMap, not enough entries',
           {
             instruction,
-            ip: state.ip,
+            ip: frame.ip,
             stack,
             chunk,
           },
@@ -332,12 +348,12 @@ function executeInstruction(state: VmState): void {
       break
     }
     case Op.MakeSet: {
-      const length = chunk.code[state.ip++]
+      const length = chunk.code[frame.ip++]
       assertCountOperand(
         length,
         'MakeSet',
         instruction,
-        state.ip,
+        frame.ip,
         stack,
         chunk,
         instructionPos
@@ -351,7 +367,7 @@ function executeInstruction(state: VmState): void {
           'VM stack underflow on MakeSet, not enough elements',
           {
             instruction,
-            ip: state.ip,
+            ip: frame.ip,
             stack,
             chunk,
           },
@@ -364,12 +380,12 @@ function executeInstruction(state: VmState): void {
       break
     }
     case Op.Call: {
-      const argCount = chunk.code[state.ip++]
+      const argCount = chunk.code[frame.ip++]
       assertCountOperand(
         argCount,
         'Call',
         instruction,
-        state.ip,
+        frame.ip,
         stack,
         chunk,
         instructionPos
@@ -380,7 +396,7 @@ function executeInstruction(state: VmState): void {
           'VM stack underflow on Call, not enough arguments',
           {
             instruction,
-            ip: state.ip,
+            ip: frame.ip,
             stack,
             chunk,
           },
@@ -397,7 +413,7 @@ function executeInstruction(state: VmState): void {
           'VM stack underflow on Call, callable missing',
           {
             instruction,
-            ip: state.ip,
+            ip: frame.ip,
             stack,
             chunk,
           },
@@ -411,7 +427,7 @@ function executeInstruction(state: VmState): void {
           `${name} is not callable`,
           {
             instruction,
-            ip: state.ip,
+            ip: frame.ip,
             stack,
             chunk,
           },
@@ -420,6 +436,9 @@ function executeInstruction(state: VmState): void {
       }
 
       try {
+        if (tryPushBytecodeFrame(state, callable, args, instructionPos)) {
+          break
+        }
         const result = ctx.applyCallable(callable, args, env)
         stack.push(result)
       } catch (e) {
@@ -457,29 +476,28 @@ function executeInstruction(state: VmState): void {
       break
     case Op.Return: {
       const value = stack.pop()
-      state.done = true
-      state.result = value ?? v.nil()
+      returnFromFrame(state, value ?? v.nil())
       break
     }
     case Op.Jump: {
-      const offset = chunk.code[state.ip++]
+      const offset = chunk.code[frame.ip++]
       assertJumpOffset(
         offset,
         instruction,
-        state.ip,
+        frame.ip,
         stack,
         chunk,
         instructionPos
       )
-      state.ip += offset
+      frame.ip += offset
       break
     }
     case Op.JumpIfFalsy: {
-      const offset = chunk.code[state.ip++]
+      const offset = chunk.code[frame.ip++]
       assertJumpOffset(
         offset,
         instruction,
-        state.ip,
+        frame.ip,
         stack,
         chunk,
         instructionPos
@@ -491,7 +509,7 @@ function executeInstruction(state: VmState): void {
           'VM stack underflow on JumpIfFalsy',
           {
             instruction,
-            ip: state.ip,
+            ip: frame.ip,
             stack,
             chunk,
           },
@@ -499,15 +517,15 @@ function executeInstruction(state: VmState): void {
         )
       }
       if (is.falsy(condition)) {
-        state.ip += offset
+        frame.ip += offset
       }
 
       break
     }
     case Op.Recur: {
-      const localStart = chunk.code[state.ip++]
-      const localCount = chunk.code[state.ip++]
-      const loopHeader = chunk.code[state.ip++]
+      const localStart = chunk.code[frame.ip++]
+      const localCount = chunk.code[frame.ip++]
+      const loopHeader = chunk.code[frame.ip++]
 
       if (
         localStart === undefined ||
@@ -578,7 +596,7 @@ function executeInstruction(state: VmState): void {
         locals[localStart + i] = args[i]
       }
 
-      state.ip = loopHeader // jump to loop header!!
+      frame.ip = loopHeader // jump to loop header!!
 
       break
     }
@@ -587,7 +605,7 @@ function executeInstruction(state: VmState): void {
         `Unknown VM opcode: ${opcodeName(instruction)}`,
         {
           instruction,
-          ip: state.ip,
+          ip: frame.ip,
           stack,
           chunk,
         },
@@ -597,20 +615,103 @@ function executeInstruction(state: VmState): void {
   }
 }
 
+function currentFrame(state: VmState): VmCallFrame {
+  const frame = state.frames[state.frames.length - 1]
+  if (frame === undefined) {
+    throw new EvaluationError('VM has no active call frame', {
+      stack: state.stack,
+    })
+  }
+  return frame
+}
+
+function returnFromFrame(state: VmState, value: CljValue): void {
+  const frame = currentFrame(state)
+  state.stack.length = frame.stackBase
+  state.frames.pop()
+
+  if (state.frames.length === 0) {
+    state.done = true
+    state.result = value
+    return
+  }
+
+  state.stack.push(value)
+}
+
+function tryPushBytecodeFrame(
+  state: VmState,
+  callable: CljValue,
+  args: CljValue[],
+  callPos: Pos | undefined
+): boolean {
+  if (!is.function(callable)) return false
+
+  let arity: Arity
+  try {
+    arity = resolveArity(callable.arities, args.length)
+  } catch {
+    return false
+  }
+
+  if (arity.bytecodeBody === undefined) return false
+
+  pushBytecodeFrame(state, callable, arity, args, callPos)
+  return true
+}
+
+function pushBytecodeFrame(
+  state: VmState,
+  fn: CljFunction,
+  arity: Arity,
+  args: CljValue[],
+  callPos: Pos | undefined
+): void {
+  const chunk = arity.bytecodeBody
+  if (chunk === undefined) {
+    throw new EvaluationError(
+      'Internal VM error: cannot push frame without bytecode body',
+      { fn, arity },
+      callPos
+    )
+  }
+  if (state.frames.length >= DEFAULT_VM_FRAME_LIMIT) {
+    throw new EvaluationError(
+      `Stack overflow: exceeded ${DEFAULT_VM_FRAME_LIMIT} VM call frames. Use loop/recur for unbounded iteration.`,
+      { fn, arity, frameLimit: DEFAULT_VM_FRAME_LIMIT },
+      callPos
+    )
+  }
+
+  const locals = [...slotValuesForArity(arity, args)]
+  while (locals.length < chunk.localCount) {
+    locals.push(v.nil())
+  }
+
+  state.frames.push({
+    chunk,
+    env: fn.env,
+    locals,
+    ip: 0,
+    stackBase: state.stack.length,
+  })
+}
+
 function executeIntrinsic(
   state: VmState,
   name: IntrinsicName,
   instruction: number,
   instructionPos: Pos | undefined
 ): void {
-  const argCount = state.chunk.code[state.ip++]
+  const frame = currentFrame(state)
+  const argCount = frame.chunk.code[frame.ip++]
   assertCountOperand(
     argCount,
     opcodeName(instruction),
     instruction,
-    state.ip,
+    frame.ip,
     state.stack,
-    state.chunk,
+    frame.chunk,
     instructionPos
   )
 
@@ -619,9 +720,9 @@ function executeIntrinsic(
       `VM stack underflow on ${opcodeName(instruction)}, not enough arguments`,
       {
         instruction,
-        ip: state.ip,
+        ip: frame.ip,
         stack: state.stack,
-        chunk: state.chunk,
+        chunk: frame.chunk,
       },
       instructionPos
     )
@@ -630,7 +731,7 @@ function executeIntrinsic(
   const args = state.stack.splice(state.stack.length - argCount, argCount)
 
   try {
-    const visibleOp = lookup(name, state.env)
+    const visibleOp = lookup(name, frame.env)
     if (isCurrentCoreIntrinsicRoot(name, visibleOp, state.ctx)) {
       state.stack.push(applyIntrinsic(name, args))
       return
@@ -640,14 +741,14 @@ function executeIntrinsic(
         `${name} is not callable`,
         {
           instruction,
-          ip: state.ip,
+          ip: frame.ip,
           stack: state.stack,
-          chunk: state.chunk,
+          chunk: frame.chunk,
         },
         instructionPos
       )
     }
-    state.stack.push(state.ctx.applyCallable(visibleOp, args, state.env))
+    state.stack.push(state.ctx.applyCallable(visibleOp, args, frame.env))
   } catch (e) {
     hydrateVmErrorPos(e, instructionPos)
     throw e

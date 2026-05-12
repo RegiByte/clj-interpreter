@@ -37,7 +37,7 @@ function assertJsEqual(label, actual, expected) {
 }
 
 console.log(`cljam performance baseline (${RUNS} runs each)`)
-console.log(`Bun ${Bun.version} / ${process.platform} ${process.arch}`)
+console.log(`${process.platform} ${process.arch}`)
 console.log()
 
 const results = []

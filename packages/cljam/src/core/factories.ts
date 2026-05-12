@@ -155,11 +155,13 @@ export const cljDelay = (thunk: () => CljValue): CljDelay => ({
   kind: 'delay',
   thunk,
   realized: false,
+  value: undefined,
 })
 export const cljLazySeq = (thunk: () => CljValue): CljLazySeq => ({
   kind: 'lazy-seq',
   thunk,
   realized: false,
+  value: undefined,
 })
 export const cljCons = (head: CljValue, tail: CljValue): CljCons => ({
   kind: 'cons',

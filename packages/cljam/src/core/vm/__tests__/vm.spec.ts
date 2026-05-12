@@ -13,8 +13,41 @@ import { executeChunk } from '../vm'
 import { define, internVar, makeEnv, makeNamespace } from '../../env'
 import { createEvaluationContext } from '../../evaluator'
 import { EvaluationError } from '../../errors'
-import type { CljValue, Pos } from '../../types'
+import type {
+  CljFunction,
+  CljValue,
+  Env,
+  EvaluationContext,
+  Pos,
+} from '../../types'
 import { disassembleChunk } from '../debug'
+
+function makeBytecodeFunction(
+  chunk: ReturnType<typeof makeChunk>,
+  params: string[],
+  env: Env
+): CljFunction {
+  chunk.localCount = Math.max(chunk.localCount, params.length)
+  return v.multiArityFunction(
+    [
+      {
+        params: params.map((name) => v.symbol(name)),
+        restParam: null,
+        body: [],
+        bytecodeBody: chunk,
+      },
+    ],
+    env
+  )
+}
+
+function createNoDelegateContext(): EvaluationContext {
+  const ctx = createEvaluationContext()
+  ctx.applyCallable = () => {
+    throw new Error('ctx.applyCallable should not run for bytecode calls')
+  }
+  return ctx
+}
 
 function makeIntrinsicRuntime(name: string) {
   const op = v.nativeFn(name, () => v.nil())
@@ -943,6 +976,104 @@ describe('VM Hand written chunks', () => {
     expect(
       executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
     ).toEqual(v.string('1:2:3'))
+  })
+
+  it('pushes a VM frame for bytecode-backed function calls', () => {
+    const env = makeEnv()
+    const calleeChunk = makeChunk('identity-body')
+    emit(calleeChunk, Op.LoadLocal)
+    emitOperand(calleeChunk, 0)
+    emit(calleeChunk, Op.Return)
+    const fn = makeBytecodeFunction(calleeChunk, ['x'], env)
+
+    const chunk = makeChunk('call-bytecode-function-test')
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, fn))
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, v.number(42)))
+    emit(chunk, Op.Call)
+    emitOperand(chunk, 1)
+    emit(chunk, Op.Return)
+
+    expect(
+      executeChunk({ chunk, env, ctx: createNoDelegateContext() })
+    ).toEqual(v.number(42))
+  })
+
+  it('truncates the callee stack region before returning to the caller', () => {
+    const env = makeEnv()
+    const calleeChunk = makeChunk('stacky-callee-body')
+    emit(calleeChunk, Op.Constant)
+    emitOperand(calleeChunk, addConstant(calleeChunk, v.number(999)))
+    emit(calleeChunk, Op.LoadLocal)
+    emitOperand(calleeChunk, 0)
+    emit(calleeChunk, Op.Return)
+    const fn = makeBytecodeFunction(calleeChunk, ['x'], env)
+
+    const chunk = makeChunk('callee-stack-truncation-test')
+    const assertArg = v.nativeFn('assert-arg', (arg: CljValue) => arg)
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, assertArg))
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, fn))
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, v.number(42)))
+    emit(chunk, Op.Call)
+    emitOperand(chunk, 1)
+    emit(chunk, Op.Call)
+    emitOperand(chunk, 1)
+    emit(chunk, Op.Return)
+
+    expect(
+      executeChunk({ chunk, env, ctx: createEvaluationContext() })
+    ).toEqual(v.number(42))
+  })
+
+  it('keeps delegating non-bytecode callables through ctx.applyCallable', () => {
+    const chunk = makeChunk('delegated-call-test')
+    const nativeFn = v.nativeFn('forty-two', () => v.nil())
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, nativeFn))
+    emit(chunk, Op.Call)
+    emitOperand(chunk, 0)
+    emit(chunk, Op.Return)
+
+    const ctx = createEvaluationContext()
+    let delegated = false
+    ctx.applyCallable = (callable, args) => {
+      delegated = true
+      expect(callable).toBe(nativeFn)
+      expect(args).toEqual([])
+      return v.number(42)
+    }
+
+    expect(executeChunk({ chunk, env: makeEnv(), ctx })).toEqual(v.number(42))
+    expect(delegated).toBe(true)
+  })
+
+  it('uses a VM frame limit for runaway bytecode recursion', () => {
+    const env = makeEnv()
+    const recursiveChunk = makeChunk('recursive-body')
+    emit(recursiveChunk, Op.LoadGlobal)
+    emitOperand(recursiveChunk, addConstant(recursiveChunk, v.symbol('again')))
+    emit(recursiveChunk, Op.Call)
+    emitOperand(recursiveChunk, 0)
+    emit(recursiveChunk, Op.Return)
+    const fn = makeBytecodeFunction(recursiveChunk, [], env)
+    define('again', fn, env)
+
+    const chunk = makeChunk('recursive-call-test')
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, fn))
+    emit(chunk, Op.Call)
+    emitOperand(chunk, 0)
+    emit(chunk, Op.Return)
+
+    expect(() =>
+      executeChunk({ chunk, env, ctx: createNoDelegateContext() })
+    ).toThrow(
+      'Stack overflow: exceeded 10000 VM call frames. Use loop/recur for unbounded iteration.'
+    )
   })
 
   it.each([
