@@ -16,6 +16,7 @@ import type {
   VmChunk,
   VmExecuteInput,
   VmFunctionClosure,
+  VmTryRecord,
   VmUpvalue,
 } from '../types'
 import {
@@ -57,6 +58,11 @@ export function executeChunk(input: VmExecuteInput): CljValue {
 }
 
 function createVmState(input: VmExecuteInput): VmState {
+  const locals = [...(input.locals ?? [])]
+  while (locals.length < input.chunk.localCount) {
+    locals.push(v.nil())
+  }
+
   return {
     ctx: input.ctx,
     stack: [],
@@ -64,7 +70,7 @@ function createVmState(input: VmExecuteInput): VmState {
       {
         chunk: input.chunk,
         env: input.env,
-        locals: input.locals ?? [],
+        locals,
         ip: 0,
         stackBase: 0,
         fnName: input.rootFnName ?? input.chunk.name ?? null,
@@ -642,6 +648,49 @@ function executeInstruction(state: VmState): void {
       }
       break
     }
+    case Op.PushTry: {
+      const catchTableIndex = chunk.code[frame.ip++]
+      if (
+        catchTableIndex === undefined ||
+        !Number.isInteger(catchTableIndex) ||
+        catchTableIndex < 0 ||
+        catchTableIndex >= chunk.catchTables.length
+      ) {
+        throw new EvaluationError(
+          `Invalid catch table index: ${catchTableIndex}`,
+          {
+            instruction,
+            catchTableIndex,
+            ip: frame.ip,
+            stack,
+            chunk,
+          },
+          instructionPos
+        )
+      }
+      frame.unwindStack.push({
+        kind: 'try',
+        stackDepth: stack.length,
+        catchTableIndex,
+      })
+      break
+    }
+    case Op.PopTry: {
+      const record = frame.unwindStack.pop()
+      if (record === undefined || record.kind !== 'try') {
+        throw new EvaluationError(
+          'VM unwind stack underflow on PopTry',
+          {
+            instruction,
+            ip: frame.ip,
+            stack,
+            chunk,
+          },
+          instructionPos
+        )
+      }
+      break
+    }
     case Op.Jump: {
       const offset = chunk.code[frame.ip++]
       assertJumpOffset(
@@ -917,12 +966,71 @@ function drainAbruptCompletion(state: VmState): void {
       return
     }
 
-    const _record = frame.unwindStack.pop()
-    if (_record === undefined) {
+    const record = frame.unwindStack.pop()
+    if (record === undefined) {
       abortFrame(state, frame)
       continue
     }
+
+    state.stack.length = record.stackDepth
+
+    if (record.kind === 'try' && tryEnterCatch(state, frame, record)) {
+      return
+    }
   }
+}
+
+function tryEnterCatch(
+  state: VmState,
+  frame: VmCallFrame,
+  record: VmTryRecord
+): boolean {
+  const abrupt = state.pendingAbrupt
+  if (abrupt === null || !abrupt.catchable) return false
+
+  const catchTable = frame.chunk.catchTables[record.catchTableIndex]
+  if (catchTable === undefined) {
+    throw new EvaluationError('VM catch table missing during unwind', {
+      catchTableIndex: record.catchTableIndex,
+      chunk: frame.chunk,
+    })
+  }
+
+  for (const clause of catchTable.clauses) {
+    if (!matchesCatchClause(clause.discriminator, abrupt.thrown)) continue
+
+    if (clause.bindingSlot < 0 || clause.bindingSlot >= frame.locals.length) {
+      throw new EvaluationError('Invalid catch binding local slot', {
+        bindingSlot: clause.bindingSlot,
+        chunk: frame.chunk,
+      })
+    }
+    if (clause.bodyIp < 0 || clause.bodyIp >= frame.chunk.code.length) {
+      throw new EvaluationError('Invalid catch body instruction pointer', {
+        bodyIp: clause.bodyIp,
+        chunk: frame.chunk,
+      })
+    }
+
+    frame.locals[clause.bindingSlot] = abrupt.thrown
+    state.pendingAbrupt = null
+    frame.ip = clause.bodyIp
+    return true
+  }
+
+  return false
+}
+
+function matchesCatchClause(discriminator: CljValue, thrown: CljValue): boolean {
+  if (!is.keyword(discriminator)) return false
+  if (discriminator.name === ':default') return true
+  if (!is.map(thrown)) return false
+
+  const typeEntry = thrown.entries.find(
+    ([key]) => is.keyword(key) && key.name === ':type'
+  )
+  if (typeEntry === undefined) return false
+  return is.equal(typeEntry[1], discriminator)
 }
 
 function abortFrame(state: VmState, frame: VmCallFrame): void {

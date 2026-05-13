@@ -83,6 +83,11 @@ function disassembleInstruction(
       lines.push(`${formatOffset(offset)} ${name} ${templateIndex}`)
       return offset + 2
     }
+    case Op.PushTry: {
+      const catchTableIndex = chunk.code[offset + 1]
+      lines.push(`${formatOffset(offset)} ${name} ${catchTableIndex}`)
+      return offset + 2
+    }
     case Op.Add:
     case Op.Sub:
     case Op.Mul:
@@ -101,7 +106,8 @@ function disassembleInstruction(
     case Op.False:
     case Op.Pop:
     case Op.Return:
-    case Op.Throw: {
+    case Op.Throw:
+    case Op.PopTry: {
       lines.push(`${formatOffset(offset)} ${name}`)
       return offset + 1
     }

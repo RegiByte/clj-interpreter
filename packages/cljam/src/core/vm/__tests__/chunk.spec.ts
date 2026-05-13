@@ -139,6 +139,28 @@ describe('VM chunks', () => {
     expect(chunk.positions).toEqual([])
   })
 
+  it('restores catch tables when rolling back chunks', () => {
+    const chunk = makeChunk('catch-table-rollback-test')
+    const snapshot = snapshotChunk(chunk)
+
+    chunk.catchTables.push({
+      clauses: [
+        {
+          discriminator: v.keyword(':default'),
+          bindingSlot: 0,
+          bodyIp: 10,
+        },
+      ],
+    })
+    emit(chunk, Op.PushTry)
+    emitOperand(chunk, 0)
+
+    rollbackChunk(chunk, snapshot)
+
+    expect(chunk.catchTables).toEqual([])
+    expect(chunk.code).toEqual([])
+  })
+
   it('restores inner function templates when rolling back chunks', () => {
     const chunk = makeChunk('inner-function-rollback-test')
     const snapshot = snapshotChunk(chunk)

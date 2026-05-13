@@ -29,6 +29,8 @@ export const Op = {
   FnRecur: 44,
   FnRecurRest: 45,
   Throw: 46,
+  PushTry: 47,
+  PopTry: 48,
 
   Add: 70,
   Sub: 71,

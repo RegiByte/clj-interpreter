@@ -6,6 +6,7 @@ type ChunkSnapshot = {
   constantsLength: number
   positionsLength: number
   innerFunctionsLength: number
+  catchTablesLength: number
   maxStack: number
   stackDepth: number
   pendingInstruction: PendingInstruction | null
@@ -28,6 +29,7 @@ export function makeChunk(name?: string): VmChunk {
     maxStack: 0,
     localCount: 0,
     innerFunctions: [],
+    catchTables: [],
   }
   stackDepthByChunk.set(chunk, 0)
   return chunk
@@ -65,6 +67,7 @@ export function snapshotChunk(chunk: VmChunk): ChunkSnapshot {
     constantsLength: chunk.constants.length,
     positionsLength: chunk.positions.length,
     innerFunctionsLength: chunk.innerFunctions.length,
+    catchTablesLength: chunk.catchTables.length,
     maxStack: chunk.maxStack,
     stackDepth: getStackDepth(chunk),
     pendingInstruction:
@@ -79,6 +82,7 @@ export function rollbackChunk(chunk: VmChunk, snapshot: ChunkSnapshot): void {
   chunk.constants.length = snapshot.constantsLength
   chunk.positions.length = snapshot.positionsLength
   chunk.innerFunctions.length = snapshot.innerFunctionsLength
+  chunk.catchTables.length = snapshot.catchTablesLength
   chunk.maxStack = snapshot.maxStack
   stackDepthByChunk.set(chunk, snapshot.stackDepth)
   if (snapshot.pendingInstruction === null) {
@@ -140,6 +144,7 @@ function getOperandCount(opcode: number): number {
     case Op.WithMeta:
     case Op.Call:
     case Op.Closure:
+    case Op.PushTry:
     case Op.Jump:
     case Op.JumpIfFalsy:
     case Op.Add:
@@ -181,6 +186,9 @@ function getStackDelta(opcode: number, operands: number[]): number {
     case Op.JumpIfFalsy:
     case Op.Throw:
       return -1
+    case Op.PushTry:
+    case Op.PopTry:
+      return 0
     case Op.MakeVector:
     case Op.MakeSet:
       return 1 - countOperand(operands[0])

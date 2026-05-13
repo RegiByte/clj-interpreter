@@ -1,5 +1,6 @@
 import { is } from '../assertions'
 import { parseArities } from '../evaluator/arity'
+import { parseTryStructure } from '../evaluator/form-parsers'
 import { assertRecurInTailPosition } from '../evaluator/recur-check'
 import { v } from '../factories'
 import { specialFormKeywords, valueKeywords } from '../keywords'
@@ -7,6 +8,7 @@ import { getPos } from '../positions'
 import type {
   Arity,
   CljList,
+  CljKeyword,
   CljMap,
   CljSet,
   CljSymbol,
@@ -15,6 +17,7 @@ import type {
   CljVector,
   OpCode,
   Pos,
+  VmCatchClause,
   VmChunk,
   VmFunctionTemplate,
   VmUpvalueDescriptor,
@@ -63,7 +66,6 @@ type UpvalueResolution = number | null
 
 const unsupportedVmSpecialForms = new Set<string>([
   specialFormKeywords['def'],
-  specialFormKeywords['try'],
   specialFormKeywords['binding'],
   specialFormKeywords['set!'],
   specialFormKeywords['quote'],
@@ -205,6 +207,9 @@ function emitExpression(
         if (name === specialFormKeywords['fn*']) {
           return emitFnStar(chunk, node, compileEnv)
         }
+        if (name === specialFormKeywords['try']) {
+          return emitTryCatch(chunk, node, compileEnv)
+        }
         if (name === 'throw' && canEmitDirectThrow(node, compileEnv)) {
           return emitThrow(chunk, node, compileEnv)
         }
@@ -227,6 +232,92 @@ function emitExpression(
     default:
       return false
   }
+}
+
+function emitTryCatch(
+  chunk: VmChunk,
+  node: CljList,
+  compileEnv: VmCompileEnv
+): boolean {
+  return emitTransaction(chunk, () => {
+    let tryStructure: ReturnType<typeof parseTryStructure>
+    try {
+      tryStructure = parseTryStructure(node, emptyEnvForVmParsing())
+    } catch {
+      return false
+    }
+
+    const { bodyForms, catchClauses, finallyForms } = tryStructure
+    if (finallyForms !== null || catchClauses.length === 0) return false
+    if (catchClauses.some((clause) => !is.keyword(clause.discriminator))) {
+      return false
+    }
+
+    const tableIndex = chunk.catchTables.length
+    const tableClauses: VmCatchClause[] = catchClauses.map((clause) => ({
+      discriminator: clause.discriminator as CljKeyword,
+      bindingSlot: -1,
+      bodyIp: -1,
+    }))
+    chunk.catchTables.push({ clauses: tableClauses })
+
+    const pos = getPos(node) ?? null
+    emit(chunk, Op.PushTry, pos)
+    emitOperand(chunk, tableIndex, pos)
+
+    if (!emitBodyForms(chunk, bodyForms, compileEnv, pos)) return false
+
+    emit(chunk, Op.PopTry, pos)
+    const normalEndJump = emitJump(chunk, Op.Jump, pos)
+    const catchEndJumps: number[] = []
+
+    for (let i = 0; i < catchClauses.length; i++) {
+      const clause = catchClauses[i]
+      const bindingSlot = compileEnv.nextLocalSlot++
+      const previousSlot = compileEnv.locals.get(clause.binding)
+      tableClauses[i].bindingSlot = bindingSlot
+      tableClauses[i].bodyIp = chunk.code.length
+      declareLocal(compileEnv, clause.binding, bindingSlot, false)
+      chunk.localCount = Math.max(chunk.localCount, compileEnv.nextLocalSlot)
+
+      const bodyCompiled = emitBodyForms(chunk, clause.body, compileEnv, pos)
+
+      restoreLocal(compileEnv, clause.binding, previousSlot)
+      if (!bodyCompiled) return false
+
+      if (i < catchClauses.length - 1) {
+        catchEndJumps.push(emitJump(chunk, Op.Jump, pos))
+      }
+    }
+
+    patchJump(chunk, normalEndJump)
+    for (const jump of catchEndJumps) {
+      patchJump(chunk, jump)
+    }
+
+    return true
+  })
+}
+
+function emitBodyForms(
+  chunk: VmChunk,
+  body: CljValue[],
+  compileEnv: VmCompileEnv,
+  pos: Pos | null
+): boolean {
+  if (body.length === 0) {
+    emit(chunk, Op.Nil, pos)
+    return true
+  }
+
+  for (let i = 0; i < body.length; i++) {
+    if (!emitExpression(chunk, body[i], compileEnv)) return false
+    if (i < body.length - 1) {
+      emit(chunk, Op.Pop, pos)
+    }
+  }
+
+  return true
 }
 
 function emitFnStar(
@@ -761,6 +852,18 @@ function declareLocal(
     slot,
     captured: false,
     loopLocal,
+  }
+}
+
+function restoreLocal(
+  compileEnv: VmCompileEnv,
+  name: string,
+  previousSlot: number | undefined
+): void {
+  if (previousSlot === undefined) {
+    compileEnv.locals.delete(name)
+  } else {
+    compileEnv.locals.set(name, previousSlot)
   }
 }
 

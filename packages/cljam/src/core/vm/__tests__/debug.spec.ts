@@ -92,6 +92,24 @@ describe('VM disassembler', () => {
     )
   })
 
+  it('disassembles try handler opcodes', () => {
+    const chunk = makeChunk('try-disassemble-test')
+
+    emit(chunk, Op.PushTry)
+    emitOperand(chunk, 0)
+    emit(chunk, Op.PopTry)
+    emit(chunk, Op.Return)
+
+    expect(disassembleChunk(chunk)).toBe(
+      [
+        '== try-disassemble-test ==',
+        '0000 PushTry 0',
+        '0002 PopTry',
+        '0003 Return',
+      ].join('\n')
+    )
+  })
+
   it('disassembles WithMeta with its metadata constant', () => {
     const chunk = makeChunk('with-meta-disassemble-test')
     const meta = addConstant(

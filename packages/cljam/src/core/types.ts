@@ -494,7 +494,13 @@ export type VmCallFrame = {
   unwindStack: VmUnwindRecord[]
 }
 
-export type VmUnwindRecord = never
+export type VmTryRecord = {
+  kind: 'try'
+  stackDepth: number
+  catchTableIndex: number
+}
+
+export type VmUnwindRecord = VmTryRecord
 
 export type VmUpvalue = {
   frame: VmCallFrame | null
@@ -521,6 +527,16 @@ export type VmFunctionTemplate = {
   meta?: CljMap
 }
 
+export type VmCatchClause = {
+  discriminator: CljKeyword
+  bindingSlot: number
+  bodyIp: number
+}
+
+export type VmCatchTable = {
+  clauses: VmCatchClause[]
+}
+
 export type VmChunk = {
   code: number[]
   constants: CljValue[]
@@ -529,6 +545,7 @@ export type VmChunk = {
   maxStack: number
   localCount: number
   innerFunctions: VmFunctionTemplate[]
+  catchTables: VmCatchTable[]
 }
 
 export type VmExecuteInput = {
