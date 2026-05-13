@@ -516,7 +516,16 @@ export type VmFinallyContinuationRecord = {
   pendingAbrupt: VmAbrupt | null
 }
 
-export type VmUnwindRecord = VmTryRecord | VmFinallyContinuationRecord
+export type VmBindingFrameRecord = {
+  kind: 'binding-frame'
+  stackDepth: number
+  boundVars: CljVar[]
+}
+
+export type VmUnwindRecord =
+  | VmTryRecord
+  | VmFinallyContinuationRecord
+  | VmBindingFrameRecord
 
 export type VmUpvalue = {
   frame: VmCallFrame | null

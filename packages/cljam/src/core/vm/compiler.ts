@@ -64,9 +64,39 @@ type VmCompileEnv = {
 
 type UpvalueResolution = number | null
 
+type VmTryCatchClause = {
+  discriminator: CljKeyword
+  binding: string
+  body: CljValue[]
+}
+
+type VmTryStructure = {
+  bodyForms: CljValue[]
+  catchClauses: VmTryCatchClause[]
+  finallyForms: CljValue[] | null
+  hasFinally: boolean
+}
+
+type PushTryOperands = {
+  finallyOperand: number
+  afterOperand: number
+}
+
+type TryEmitState = {
+  hasFinally: boolean
+  resultSlot: number
+  tableIndex: number
+  tableClauses: VmCatchClause[]
+  finallyOnlyTableIndex: number
+  finallyOperands: number[]
+  afterOperands: number[]
+  finallyEntryJumps: number[]
+  catchEndJumps: number[]
+  normalEndJump: number
+}
+
 const unsupportedVmSpecialForms = new Set<string>([
   specialFormKeywords['def'],
-  specialFormKeywords['binding'],
   specialFormKeywords['set!'],
   specialFormKeywords['quote'],
   specialFormKeywords['var'],
@@ -201,6 +231,9 @@ function emitExpression(
         if (name === specialFormKeywords['loop*']) {
           return emitLoopStar(chunk, node, compileEnv)
         }
+        if (name === specialFormKeywords['binding']) {
+          return emitBinding(chunk, node, compileEnv)
+        }
         if (name === specialFormKeywords['recur']) {
           return emitRecur(chunk, node, compileEnv)
         }
@@ -240,128 +273,230 @@ function emitTry(
   compileEnv: VmCompileEnv
 ): boolean {
   return emitTransaction(chunk, () => {
-    let tryStructure: ReturnType<typeof parseTryStructure>
-    try {
-      tryStructure = parseTryStructure(node, emptyEnvForVmParsing())
-    } catch {
-      return false
-    }
+    const tryStructure = parseVmTryStructure(node)
+    if (tryStructure === null) return false
 
-    const { bodyForms, catchClauses, finallyForms } = tryStructure
-    const hasFinally = finallyForms !== null
-    if (!hasFinally && catchClauses.length === 0) return false
-    if (catchClauses.some((clause) => !is.keyword(clause.discriminator))) {
-      return false
-    }
-
-    const resultSlot = hasFinally ? compileEnv.nextLocalSlot++ : -1
-    if (hasFinally) {
-      chunk.localCount = Math.max(chunk.localCount, compileEnv.nextLocalSlot)
-    }
-
-    const tableIndex = chunk.catchTables.length
-    const tableClauses: VmCatchClause[] = catchClauses.map((clause) => ({
-      discriminator: clause.discriminator as CljKeyword,
-      bindingSlot: -1,
-      bodyIp: -1,
-    }))
-    chunk.catchTables.push({ clauses: tableClauses })
-    const finallyOnlyTableIndex = hasFinally ? chunk.catchTables.length : -1
-    if (hasFinally) {
-      chunk.catchTables.push({ clauses: [] })
-    }
-
+    const state = createTryEmitState(chunk, tryStructure, compileEnv)
     const pos = getPos(node) ?? null
-    emit(chunk, Op.PushTry, pos)
-    emitOperand(chunk, tableIndex, pos)
-    const mainFinallyOperand = chunk.code.length
-    emitOperand(chunk, -1, pos)
-    const mainAfterOperand = chunk.code.length
-    emitOperand(chunk, 0, pos)
-    const finallyOperands = [mainFinallyOperand]
-    const afterOperands = [mainAfterOperand]
-    const finallyEntryJumps: number[] = []
 
-    if (!emitBodyForms(chunk, bodyForms, compileEnv, pos)) return false
+    const mainTry = emitPushTry(chunk, state.tableIndex, -1, 0, pos)
+    state.finallyOperands.push(mainTry.finallyOperand)
+    state.afterOperands.push(mainTry.afterOperand)
 
-    emit(chunk, Op.PopTry, pos)
-    const normalEndJump = hasFinally ? -1 : emitJump(chunk, Op.Jump, pos)
-    const catchEndJumps: number[] = []
-    if (hasFinally) {
-      emit(chunk, Op.StoreLocal, pos)
-      emitOperand(chunk, resultSlot, pos)
-      emit(chunk, Op.EnterFinally, pos)
-      afterOperands.push(chunk.code.length)
-      emitOperand(chunk, 0, pos)
-      finallyEntryJumps.push(emitJump(chunk, Op.Jump, pos))
+    if (!emitBodyForms(chunk, tryStructure.bodyForms, compileEnv, pos)) {
+      return false
     }
+    emitNormalTryExit(chunk, state, pos)
 
-    for (let i = 0; i < catchClauses.length; i++) {
-      const clause = catchClauses[i]
-      const bindingSlot = compileEnv.nextLocalSlot++
-      const previousSlot = compileEnv.locals.get(clause.binding)
-      tableClauses[i].bindingSlot = bindingSlot
-      tableClauses[i].bodyIp = chunk.code.length
-      if (hasFinally) {
-        emit(chunk, Op.PushTry, pos)
-        emitOperand(chunk, finallyOnlyTableIndex, pos)
-        finallyOperands.push(chunk.code.length)
-        emitOperand(chunk, -1, pos)
-        afterOperands.push(chunk.code.length)
-        emitOperand(chunk, 0, pos)
-      }
-      declareLocal(compileEnv, clause.binding, bindingSlot, false)
-      chunk.localCount = Math.max(chunk.localCount, compileEnv.nextLocalSlot)
-
-      const bodyCompiled = emitBodyForms(chunk, clause.body, compileEnv, pos)
-
-      restoreLocal(compileEnv, clause.binding, previousSlot)
-      if (!bodyCompiled) return false
-
-      if (hasFinally) {
-        emit(chunk, Op.PopTry, pos)
-        emit(chunk, Op.StoreLocal, pos)
-        emitOperand(chunk, resultSlot, pos)
-        emit(chunk, Op.EnterFinally, pos)
-        afterOperands.push(chunk.code.length)
-        emitOperand(chunk, 0, pos)
-        finallyEntryJumps.push(emitJump(chunk, Op.Jump, pos))
-      } else if (i < catchClauses.length - 1) {
-        catchEndJumps.push(emitJump(chunk, Op.Jump, pos))
-      }
-    }
-
-    if (hasFinally) {
-      const finallyIp = chunk.code.length
-      for (const operand of finallyOperands) {
-        chunk.code[operand] = finallyIp
-      }
-      for (const jump of finallyEntryJumps) {
-        patchJumpTo(chunk, jump, finallyIp)
-      }
-
-      if (!emitBodyForms(chunk, finallyForms ?? [], compileEnv, pos)) {
+    for (let i = 0; i < tryStructure.catchClauses.length; i++) {
+      if (!emitCatchClause(chunk, tryStructure, state, compileEnv, i, pos)) {
         return false
       }
-      emit(chunk, Op.Pop, pos)
-      emit(chunk, Op.EndFinally, pos)
+    }
 
-      const afterIp = chunk.code.length
-      for (const operand of afterOperands) {
-        chunk.code[operand] = afterIp
+    if (state.hasFinally) {
+      if (!emitFinallyTail(chunk, tryStructure, state, compileEnv, pos)) {
+        return false
       }
-      emit(chunk, Op.LoadLocal, pos)
-      emitOperand(chunk, resultSlot, pos)
     } else {
-      patchJump(chunk, normalEndJump)
-      for (const jump of catchEndJumps) {
-        patchJump(chunk, jump)
-      }
-      chunk.code[mainAfterOperand] = chunk.code.length
+      emitCatchOnlyTail(chunk, state)
     }
 
     return true
   })
+}
+
+function parseVmTryStructure(node: CljList): VmTryStructure | null {
+  let tryStructure: ReturnType<typeof parseTryStructure>
+  try {
+    tryStructure = parseTryStructure(node, emptyEnvForVmParsing())
+  } catch {
+    return null
+  }
+
+  const { bodyForms, catchClauses, finallyForms } = tryStructure
+  const hasFinally = finallyForms !== null
+  if (!hasFinally && catchClauses.length === 0) return null
+  if (catchClauses.some((clause) => !is.keyword(clause.discriminator))) {
+    return null
+  }
+
+  return {
+    bodyForms,
+    catchClauses: catchClauses.map((clause) => ({
+      discriminator: clause.discriminator as CljKeyword,
+      binding: clause.binding,
+      body: clause.body,
+    })),
+    finallyForms,
+    hasFinally,
+  }
+}
+
+function createTryEmitState(
+  chunk: VmChunk,
+  tryStructure: VmTryStructure,
+  compileEnv: VmCompileEnv
+): TryEmitState {
+  const resultSlot = tryStructure.hasFinally ? compileEnv.nextLocalSlot++ : -1
+  if (tryStructure.hasFinally) {
+    chunk.localCount = Math.max(chunk.localCount, compileEnv.nextLocalSlot)
+  }
+
+  const tableIndex = chunk.catchTables.length
+  const tableClauses: VmCatchClause[] = tryStructure.catchClauses.map(
+    (clause) => ({
+      discriminator: clause.discriminator,
+      bindingSlot: -1,
+      bodyIp: -1,
+    })
+  )
+  chunk.catchTables.push({ clauses: tableClauses })
+
+  const finallyOnlyTableIndex = tryStructure.hasFinally
+    ? chunk.catchTables.length
+    : -1
+  if (tryStructure.hasFinally) {
+    chunk.catchTables.push({ clauses: [] })
+  }
+
+  return {
+    hasFinally: tryStructure.hasFinally,
+    resultSlot,
+    tableIndex,
+    tableClauses,
+    finallyOnlyTableIndex,
+    finallyOperands: [],
+    afterOperands: [],
+    finallyEntryJumps: [],
+    catchEndJumps: [],
+    normalEndJump: -1,
+  }
+}
+
+function emitPushTry(
+  chunk: VmChunk,
+  catchTableIndex: number,
+  finallyIp: number,
+  afterIp: number,
+  pos: Pos | null
+): PushTryOperands {
+  emit(chunk, Op.PushTry, pos)
+  emitOperand(chunk, catchTableIndex, pos)
+  const finallyOperand = chunk.code.length
+  emitOperand(chunk, finallyIp, pos)
+  const afterOperand = chunk.code.length
+  emitOperand(chunk, afterIp, pos)
+  return { finallyOperand, afterOperand }
+}
+
+function emitNormalTryExit(
+  chunk: VmChunk,
+  state: TryEmitState,
+  pos: Pos | null
+): void {
+  emit(chunk, Op.PopTry, pos)
+  if (state.hasFinally) {
+    emitStoredResultFinallyEntry(chunk, state, pos)
+  } else {
+    state.normalEndJump = emitJump(chunk, Op.Jump, pos)
+  }
+}
+
+function emitCatchClause(
+  chunk: VmChunk,
+  tryStructure: VmTryStructure,
+  state: TryEmitState,
+  compileEnv: VmCompileEnv,
+  clauseIndex: number,
+  pos: Pos | null
+): boolean {
+  const clause = tryStructure.catchClauses[clauseIndex]
+  const tableClause = state.tableClauses[clauseIndex]
+  const bindingSlot = compileEnv.nextLocalSlot++
+  const previousSlot = compileEnv.locals.get(clause.binding)
+
+  tableClause.bindingSlot = bindingSlot
+  tableClause.bodyIp = chunk.code.length
+  if (state.hasFinally) {
+    const catchTry = emitPushTry(
+      chunk,
+      state.finallyOnlyTableIndex,
+      -1,
+      0,
+      pos
+    )
+    state.finallyOperands.push(catchTry.finallyOperand)
+    state.afterOperands.push(catchTry.afterOperand)
+  }
+
+  declareLocal(compileEnv, clause.binding, bindingSlot, false)
+  chunk.localCount = Math.max(chunk.localCount, compileEnv.nextLocalSlot)
+
+  const bodyCompiled = emitBodyForms(chunk, clause.body, compileEnv, pos)
+
+  restoreLocal(compileEnv, clause.binding, previousSlot)
+  if (!bodyCompiled) return false
+
+  if (state.hasFinally) {
+    emit(chunk, Op.PopTry, pos)
+    emitStoredResultFinallyEntry(chunk, state, pos)
+  } else if (clauseIndex < tryStructure.catchClauses.length - 1) {
+    state.catchEndJumps.push(emitJump(chunk, Op.Jump, pos))
+  }
+
+  return true
+}
+
+function emitStoredResultFinallyEntry(
+  chunk: VmChunk,
+  state: TryEmitState,
+  pos: Pos | null
+): void {
+  emit(chunk, Op.StoreLocal, pos)
+  emitOperand(chunk, state.resultSlot, pos)
+  emit(chunk, Op.EnterFinally, pos)
+  state.afterOperands.push(chunk.code.length)
+  emitOperand(chunk, 0, pos)
+  state.finallyEntryJumps.push(emitJump(chunk, Op.Jump, pos))
+}
+
+function emitFinallyTail(
+  chunk: VmChunk,
+  tryStructure: VmTryStructure,
+  state: TryEmitState,
+  compileEnv: VmCompileEnv,
+  pos: Pos | null
+): boolean {
+  const finallyIp = chunk.code.length
+  for (const operand of state.finallyOperands) {
+    chunk.code[operand] = finallyIp
+  }
+  for (const jump of state.finallyEntryJumps) {
+    patchJumpTo(chunk, jump, finallyIp)
+  }
+
+  if (!emitBodyForms(chunk, tryStructure.finallyForms ?? [], compileEnv, pos)) {
+    return false
+  }
+  emit(chunk, Op.Pop, pos)
+  emit(chunk, Op.EndFinally, pos)
+
+  const afterIp = chunk.code.length
+  for (const operand of state.afterOperands) {
+    chunk.code[operand] = afterIp
+  }
+  emit(chunk, Op.LoadLocal, pos)
+  emitOperand(chunk, state.resultSlot, pos)
+  return true
+}
+
+function emitCatchOnlyTail(chunk: VmChunk, state: TryEmitState): void {
+  patchJump(chunk, state.normalEndJump)
+  for (const jump of state.catchEndJumps) {
+    patchJump(chunk, jump)
+  }
+  chunk.code[state.afterOperands[0]] = chunk.code.length
 }
 
 function emitBodyForms(
@@ -732,6 +867,39 @@ function emitLetStar(
       }
     }
 
+    return true
+  })
+}
+
+function emitBinding(
+  chunk: VmChunk,
+  node: CljList,
+  compileEnv: VmCompileEnv
+): boolean {
+  return emitTransaction(chunk, () => {
+    const bindings = node.value[1]
+    if (!bindings) return false
+    if (!is.vector(bindings) || bindings.value.length % 2 !== 0) return false
+
+    const pos = getPos(node) ?? null
+    emit(chunk, Op.PushBindingFrame, pos)
+
+    for (let i = 0; i < bindings.value.length; i += 2) {
+      const sym = bindings.value[i]
+      if (!is.symbol(sym)) return false
+
+      const expr = bindings.value[i + 1]
+      if (!emitExpression(chunk, expr, compileEnv)) return false
+
+      const symPos = getPos(sym) ?? pos
+      emit(chunk, Op.PushDynamicBinding, symPos)
+      emitOperand(chunk, addConstant(chunk, sym), symPos)
+    }
+
+    if (!emitBodyForms(chunk, node.value.slice(2), compileEnv, pos)) {
+      return false
+    }
+    emit(chunk, Op.PopBindingFrame, pos)
     return true
   })
 }

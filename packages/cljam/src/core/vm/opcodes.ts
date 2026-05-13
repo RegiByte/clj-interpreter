@@ -33,6 +33,9 @@ export const Op = {
   PopTry: 48,
   EnterFinally: 49,
   EndFinally: 50,
+  PushBindingFrame: 51,
+  PushDynamicBinding: 52,
+  PopBindingFrame: 53,
 
   Add: 70,
   Sub: 71,

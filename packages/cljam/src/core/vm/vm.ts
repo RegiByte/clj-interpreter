@@ -1,5 +1,5 @@
 import { is } from '../assertions'
-import { derefValue, getNamespaceEnv, lookup } from '../env'
+import { derefValue, getNamespaceEnv, lookup, lookupVar } from '../env'
 import { CljThrownSignal, EvaluationError, isEvaluationError } from '../errors'
 import { v } from '../factories'
 import { framesToClj, getPos } from '../positions'
@@ -7,15 +7,20 @@ import { printString } from '../printer'
 import type {
   Arity,
   CljFunction,
+  CljMultiMethod,
+  CljSymbol,
   CljValue,
+  CljVar,
   Env,
   EvaluationContext,
   Pos,
   StackFrame,
   VmAbrupt,
+  VmBindingFrameRecord,
   VmCallFrame,
   VmChunk,
   VmExecuteInput,
+  VmFinallyContinuationRecord,
   VmFunctionClosure,
   VmTryRecord,
   VmUpvalue,
@@ -25,6 +30,7 @@ import {
   resolveArity,
   slotValuesForArity,
 } from '../evaluator/arity'
+import { dispatchMultiMethod } from '../evaluator/multimethod-dispatch'
 import { Op, opcodeName } from './opcodes'
 
 const DEFAULT_VM_FRAME_LIMIT = 10000
@@ -561,6 +567,24 @@ function executeInstruction(state: VmState): void {
         )
       }
 
+      if (is.multiMethod(callable)) {
+        try {
+          const result = delegateMultiMethod(
+            state,
+            callable,
+            args,
+            env,
+            instructionPos
+          )
+          stack.push(result)
+        } catch (e) {
+          hydrateVmErrorPos(e, instructionPos)
+          captureVmFrames(e, state)
+          throw e
+        }
+        break
+      }
+
       if (!is.callable(callable)) {
         const name = 'name' in callable ? callable.name : printString(callable)
         throw new EvaluationError(
@@ -643,134 +667,94 @@ function executeInstruction(state: VmState): void {
       break
     }
     case Op.PushTry: {
-      const catchTableIndex = chunk.code[frame.ip++]
-      const finallyIp = chunk.code[frame.ip++]
-      const afterIp = chunk.code[frame.ip++]
-      if (
-        catchTableIndex === undefined ||
-        !Number.isInteger(catchTableIndex) ||
-        catchTableIndex < 0 ||
-        catchTableIndex >= chunk.catchTables.length
-      ) {
-        throw new EvaluationError(
-          `Invalid catch table index: ${catchTableIndex}`,
-          {
-            instruction,
-            catchTableIndex,
-            ip: frame.ip,
-            stack,
-            chunk,
-          },
-          instructionPos
-        )
-      }
-      if (
-        finallyIp === undefined ||
-        !Number.isInteger(finallyIp) ||
-        (finallyIp !== -1 &&
-          (finallyIp < 0 || finallyIp >= chunk.code.length))
-      ) {
-        throw new EvaluationError(
-          `Invalid finally instruction pointer: ${finallyIp}`,
-          {
-            instruction,
-            finallyIp,
-            ip: frame.ip,
-            stack,
-            chunk,
-          },
-          instructionPos
-        )
-      }
-      if (
-        afterIp === undefined ||
-        !Number.isInteger(afterIp) ||
-        afterIp < 0 ||
-        afterIp > chunk.code.length
-      ) {
-        throw new EvaluationError(
-          `Invalid after instruction pointer: ${afterIp}`,
-          {
-            instruction,
-            afterIp,
-            ip: frame.ip,
-            stack,
-            chunk,
-          },
-          instructionPos
-        )
-      }
-      frame.unwindStack.push({
-        kind: 'try',
-        stackDepth: stack.length,
-        catchTableIndex,
-        finallyIp,
-        afterIp,
-      })
+      const catchTableIndex = readCatchTableIndexOperand(
+        frame,
+        stack,
+        instruction,
+        instructionPos
+      )
+      const finallyIp = readFinallyIpOperand(
+        frame,
+        stack,
+        instruction,
+        instructionPos
+      )
+      const afterIp = readAfterIpOperand(
+        frame,
+        stack,
+        instruction,
+        instructionPos
+      )
+      pushTryRecord(frame, stack.length, catchTableIndex, finallyIp, afterIp)
       break
     }
     case Op.PopTry: {
-      const record = frame.unwindStack.pop()
-      if (record === undefined || record.kind !== 'try') {
-        throw new EvaluationError(
-          'VM unwind stack underflow on PopTry',
-          {
-            instruction,
-            ip: frame.ip,
-            stack,
-            chunk,
-          },
-          instructionPos
-        )
-      }
+      popTryRecord(frame, stack, instruction, instructionPos)
       break
     }
     case Op.EnterFinally: {
-      const afterIp = chunk.code[frame.ip++]
-      if (
-        afterIp === undefined ||
-        !Number.isInteger(afterIp) ||
-        afterIp < 0 ||
-        afterIp > chunk.code.length
-      ) {
-        throw new EvaluationError(
-          `Invalid after instruction pointer: ${afterIp}`,
-          {
-            instruction,
-            afterIp,
-            ip: frame.ip,
-            stack,
-            chunk,
-          },
-          instructionPos
-        )
-      }
-      frame.unwindStack.push({
-        kind: 'finally-continuation',
-        stackDepth: stack.length,
-        afterIp,
-        pendingAbrupt: null,
-      })
+      const afterIp = readAfterIpOperand(
+        frame,
+        stack,
+        instruction,
+        instructionPos
+      )
+      pushNormalFinallyContinuation(frame, stack.length, afterIp)
       break
     }
     case Op.EndFinally: {
-      const record = frame.unwindStack.pop()
-      if (record === undefined || record.kind !== 'finally-continuation') {
-        throw new EvaluationError(
-          'VM unwind stack underflow on EndFinally',
-          {
-            instruction,
-            ip: frame.ip,
-            stack,
-            chunk,
-          },
-          instructionPos
-        )
-      }
+      const record = popFinallyContinuationRecord(
+        frame,
+        stack,
+        instruction,
+        instructionPos
+      )
       state.pendingAbrupt = record.pendingAbrupt
       if (state.pendingAbrupt === null) {
         frame.ip = record.afterIp
       }
+      break
+    }
+    case Op.PushBindingFrame: {
+      pushBindingFrameRecord(frame, stack.length)
+      break
+    }
+    case Op.PushDynamicBinding: {
+      const symbol = readSymbolConstantOperand(
+        frame,
+        stack,
+        instruction,
+        instructionPos,
+        'dynamic binding symbol'
+      )
+      const value = stack.pop()
+      if (value === undefined) {
+        throw new EvaluationError(
+          'VM stack underflow on PushDynamicBinding',
+          {
+            instruction,
+            ip: frame.ip,
+            stack,
+            chunk,
+          },
+          instructionPos
+        )
+      }
+      const bindingFrame = currentBindingFrame(frame, stack, instruction, instructionPos)
+      const targetVar = resolveDynamicBindingVar(symbol, env, ctx)
+      targetVar.bindingStack ??= []
+      targetVar.bindingStack.push(value)
+      bindingFrame.boundVars.push(targetVar)
+      break
+    }
+    case Op.PopBindingFrame: {
+      const record = popBindingFrameRecord(
+        frame,
+        stack,
+        instruction,
+        instructionPos
+      )
+      cleanupBindingFrame(record)
       break
     }
     case Op.Jump: {
@@ -1013,6 +997,293 @@ function currentFrameOrNull(state: VmState): VmCallFrame | null {
   return state.frames[state.frames.length - 1] ?? null
 }
 
+function readCatchTableIndexOperand(
+  frame: VmCallFrame,
+  stack: CljValue[],
+  instruction: number | undefined,
+  instructionPos: Pos | undefined
+): number {
+  const { chunk } = frame
+  const catchTableIndex = chunk.code[frame.ip++]
+  if (
+    catchTableIndex === undefined ||
+    !Number.isInteger(catchTableIndex) ||
+    catchTableIndex < 0 ||
+    catchTableIndex >= chunk.catchTables.length
+  ) {
+    throw new EvaluationError(
+      `Invalid catch table index: ${catchTableIndex}`,
+      {
+        instruction,
+        catchTableIndex,
+        ip: frame.ip,
+        stack,
+        chunk,
+      },
+      instructionPos
+    )
+  }
+  return catchTableIndex
+}
+
+function readFinallyIpOperand(
+  frame: VmCallFrame,
+  stack: CljValue[],
+  instruction: number | undefined,
+  instructionPos: Pos | undefined
+): number {
+  const { chunk } = frame
+  const finallyIp = chunk.code[frame.ip++]
+  if (
+    finallyIp === undefined ||
+    !Number.isInteger(finallyIp) ||
+    (finallyIp !== -1 && (finallyIp < 0 || finallyIp >= chunk.code.length))
+  ) {
+    throw new EvaluationError(
+      `Invalid finally instruction pointer: ${finallyIp}`,
+      {
+        instruction,
+        finallyIp,
+        ip: frame.ip,
+        stack,
+        chunk,
+      },
+      instructionPos
+    )
+  }
+  return finallyIp
+}
+
+function readAfterIpOperand(
+  frame: VmCallFrame,
+  stack: CljValue[],
+  instruction: number | undefined,
+  instructionPos: Pos | undefined
+): number {
+  const { chunk } = frame
+  const afterIp = chunk.code[frame.ip++]
+  if (
+    afterIp === undefined ||
+    !Number.isInteger(afterIp) ||
+    afterIp < 0 ||
+    afterIp > chunk.code.length
+  ) {
+    throw new EvaluationError(
+      `Invalid after instruction pointer: ${afterIp}`,
+      {
+        instruction,
+        afterIp,
+        ip: frame.ip,
+        stack,
+        chunk,
+      },
+      instructionPos
+    )
+  }
+  return afterIp
+}
+
+function readSymbolConstantOperand(
+  frame: VmCallFrame,
+  stack: CljValue[],
+  instruction: number | undefined,
+  instructionPos: Pos | undefined,
+  label: string
+): CljSymbol {
+  const { chunk } = frame
+  const constantIndex = chunk.code[frame.ip++]
+  const value = chunk.constants[constantIndex]
+  if (!is.symbol(value)) {
+    throw new EvaluationError(
+      `Invalid ${label} constant index: ${constantIndex}`,
+      {
+        instruction,
+        constantIndex,
+        ip: frame.ip,
+        stack,
+        chunk,
+      },
+      instructionPos
+    )
+  }
+  return value
+}
+
+function pushTryRecord(
+  frame: VmCallFrame,
+  stackDepth: number,
+  catchTableIndex: number,
+  finallyIp: number,
+  afterIp: number
+): void {
+  frame.unwindStack.push({
+    kind: 'try',
+    stackDepth,
+    catchTableIndex,
+    finallyIp,
+    afterIp,
+  })
+}
+
+function pushBindingFrameRecord(frame: VmCallFrame, stackDepth: number): void {
+  frame.unwindStack.push({
+    kind: 'binding-frame',
+    stackDepth,
+    boundVars: [],
+  })
+}
+
+function pushNormalFinallyContinuation(
+  frame: VmCallFrame,
+  stackDepth: number,
+  afterIp: number
+): void {
+  frame.unwindStack.push({
+    kind: 'finally-continuation',
+    stackDepth,
+    afterIp,
+    pendingAbrupt: null,
+  })
+}
+
+function popTryRecord(
+  frame: VmCallFrame,
+  stack: CljValue[],
+  instruction: number | undefined,
+  instructionPos: Pos | undefined
+): VmTryRecord {
+  const record = frame.unwindStack.pop()
+  if (record === undefined || record.kind !== 'try') {
+    throw new EvaluationError(
+      'VM unwind stack underflow on PopTry',
+      {
+        instruction,
+        ip: frame.ip,
+        stack,
+        chunk: frame.chunk,
+      },
+      instructionPos
+    )
+  }
+  return record
+}
+
+function popFinallyContinuationRecord(
+  frame: VmCallFrame,
+  stack: CljValue[],
+  instruction: number | undefined,
+  instructionPos: Pos | undefined
+): VmFinallyContinuationRecord {
+  const record = frame.unwindStack.pop()
+  if (record === undefined || record.kind !== 'finally-continuation') {
+    throw new EvaluationError(
+      'VM unwind stack underflow on EndFinally',
+      {
+        instruction,
+        ip: frame.ip,
+        stack,
+        chunk: frame.chunk,
+      },
+      instructionPos
+    )
+  }
+  return record
+}
+
+function currentBindingFrame(
+  frame: VmCallFrame,
+  stack: CljValue[],
+  instruction: number | undefined,
+  instructionPos: Pos | undefined
+): VmBindingFrameRecord {
+  const record = frame.unwindStack[frame.unwindStack.length - 1]
+  if (record === undefined || record.kind !== 'binding-frame') {
+    throw new EvaluationError(
+      'VM has no active binding frame',
+      {
+        instruction,
+        ip: frame.ip,
+        stack,
+        chunk: frame.chunk,
+      },
+      instructionPos
+    )
+  }
+  return record
+}
+
+function popBindingFrameRecord(
+  frame: VmCallFrame,
+  stack: CljValue[],
+  instruction: number | undefined,
+  instructionPos: Pos | undefined
+): VmBindingFrameRecord {
+  const record = frame.unwindStack.pop()
+  if (record === undefined || record.kind !== 'binding-frame') {
+    throw new EvaluationError(
+      'VM unwind stack underflow on PopBindingFrame',
+      {
+        instruction,
+        ip: frame.ip,
+        stack,
+        chunk: frame.chunk,
+      },
+      instructionPos
+    )
+  }
+  return record
+}
+
+function cleanupBindingFrame(record: VmBindingFrameRecord): void {
+  for (let i = record.boundVars.length - 1; i >= 0; i--) {
+    record.boundVars[i].bindingStack!.pop()
+  }
+}
+
+function resolveDynamicBindingVar(
+  symbol: CljSymbol,
+  env: Env,
+  ctx: EvaluationContext
+): CljVar {
+  const slashIdx = symbol.name.indexOf('/')
+  let targetVar: CljVar | undefined
+  if (slashIdx > 0 && slashIdx < symbol.name.length - 1) {
+    const nsPrefix = symbol.name.slice(0, slashIdx)
+    const localName = symbol.name.slice(slashIdx + 1)
+    const nsEnv = getNamespaceEnv(env)
+    const targetNs =
+      nsEnv.ns?.aliases.get(nsPrefix) ?? ctx.resolveNs(nsPrefix) ?? null
+    if (!targetNs) {
+      throw new EvaluationError(
+        `No such namespace: ${nsPrefix}`,
+        { sym: symbol },
+        getPos(symbol)
+      )
+    }
+    targetVar = targetNs.vars.get(localName)
+  } else {
+    targetVar = lookupVar(symbol.name, env)
+  }
+
+  if (!targetVar) {
+    throw new EvaluationError(
+      `No var found for symbol '${symbol.name}' in binding form`,
+      { sym: symbol },
+      getPos(symbol)
+    )
+  }
+  if (!targetVar.dynamic) {
+    throw new EvaluationError(
+      `Cannot use binding with non-dynamic var ${targetVar.ns}/${targetVar.name}. ` +
+        `Mark it dynamic with (def ^:dynamic ${symbol.name} ...)`,
+      { sym: symbol },
+      getPos(symbol)
+    )
+  }
+
+  return targetVar
+}
+
 function beginAbruptFromThrown(state: VmState, error: unknown): void {
   if (error instanceof RecurSignal) throw error
 
@@ -1074,6 +1345,11 @@ function drainAbruptCompletion(state: VmState): void {
         frame.ip = record.afterIp
         return
       }
+    }
+
+    if (record.kind === 'binding-frame') {
+      cleanupBindingFrame(record)
+      continue
     }
   }
 }
@@ -1321,6 +1597,31 @@ function delegateCall(
   state.ctx.frameStack.push(frame)
   try {
     return state.ctx.applyCallable(callable, args, env)
+  } catch (e) {
+    captureDelegatedVmFrames(e, state)
+    throw e
+  } finally {
+    state.ctx.frameStack.pop()
+  }
+}
+
+function delegateMultiMethod(
+  state: VmState,
+  callable: CljMultiMethod,
+  args: CljValue[],
+  env: Env,
+  callPos: Pos | undefined
+): CljValue {
+  const frame: StackFrame = {
+    fnName: callable.name ?? null,
+    line: null,
+    col: null,
+    source: state.ctx.currentFile ?? null,
+    pos: callPos ?? null,
+  }
+  state.ctx.frameStack.push(frame)
+  try {
+    return dispatchMultiMethod(callable, args, state.ctx, env)
   } catch (e) {
     captureDelegatedVmFrames(e, state)
     throw e

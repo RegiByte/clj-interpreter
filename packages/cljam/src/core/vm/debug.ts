@@ -41,7 +41,8 @@ function disassembleInstruction(
       return offset + 2
     }
     case Op.LoadGlobal:
-    case Op.LoadQualified: {
+    case Op.LoadQualified:
+    case Op.PushDynamicBinding: {
       const constantIndex = chunk.code[offset + 1]
       const constant = chunk.constants[constantIndex]
       const rendered =
@@ -121,6 +122,8 @@ function disassembleInstruction(
     case Op.Return:
     case Op.Throw:
     case Op.PopTry:
+    case Op.PushBindingFrame:
+    case Op.PopBindingFrame:
     case Op.EndFinally: {
       lines.push(`${formatOffset(offset)} ${name}`)
       return offset + 1

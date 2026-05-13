@@ -117,6 +117,29 @@ describe('VM disassembler', () => {
     )
   })
 
+  it('disassembles binding opcodes', () => {
+    const chunk = makeChunk('binding-disassemble-test')
+
+    emit(chunk, Op.PushBindingFrame)
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, v.number(1)))
+    emit(chunk, Op.PushDynamicBinding)
+    emitOperand(chunk, addConstant(chunk, v.symbol('*x*')))
+    emit(chunk, Op.PopBindingFrame)
+    emit(chunk, Op.Return)
+
+    expect(disassembleChunk(chunk)).toBe(
+      [
+        '== binding-disassemble-test ==',
+        '0000 PushBindingFrame',
+        '0001 Constant 0 ; 1',
+        '0003 PushDynamicBinding 1 ; *x*',
+        '0005 PopBindingFrame',
+        '0006 Return',
+      ].join('\n')
+    )
+  })
+
   it('disassembles WithMeta with its metadata constant', () => {
     const chunk = makeChunk('with-meta-disassemble-test')
     const meta = addConstant(

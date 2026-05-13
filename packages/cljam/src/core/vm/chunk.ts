@@ -138,6 +138,7 @@ function getOperandCount(opcode: number): number {
     case Op.LoadGlobal:
     case Op.LoadQualified:
     case Op.LoadUpvalue:
+    case Op.PushDynamicBinding:
     case Op.MakeVector:
     case Op.MakeMap:
     case Op.MakeSet:
@@ -192,7 +193,11 @@ function getStackDelta(opcode: number, operands: number[]): number {
     case Op.PopTry:
     case Op.EnterFinally:
     case Op.EndFinally:
+    case Op.PushBindingFrame:
+    case Op.PopBindingFrame:
       return 0
+    case Op.PushDynamicBinding:
+      return -1
     case Op.MakeVector:
     case Op.MakeSet:
       return 1 - countOperand(operands[0])
