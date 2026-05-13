@@ -154,6 +154,8 @@ describe('VM chunks', () => {
     })
     emit(chunk, Op.PushTry)
     emitOperand(chunk, 0)
+    emitOperand(chunk, -1)
+    emitOperand(chunk, 4)
 
     rollbackChunk(chunk, snapshot)
 

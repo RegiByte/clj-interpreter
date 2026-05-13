@@ -97,15 +97,22 @@ describe('VM disassembler', () => {
 
     emit(chunk, Op.PushTry)
     emitOperand(chunk, 0)
+    emitOperand(chunk, -1)
+    emitOperand(chunk, 10)
     emit(chunk, Op.PopTry)
+    emit(chunk, Op.EnterFinally)
+    emitOperand(chunk, 10)
+    emit(chunk, Op.EndFinally)
     emit(chunk, Op.Return)
 
     expect(disassembleChunk(chunk)).toBe(
       [
         '== try-disassemble-test ==',
-        '0000 PushTry 0',
-        '0002 PopTry',
-        '0003 Return',
+        '0000 PushTry 0 finally none after 0010',
+        '0004 PopTry',
+        '0005 EnterFinally after 0010',
+        '0007 EndFinally',
+        '0008 Return',
       ].join('\n')
     )
   })

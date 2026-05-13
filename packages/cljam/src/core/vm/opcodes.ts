@@ -31,6 +31,8 @@ export const Op = {
   Throw: 46,
   PushTry: 47,
   PopTry: 48,
+  EnterFinally: 49,
+  EndFinally: 50,
 
   Add: 70,
   Sub: 71,

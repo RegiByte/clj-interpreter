@@ -208,7 +208,7 @@ function emitExpression(
           return emitFnStar(chunk, node, compileEnv)
         }
         if (name === specialFormKeywords['try']) {
-          return emitTryCatch(chunk, node, compileEnv)
+          return emitTry(chunk, node, compileEnv)
         }
         if (name === 'throw' && canEmitDirectThrow(node, compileEnv)) {
           return emitThrow(chunk, node, compileEnv)
@@ -234,7 +234,7 @@ function emitExpression(
   }
 }
 
-function emitTryCatch(
+function emitTry(
   chunk: VmChunk,
   node: CljList,
   compileEnv: VmCompileEnv
@@ -248,9 +248,15 @@ function emitTryCatch(
     }
 
     const { bodyForms, catchClauses, finallyForms } = tryStructure
-    if (finallyForms !== null || catchClauses.length === 0) return false
+    const hasFinally = finallyForms !== null
+    if (!hasFinally && catchClauses.length === 0) return false
     if (catchClauses.some((clause) => !is.keyword(clause.discriminator))) {
       return false
+    }
+
+    const resultSlot = hasFinally ? compileEnv.nextLocalSlot++ : -1
+    if (hasFinally) {
+      chunk.localCount = Math.max(chunk.localCount, compileEnv.nextLocalSlot)
     }
 
     const tableIndex = chunk.catchTables.length
@@ -260,16 +266,35 @@ function emitTryCatch(
       bodyIp: -1,
     }))
     chunk.catchTables.push({ clauses: tableClauses })
+    const finallyOnlyTableIndex = hasFinally ? chunk.catchTables.length : -1
+    if (hasFinally) {
+      chunk.catchTables.push({ clauses: [] })
+    }
 
     const pos = getPos(node) ?? null
     emit(chunk, Op.PushTry, pos)
     emitOperand(chunk, tableIndex, pos)
+    const mainFinallyOperand = chunk.code.length
+    emitOperand(chunk, -1, pos)
+    const mainAfterOperand = chunk.code.length
+    emitOperand(chunk, 0, pos)
+    const finallyOperands = [mainFinallyOperand]
+    const afterOperands = [mainAfterOperand]
+    const finallyEntryJumps: number[] = []
 
     if (!emitBodyForms(chunk, bodyForms, compileEnv, pos)) return false
 
     emit(chunk, Op.PopTry, pos)
-    const normalEndJump = emitJump(chunk, Op.Jump, pos)
+    const normalEndJump = hasFinally ? -1 : emitJump(chunk, Op.Jump, pos)
     const catchEndJumps: number[] = []
+    if (hasFinally) {
+      emit(chunk, Op.StoreLocal, pos)
+      emitOperand(chunk, resultSlot, pos)
+      emit(chunk, Op.EnterFinally, pos)
+      afterOperands.push(chunk.code.length)
+      emitOperand(chunk, 0, pos)
+      finallyEntryJumps.push(emitJump(chunk, Op.Jump, pos))
+    }
 
     for (let i = 0; i < catchClauses.length; i++) {
       const clause = catchClauses[i]
@@ -277,6 +302,14 @@ function emitTryCatch(
       const previousSlot = compileEnv.locals.get(clause.binding)
       tableClauses[i].bindingSlot = bindingSlot
       tableClauses[i].bodyIp = chunk.code.length
+      if (hasFinally) {
+        emit(chunk, Op.PushTry, pos)
+        emitOperand(chunk, finallyOnlyTableIndex, pos)
+        finallyOperands.push(chunk.code.length)
+        emitOperand(chunk, -1, pos)
+        afterOperands.push(chunk.code.length)
+        emitOperand(chunk, 0, pos)
+      }
       declareLocal(compileEnv, clause.binding, bindingSlot, false)
       chunk.localCount = Math.max(chunk.localCount, compileEnv.nextLocalSlot)
 
@@ -285,14 +318,46 @@ function emitTryCatch(
       restoreLocal(compileEnv, clause.binding, previousSlot)
       if (!bodyCompiled) return false
 
-      if (i < catchClauses.length - 1) {
+      if (hasFinally) {
+        emit(chunk, Op.PopTry, pos)
+        emit(chunk, Op.StoreLocal, pos)
+        emitOperand(chunk, resultSlot, pos)
+        emit(chunk, Op.EnterFinally, pos)
+        afterOperands.push(chunk.code.length)
+        emitOperand(chunk, 0, pos)
+        finallyEntryJumps.push(emitJump(chunk, Op.Jump, pos))
+      } else if (i < catchClauses.length - 1) {
         catchEndJumps.push(emitJump(chunk, Op.Jump, pos))
       }
     }
 
-    patchJump(chunk, normalEndJump)
-    for (const jump of catchEndJumps) {
-      patchJump(chunk, jump)
+    if (hasFinally) {
+      const finallyIp = chunk.code.length
+      for (const operand of finallyOperands) {
+        chunk.code[operand] = finallyIp
+      }
+      for (const jump of finallyEntryJumps) {
+        patchJumpTo(chunk, jump, finallyIp)
+      }
+
+      if (!emitBodyForms(chunk, finallyForms ?? [], compileEnv, pos)) {
+        return false
+      }
+      emit(chunk, Op.Pop, pos)
+      emit(chunk, Op.EndFinally, pos)
+
+      const afterIp = chunk.code.length
+      for (const operand of afterOperands) {
+        chunk.code[operand] = afterIp
+      }
+      emit(chunk, Op.LoadLocal, pos)
+      emitOperand(chunk, resultSlot, pos)
+    } else {
+      patchJump(chunk, normalEndJump)
+      for (const jump of catchEndJumps) {
+        patchJump(chunk, jump)
+      }
+      chunk.code[mainAfterOperand] = chunk.code.length
     }
 
     return true
@@ -447,8 +512,15 @@ function emitJump(chunk: VmChunk, opcode: OpCode, pos: Pos | null): number {
 }
 
 function patchJump(chunk: VmChunk, operandOffset: number): void {
+  patchJumpTo(chunk, operandOffset, chunk.code.length)
+}
+
+function patchJumpTo(
+  chunk: VmChunk,
+  operandOffset: number,
+  jumpTo: number
+): void {
   const jumpFrom = operandOffset + 1 // +1 for the operand reading itself
-  const jumpTo = chunk.code.length
   const offset = jumpTo - jumpFrom
 
   chunk.code[operandOffset] = offset

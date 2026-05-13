@@ -85,7 +85,20 @@ function disassembleInstruction(
     }
     case Op.PushTry: {
       const catchTableIndex = chunk.code[offset + 1]
-      lines.push(`${formatOffset(offset)} ${name} ${catchTableIndex}`)
+      const finallyIp = chunk.code[offset + 2]
+      const afterIp = chunk.code[offset + 3]
+      const renderedFinally =
+        finallyIp === -1 ? 'none' : formatOffset(finallyIp)
+      lines.push(
+        `${formatOffset(offset)} ${name} ${catchTableIndex} finally ${renderedFinally} after ${formatOffset(afterIp)}`
+      )
+      return offset + 4
+    }
+    case Op.EnterFinally: {
+      const afterIp = chunk.code[offset + 1]
+      lines.push(
+        `${formatOffset(offset)} ${name} after ${formatOffset(afterIp)}`
+      )
       return offset + 2
     }
     case Op.Add:
@@ -107,7 +120,8 @@ function disassembleInstruction(
     case Op.Pop:
     case Op.Return:
     case Op.Throw:
-    case Op.PopTry: {
+    case Op.PopTry:
+    case Op.EndFinally: {
       lines.push(`${formatOffset(offset)} ${name}`)
       return offset + 1
     }

@@ -144,9 +144,9 @@ function getOperandCount(opcode: number): number {
     case Op.WithMeta:
     case Op.Call:
     case Op.Closure:
-    case Op.PushTry:
     case Op.Jump:
     case Op.JumpIfFalsy:
+    case Op.EnterFinally:
     case Op.Add:
     case Op.Sub:
     case Op.Mul:
@@ -163,6 +163,8 @@ function getOperandCount(opcode: number): number {
       return 1
     case Op.FnRecurRest:
       return 2
+    case Op.PushTry:
+      return 3
     default:
       return 0
   }
@@ -188,6 +190,8 @@ function getStackDelta(opcode: number, operands: number[]): number {
       return -1
     case Op.PushTry:
     case Op.PopTry:
+    case Op.EnterFinally:
+    case Op.EndFinally:
       return 0
     case Op.MakeVector:
     case Op.MakeSet:

@@ -1119,7 +1119,7 @@ describe('VM function body integration', () => {
           {
             discriminator: v.keyword(':default'),
             bindingSlot: 0,
-            bodyIp: 7,
+            bodyIp: 9,
           },
         ],
       },
@@ -1127,18 +1127,17 @@ describe('VM function body integration', () => {
     expect(disassembleChunk(chunk)).toBe(
       [
         '== vm-fn-body ==',
-        '0000 PushTry 0',
-        '0002 Constant 0 ; 42',
-        '0004 PopTry',
-        '0005 Jump 2 -> 0009',
-        '0007 LoadLocal 0',
-        '0009 Return',
+        '0000 PushTry 0 finally none after 0011',
+        '0004 Constant 0 ; 42',
+        '0006 PopTry',
+        '0007 Jump 2 -> 0011',
+        '0009 LoadLocal 0',
+        '0011 Return',
       ].join('\n')
     )
   })
 
   it.each([
-    ['finally', '(try x (catch :default e e) (finally x))'],
     ['predicate catch', '(try x (catch string? e e))'],
     ['unsupported catch body', '(try x (catch :default e (def caught e)))'],
   ])(

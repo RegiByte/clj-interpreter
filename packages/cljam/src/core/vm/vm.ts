@@ -12,6 +12,7 @@ import type {
   EvaluationContext,
   Pos,
   StackFrame,
+  VmAbrupt,
   VmCallFrame,
   VmChunk,
   VmExecuteInput,
@@ -36,13 +37,6 @@ type VmState = {
   result: CljValue | null
   openUpvalues: VmUpvalue[]
   pendingAbrupt: VmAbrupt | null
-}
-
-type VmAbrupt = {
-  kind: 'throw'
-  thrown: CljValue
-  original: unknown
-  catchable: boolean
 }
 
 type IntrinsicName = '+' | '-' | '*' | '/' | '<' | '>' | '<=' | '>=' | '='
@@ -650,6 +644,8 @@ function executeInstruction(state: VmState): void {
     }
     case Op.PushTry: {
       const catchTableIndex = chunk.code[frame.ip++]
+      const finallyIp = chunk.code[frame.ip++]
+      const afterIp = chunk.code[frame.ip++]
       if (
         catchTableIndex === undefined ||
         !Number.isInteger(catchTableIndex) ||
@@ -668,10 +664,48 @@ function executeInstruction(state: VmState): void {
           instructionPos
         )
       }
+      if (
+        finallyIp === undefined ||
+        !Number.isInteger(finallyIp) ||
+        (finallyIp !== -1 &&
+          (finallyIp < 0 || finallyIp >= chunk.code.length))
+      ) {
+        throw new EvaluationError(
+          `Invalid finally instruction pointer: ${finallyIp}`,
+          {
+            instruction,
+            finallyIp,
+            ip: frame.ip,
+            stack,
+            chunk,
+          },
+          instructionPos
+        )
+      }
+      if (
+        afterIp === undefined ||
+        !Number.isInteger(afterIp) ||
+        afterIp < 0 ||
+        afterIp > chunk.code.length
+      ) {
+        throw new EvaluationError(
+          `Invalid after instruction pointer: ${afterIp}`,
+          {
+            instruction,
+            afterIp,
+            ip: frame.ip,
+            stack,
+            chunk,
+          },
+          instructionPos
+        )
+      }
       frame.unwindStack.push({
         kind: 'try',
         stackDepth: stack.length,
         catchTableIndex,
+        finallyIp,
+        afterIp,
       })
       break
     }
@@ -688,6 +722,54 @@ function executeInstruction(state: VmState): void {
           },
           instructionPos
         )
+      }
+      break
+    }
+    case Op.EnterFinally: {
+      const afterIp = chunk.code[frame.ip++]
+      if (
+        afterIp === undefined ||
+        !Number.isInteger(afterIp) ||
+        afterIp < 0 ||
+        afterIp > chunk.code.length
+      ) {
+        throw new EvaluationError(
+          `Invalid after instruction pointer: ${afterIp}`,
+          {
+            instruction,
+            afterIp,
+            ip: frame.ip,
+            stack,
+            chunk,
+          },
+          instructionPos
+        )
+      }
+      frame.unwindStack.push({
+        kind: 'finally-continuation',
+        stackDepth: stack.length,
+        afterIp,
+        pendingAbrupt: null,
+      })
+      break
+    }
+    case Op.EndFinally: {
+      const record = frame.unwindStack.pop()
+      if (record === undefined || record.kind !== 'finally-continuation') {
+        throw new EvaluationError(
+          'VM unwind stack underflow on EndFinally',
+          {
+            instruction,
+            ip: frame.ip,
+            stack,
+            chunk,
+          },
+          instructionPos
+        )
+      }
+      state.pendingAbrupt = record.pendingAbrupt
+      if (state.pendingAbrupt === null) {
+        frame.ip = record.afterIp
       }
       break
     }
@@ -974,10 +1056,42 @@ function drainAbruptCompletion(state: VmState): void {
 
     state.stack.length = record.stackDepth
 
-    if (record.kind === 'try' && tryEnterCatch(state, frame, record)) {
-      return
+    if (record.kind === 'try') {
+      if (tryEnterCatch(state, frame, record)) return
+      if (record.finallyIp !== -1) {
+        enterFinally(state, frame, record.finallyIp, record.afterIp)
+        return
+      }
+      continue
+    }
+
+    if (record.kind === 'finally-continuation') {
+      if (state.pendingAbrupt !== null) {
+        continue
+      }
+      state.pendingAbrupt = record.pendingAbrupt
+      if (state.pendingAbrupt === null) {
+        frame.ip = record.afterIp
+        return
+      }
     }
   }
+}
+
+function enterFinally(
+  state: VmState,
+  frame: VmCallFrame,
+  finallyIp: number,
+  afterIp: number
+): void {
+  frame.unwindStack.push({
+    kind: 'finally-continuation',
+    stackDepth: state.stack.length,
+    afterIp,
+    pendingAbrupt: state.pendingAbrupt,
+  })
+  state.pendingAbrupt = null
+  frame.ip = finallyIp
 }
 
 function tryEnterCatch(

@@ -494,13 +494,29 @@ export type VmCallFrame = {
   unwindStack: VmUnwindRecord[]
 }
 
+export type VmAbrupt = {
+  kind: 'throw'
+  thrown: CljValue
+  original: unknown
+  catchable: boolean
+}
+
 export type VmTryRecord = {
   kind: 'try'
   stackDepth: number
   catchTableIndex: number
+  finallyIp: number
+  afterIp: number
 }
 
-export type VmUnwindRecord = VmTryRecord
+export type VmFinallyContinuationRecord = {
+  kind: 'finally-continuation'
+  stackDepth: number
+  afterIp: number
+  pendingAbrupt: VmAbrupt | null
+}
+
+export type VmUnwindRecord = VmTryRecord | VmFinallyContinuationRecord
 
 export type VmUpvalue = {
   frame: VmCallFrame | null
