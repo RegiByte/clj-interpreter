@@ -100,6 +100,7 @@ describe('VM try/catch unwind compilation', () => {
         clauses: [
           {
             discriminator: v.keyword(':default'),
+            discriminatorSlot: -1,
             bindingSlot: 0,
             bodyIp: 9,
           },
@@ -119,12 +120,10 @@ describe('VM try/catch unwind compilation', () => {
     )
   })
 
-  it.each([
-    ['predicate catch', '(try x (catch string? e e))'],
-    ['unsupported catch body', '(try x (catch :default e (def caught e)))'],
-  ])(
-    'does not store bytecodeBody for unsupported try bodies with %s and still evaluates',
-    (_label, code) => {
+  it(
+    'does not store bytecodeBody for unsupported try bodies with unsupported catch body and still evaluates',
+    () => {
+      const code = '(try x (catch :default e (def caught e)))'
       const fn = createSession().evaluate(`(fn [x] ${code})`)
 
       expect(fn.kind).toBe('function')

@@ -147,6 +147,7 @@ describe('VM chunks', () => {
       clauses: [
         {
           discriminator: v.keyword(':default'),
+          discriminatorSlot: -1,
           bindingSlot: 0,
           bodyIp: 10,
         },

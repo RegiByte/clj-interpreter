@@ -8,7 +8,6 @@ import { getPos } from '../positions'
 import type {
   Arity,
   CljList,
-  CljKeyword,
   CljMap,
   CljSet,
   CljSymbol,
@@ -65,7 +64,7 @@ type VmCompileEnv = {
 type UpvalueResolution = number | null
 
 type VmTryCatchClause = {
-  discriminator: CljKeyword
+  discriminator: CljValue
   binding: string
   body: CljValue[]
 }
@@ -97,7 +96,6 @@ type TryEmitState = {
 
 const unsupportedVmSpecialForms = new Set<string>([
   specialFormKeywords['def'],
-  specialFormKeywords['set!'],
   specialFormKeywords['quote'],
   specialFormKeywords['var'],
   specialFormKeywords['lazy-seq'],
@@ -246,6 +244,9 @@ function emitExpression(
         if (name === 'throw' && canEmitDirectThrow(node, compileEnv)) {
           return emitThrow(chunk, node, compileEnv)
         }
+        if (name === specialFormKeywords['set!']) {
+          return emitSetBang(chunk, node, compileEnv)
+        }
         if (isUnsupportedVmSpecialForm(name)) {
           return false
         }
@@ -278,6 +279,8 @@ function emitTry(
 
     const state = createTryEmitState(chunk, tryStructure, compileEnv)
     const pos = getPos(node) ?? null
+
+    emitInlineFnDiscriminators(chunk, tryStructure, state, compileEnv, pos)
 
     const mainTry = emitPushTry(chunk, state.tableIndex, -1, 0, pos)
     state.finallyOperands.push(mainTry.finallyOperand)
@@ -317,19 +320,50 @@ function parseVmTryStructure(node: CljList): VmTryStructure | null {
   const { bodyForms, catchClauses, finallyForms } = tryStructure
   const hasFinally = finallyForms !== null
   if (!hasFinally && catchClauses.length === 0) return null
-  if (catchClauses.some((clause) => !is.keyword(clause.discriminator))) {
-    return null
-  }
 
   return {
     bodyForms,
     catchClauses: catchClauses.map((clause) => ({
-      discriminator: clause.discriminator as CljKeyword,
+      discriminator: clause.discriminator,
       binding: clause.binding,
       body: clause.body,
     })),
     finallyForms,
     hasFinally,
+  }
+}
+
+function isInlineFnDiscriminator(discriminator: CljValue): discriminator is CljList {
+  return (
+    is.list(discriminator) &&
+    discriminator.value.length > 0 &&
+    is.symbol(discriminator.value[0]) &&
+    discriminator.value[0].name === specialFormKeywords['fn*']
+  )
+}
+
+function emitInlineFnDiscriminators(
+  chunk: VmChunk,
+  tryStructure: VmTryStructure,
+  state: TryEmitState,
+  compileEnv: VmCompileEnv,
+  pos: Pos | null
+): void {
+  if (!compileEnv.allowNestedFn) return
+
+  for (let i = 0; i < tryStructure.catchClauses.length; i++) {
+    const clause = tryStructure.catchClauses[i]
+    if (!isInlineFnDiscriminator(clause.discriminator)) continue
+
+    // emitFnStar uses its own emitTransaction — rolls back chunk on failure, returns false
+    if (!emitFnStar(chunk, clause.discriminator, compileEnv)) continue
+
+    // Closure is on the stack; save it to a fresh local slot before PushTry
+    const slot = compileEnv.nextLocalSlot++
+    chunk.localCount = Math.max(chunk.localCount, compileEnv.nextLocalSlot)
+    emit(chunk, Op.StoreLocal, pos)
+    emitOperand(chunk, slot, pos)
+    state.tableClauses[i].discriminatorSlot = slot
   }
 }
 
@@ -347,6 +381,7 @@ function createTryEmitState(
   const tableClauses: VmCatchClause[] = tryStructure.catchClauses.map(
     (clause) => ({
       discriminator: clause.discriminator,
+      discriminatorSlot: -1,
       bindingSlot: -1,
       bodyIp: -1,
     })
@@ -900,6 +935,29 @@ function emitBinding(
       return false
     }
     emit(chunk, Op.PopBindingFrame, pos)
+    return true
+  })
+}
+
+function emitSetBang(
+  chunk: VmChunk,
+  node: CljList,
+  compileEnv: VmCompileEnv
+): boolean {
+  // (set! symbol expr) — only supported for global dynamic vars
+  if (node.value.length !== 3) return false
+  const sym = node.value[1]
+  if (!is.symbol(sym)) return false
+  // Local/param set! is not supported in the VM; let the interpreter handle it
+  if (compileEnv.locals.has(sym.name)) return false
+
+  return emitTransaction(chunk, () => {
+    const expr = node.value[2]
+    if (!emitExpression(chunk, expr, compileEnv)) return false
+    const pos = getPos(node) ?? null
+    const symPos = getPos(sym) ?? pos
+    emit(chunk, Op.SetDynamic, symPos)
+    emitOperand(chunk, addConstant(chunk, sym), symPos)
     return true
   })
 }

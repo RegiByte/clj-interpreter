@@ -105,7 +105,6 @@ describe('VM function body locals and let* compilation', () => {
 
   it.each([
     ['def', '(def y x)'],
-    ['set!', '(set! *out* x)'],
     ['quote', '(quote x)'],
     ['var', '(var x)'],
     ['lazy-seq', '(lazy-seq x)'],

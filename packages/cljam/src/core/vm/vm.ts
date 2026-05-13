@@ -1,6 +1,7 @@
 import { is } from '../assertions'
 import { derefValue, getNamespaceEnv, lookup, lookupVar } from '../env'
 import { CljThrownSignal, EvaluationError, isEvaluationError } from '../errors'
+import { matchesDiscriminator } from '../evaluator/form-parsers'
 import { v } from '../factories'
 import { framesToClj, getPos } from '../positions'
 import { printString } from '../printer'
@@ -757,6 +758,34 @@ function executeInstruction(state: VmState): void {
       cleanupBindingFrame(record)
       break
     }
+    case Op.SetDynamic: {
+      const symbol = readSymbolConstantOperand(
+        frame,
+        stack,
+        instruction,
+        instructionPos,
+        'set! target symbol'
+      )
+      const newVal = stack.pop()
+      if (newVal === undefined) {
+        throw new EvaluationError(
+          'VM stack underflow on SetDynamic',
+          { instruction, ip: frame.ip, stack, chunk },
+          instructionPos
+        )
+      }
+      const targetVar = resolveDynamicBindingVar(symbol, env, ctx)
+      if (!targetVar.bindingStack || targetVar.bindingStack.length === 0) {
+        throw new EvaluationError(
+          `Cannot set! ${targetVar.ns}/${targetVar.name} — no active binding. Use set! only inside a (binding [...] ...) form.`,
+          { sym: symbol },
+          instructionPos
+        )
+      }
+      targetVar.bindingStack[targetVar.bindingStack.length - 1] = newVal
+      stack.push(newVal)
+      break
+    }
     case Op.Jump: {
       const offset = chunk.code[frame.ip++]
       assertJumpOffset(
@@ -1316,7 +1345,6 @@ function drainAbruptCompletion(state: VmState): void {
     const frame = currentFrameOrNull(state)
     if (frame === null) {
       finishUncaughtAbrupt(state)
-      return
     }
 
     const record = frame.unwindStack.pop()
@@ -1387,7 +1415,21 @@ function tryEnterCatch(
   }
 
   for (const clause of catchTable.clauses) {
-    if (!matchesCatchClause(clause.discriminator, abrupt.thrown)) continue
+    const discriminator =
+      clause.discriminatorSlot >= 0
+        ? (frame.locals[clause.discriminatorSlot] ?? clause.discriminator)
+        : clause.discriminator
+    let matches: boolean
+    try {
+      matches = matchesDiscriminator(discriminator, abrupt.thrown, frame.env, state.ctx)
+    } catch (e) {
+      // Predicate evaluation or call threw — the new error replaces the original
+      // pending throw. The try record is already popped, so drainAbruptCompletion
+      // will route the new error through finally (if any) before continuing outward.
+      beginAbruptFromThrown(state, e)
+      return false
+    }
+    if (!matches) continue
 
     if (clause.bindingSlot < 0 || clause.bindingSlot >= frame.locals.length) {
       throw new EvaluationError('Invalid catch binding local slot', {
@@ -1409,18 +1451,6 @@ function tryEnterCatch(
   }
 
   return false
-}
-
-function matchesCatchClause(discriminator: CljValue, thrown: CljValue): boolean {
-  if (!is.keyword(discriminator)) return false
-  if (discriminator.name === ':default') return true
-  if (!is.map(thrown)) return false
-
-  const typeEntry = thrown.entries.find(
-    ([key]) => is.keyword(key) && key.name === ':type'
-  )
-  if (typeEntry === undefined) return false
-  return is.equal(typeEntry[1], discriminator)
 }
 
 function abortFrame(state: VmState, frame: VmCallFrame): void {

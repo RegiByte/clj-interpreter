@@ -36,6 +36,7 @@ export const Op = {
   PushBindingFrame: 51,
   PushDynamicBinding: 52,
   PopBindingFrame: 53,
+  SetDynamic: 54,
 
   Add: 70,
   Sub: 71,

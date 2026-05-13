@@ -553,7 +553,10 @@ export type VmFunctionTemplate = {
 }
 
 export type VmCatchClause = {
-  discriminator: CljKeyword
+  discriminator: CljValue
+  // -1: evaluate discriminator AST at catch time
+  // >= 0: local slot holds a pre-instantiated closure (inline fn that closes over VM locals)
+  discriminatorSlot: number
   bindingSlot: number
   bodyIp: number
 }

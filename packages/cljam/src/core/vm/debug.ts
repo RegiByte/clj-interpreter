@@ -42,7 +42,8 @@ function disassembleInstruction(
     }
     case Op.LoadGlobal:
     case Op.LoadQualified:
-    case Op.PushDynamicBinding: {
+    case Op.PushDynamicBinding:
+    case Op.SetDynamic: {
       const constantIndex = chunk.code[offset + 1]
       const constant = chunk.constants[constantIndex]
       const rendered =
