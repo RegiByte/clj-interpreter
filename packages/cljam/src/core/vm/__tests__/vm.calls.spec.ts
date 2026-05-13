@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { addConstant, emit, emitOperand, makeChunk } from '../chunk'
 import { define, makeEnv } from '../../env'
-import { createEvaluationContext } from '../../evaluator'
-import { EvaluationError } from '../../errors'
+import { createEvaluationContext, RecurSignal } from '../../evaluator'
+import { CljThrownSignal, EvaluationError } from '../../errors'
 import { v } from '../../factories'
 import type { CljValue, Pos } from '../../types'
 import { Op } from '../opcodes'
@@ -319,6 +319,88 @@ describe('VM call and frame opcodes', () => {
     expect(ctx.frameStack).toEqual([])
   })
 
+  it('re-escapes delegated user throws as their original signal', () => {
+    const env = makeEnv()
+    const thrownValue = v.map([[v.keyword(':type'), v.keyword(':boom')]])
+    const thrownSignal = new CljThrownSignal(thrownValue)
+    const thrower = v.nativeFn('thrower', () => v.nil())
+    const chunk = makeChunk('user-throw-root')
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, thrower))
+    emit(chunk, Op.Call)
+    emitOperand(chunk, 0)
+    emit(chunk, Op.Return)
+
+    const ctx = createEvaluationContext()
+    ctx.applyCallable = () => {
+      throw thrownSignal
+    }
+
+    let caught: unknown
+    try {
+      executeChunk({ chunk, env, ctx })
+    } catch (e) {
+      caught = e
+    }
+    expect(caught).toBe(thrownSignal)
+    expect(ctx.frameStack).toEqual([])
+  })
+
+  it('executes Throw by re-escaping a CljThrownSignal with the same value', () => {
+    const env = makeEnv()
+    const thrownValue = v.map([[v.keyword(':type'), v.keyword(':direct')]])
+    const chunk = makeChunk('direct-throw-root')
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, thrownValue))
+    emit(chunk, Op.Throw)
+    emit(chunk, Op.Return)
+
+    let caught: unknown
+    try {
+      executeChunk({ chunk, env, ctx: createEvaluationContext() })
+    } catch (e) {
+      caught = e
+    }
+
+    expect(caught).toBeInstanceOf(CljThrownSignal)
+    expect((caught as CljThrownSignal).value).toBe(thrownValue)
+  })
+
+  it('throws a VM error when Throw has no stack value', () => {
+    const chunk = makeChunk('throw-underflow-root')
+    emit(chunk, Op.Throw)
+
+    expect(() =>
+      executeChunk({ chunk, env: makeEnv(), ctx: createEvaluationContext() })
+    ).toThrow('VM stack underflow on Throw')
+  })
+
+  it('rethrows delegated RecurSignal without converting it to VM abrupt state', () => {
+    const env = makeEnv()
+    const recurSignal = new RecurSignal([v.number(1)])
+    const recurLike = v.nativeFn('recur-like', () => v.nil())
+    const chunk = makeChunk('recur-signal-root')
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, recurLike))
+    emit(chunk, Op.Call)
+    emitOperand(chunk, 0)
+    emit(chunk, Op.Return)
+
+    const ctx = createEvaluationContext()
+    ctx.applyCallable = () => {
+      throw recurSignal
+    }
+
+    let caught: unknown
+    try {
+      executeChunk({ chunk, env, ctx })
+    } catch (e) {
+      caught = e
+    }
+    expect(caught).toBe(recurSignal)
+    expect(ctx.frameStack).toEqual([])
+  })
+
   it('keeps outer VM context for mixed VM native VM errors', () => {
     const env = makeEnv()
     const innerChunk = makeChunk('inner-body')
@@ -354,6 +436,34 @@ describe('VM call and frame opcodes', () => {
     )
     expect(frameNames(error)).toEqual(['inner', 'bridge'])
     expect(ctx.frameStack).toEqual([])
+  })
+
+  it('does not accumulate synthesized VM frames across repeated runtime failures', () => {
+    const env = makeEnv()
+    const calleeChunk = makeChunk('repeat-boom-body')
+    emit(calleeChunk, Op.Constant)
+    emitOperand(calleeChunk, addConstant(calleeChunk, v.number(1)))
+    emit(calleeChunk, Op.Constant)
+    emitOperand(calleeChunk, addConstant(calleeChunk, v.number(0)))
+    emit(calleeChunk, Op.Div)
+    emitOperand(calleeChunk, 2)
+    emit(calleeChunk, Op.Return)
+    const fn = makeBytecodeFunction(calleeChunk, [], env)
+    fn.name = 'repeat-boom'
+
+    const chunk = makeChunk('repeat-root')
+    emit(chunk, Op.Constant)
+    emitOperand(chunk, addConstant(chunk, fn))
+    emit(chunk, Op.Call)
+    emitOperand(chunk, 0)
+    emit(chunk, Op.Return)
+
+    const ctx = createNoDelegateContext()
+    const first = expectEvaluationError(() => executeChunk({ chunk, env, ctx }))
+    const second = expectEvaluationError(() => executeChunk({ chunk, env, ctx }))
+
+    expect(frameNames(first)).toEqual(['repeat-boom', 'repeat-root'])
+    expect(frameNames(second)).toEqual(['repeat-boom', 'repeat-root'])
   })
 
   it.each([

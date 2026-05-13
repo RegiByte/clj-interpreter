@@ -28,6 +28,7 @@ export const Op = {
   Recur: 43,
   FnRecur: 44,
   FnRecurRest: 45,
+  Throw: 46,
 
   Add: 70,
   Sub: 71,

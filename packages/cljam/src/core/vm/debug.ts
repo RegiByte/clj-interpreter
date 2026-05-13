@@ -100,7 +100,8 @@ function disassembleInstruction(
     case Op.True:
     case Op.False:
     case Op.Pop:
-    case Op.Return: {
+    case Op.Return:
+    case Op.Throw: {
       lines.push(`${formatOffset(offset)} ${name}`)
       return offset + 1
     }

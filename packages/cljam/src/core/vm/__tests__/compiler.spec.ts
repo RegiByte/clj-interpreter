@@ -5,6 +5,7 @@ import { readForms } from '../../reader'
 import type { CljValue } from '../../types'
 import { executeChunk } from '../vm'
 import { define, makeEnv } from '../../env'
+import { EvaluationError } from '../../errors'
 import { createEvaluationContext } from '../../evaluator'
 import { applyFunctionWithContext } from '../../evaluator/apply'
 import { createSession } from '../../session'
@@ -148,6 +149,16 @@ function expectVmFnBodyCompilesTo(
   })
 
   expect(result).toEqual(expected)
+}
+
+function expectSessionEvaluationError(code: string): EvaluationError {
+  try {
+    createSession().evaluate(code)
+  } catch (error) {
+    expect(error).toBeInstanceOf(EvaluationError)
+    return error as EvaluationError
+  }
+  throw new Error(`Expected EvaluationError for: ${code}`)
 }
 
 describe('VM compiler equivalence helpers', () => {
@@ -1095,6 +1106,47 @@ describe('VM function body integration', () => {
     ).toEqual(v.number(42))
   })
 
+  it('stores bytecodeBody for direct throw bodies', () => {
+    const fn = createSession().evaluate('(fn [] (throw {:type :error/test}))')
+
+    expect(fn.kind).toBe('function')
+    if (fn.kind !== 'function') return
+
+    expect(fn.arities[0].bytecodeBody).toBeDefined()
+    expect(fn.arities[0].bytecodeBody?.code).toContain(Op.Throw)
+  })
+
+  it('surfaces direct bytecode map throws with current session behavior', () => {
+    const error = expectSessionEvaluationError(
+      '((fn [] (throw {:type :error/test :message "oops"})))'
+    )
+
+    expect(error.message).toBe(
+      'Unhandled throw: {:type :error/test :message "oops"}'
+    )
+    expect(error.context).toEqual({
+      thrownValue: v.map([
+        [v.keyword(':type'), v.keyword(':error/test')],
+        [v.keyword(':message'), v.string('oops')],
+      ]),
+    })
+  })
+
+  it('surfaces direct bytecode string throws with current session behavior', () => {
+    const error = expectSessionEvaluationError('((fn [] (throw "bare string")))')
+
+    expect(error.message).toBe('Unhandled throw: "bare string"')
+    expect(error.context).toEqual({ thrownValue: v.string('bare string') })
+  })
+
+  it('does not inject frames into direct bytecode user-thrown maps', () => {
+    expect(
+      createSession().evaluate(
+        '(try ((fn [] (throw {:type :error/test}))) (catch :error/test e (contains? e :frames)))'
+      )
+    ).toEqual(v.boolean(false))
+  })
+
   it.each([
     ['single local', '((fn [x] (let* [y (+ x 1)] y)) 41)', v.number(42)],
     [
@@ -1641,6 +1693,61 @@ describe('VM call compilation', () => {
       v.number(99)
     )
   })
+
+  it('compiles canonical throw to direct Throw', () => {
+    const chunk = compileVm(formToNode('(throw {:type :x})'))
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    expect(disassembleChunk(chunk)).toBe(
+      [
+        '== vm-expression ==',
+        '0000 Constant 0 ; :type',
+        '0002 Constant 1 ; :x',
+        '0004 MakeMap ; 1',
+        '0006 Throw',
+        '0007 Return',
+      ].join('\n')
+    )
+    expect(chunk.code).toContain(Op.Throw)
+    expect(disassembleChunk(chunk)).not.toContain('LoadGlobal')
+    expect(disassembleChunk(chunk)).not.toContain('Call')
+  })
+
+  it('keeps local throw bindings on the generic Call path', () => {
+    const chunk = compileVm(
+      formToNode('(let* [throw :answer] (throw {:answer 99}))')
+    )
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    const disassembly = disassembleChunk(chunk)
+    expect(disassembly).toContain('LoadLocal 0')
+    expect(disassembly).toContain('Call 1')
+    expect(disassembly).not.toContain('Throw')
+    expect(
+      createSession().evaluate(
+        '((fn [] (let* [throw :answer] (throw {:answer 99}))))'
+      )
+    ).toEqual(v.number(99))
+  })
+
+  it.each(['(throw)', '(throw :a :b)'])(
+    'keeps malformed throw arities on the generic Call path for %s',
+    (code) => {
+      const chunk = compileVm(formToNode(code))
+
+      expect(chunk).not.toBeNull()
+      if (chunk === null) return
+
+      const disassembly = disassembleChunk(chunk)
+      expect(disassembly).toContain('LoadGlobal 0 ; throw')
+      expect(disassembly).toContain(`Call ${code === '(throw)' ? 0 : 2}`)
+      expect(disassembly).not.toContain('Throw')
+    }
+  )
 
   it('keeps qualified operators on the generic Call path', () => {
     const chunk = compileVm(formToNode('(clojure.core/+ 1 2)'))

@@ -1,8 +1,8 @@
 import { is } from '../assertions'
 import { derefValue, getNamespaceEnv, lookup } from '../env'
-import { EvaluationError, isEvaluationError } from '../errors'
+import { CljThrownSignal, EvaluationError, isEvaluationError } from '../errors'
 import { v } from '../factories'
-import { getPos } from '../positions'
+import { framesToClj, getPos } from '../positions'
 import { printString } from '../printer'
 import type {
   Arity,
@@ -18,7 +18,11 @@ import type {
   VmFunctionClosure,
   VmUpvalue,
 } from '../types'
-import { resolveArity, slotValuesForArity } from '../evaluator/arity'
+import {
+  RecurSignal,
+  resolveArity,
+  slotValuesForArity,
+} from '../evaluator/arity'
 import { Op, opcodeName } from './opcodes'
 
 const DEFAULT_VM_FRAME_LIMIT = 10000
@@ -30,6 +34,14 @@ type VmState = {
   done: boolean
   result: CljValue | null
   openUpvalues: VmUpvalue[]
+  pendingAbrupt: VmAbrupt | null
+}
+
+type VmAbrupt = {
+  kind: 'throw'
+  thrown: CljValue
+  original: unknown
+  catchable: boolean
 }
 
 type IntrinsicName = '+' | '-' | '*' | '/' | '<' | '>' | '<=' | '>=' | '='
@@ -58,17 +70,24 @@ function createVmState(input: VmExecuteInput): VmState {
         fnName: input.rootFnName ?? input.chunk.name ?? null,
         callPos: null,
         closure: input.closure ?? null,
+        unwindStack: [],
       },
     ],
     done: false,
     result: null,
     openUpvalues: [],
+    pendingAbrupt: null,
   }
 }
 
 function runToCompletion(state: VmState): CljValue {
   while (!state.done) {
-    executeInstruction(state)
+    try {
+      executeInstruction(state)
+    } catch (e) {
+      beginAbruptFromThrown(state, e)
+    }
+    drainAbruptCompletion(state)
   }
   return state.result ?? v.nil()
 }
@@ -601,6 +620,28 @@ function executeInstruction(state: VmState): void {
       returnFromFrame(state, value ?? v.nil())
       break
     }
+    case Op.Throw: {
+      const thrown = stack.pop()
+      if (thrown === undefined) {
+        throw new EvaluationError(
+          'VM stack underflow on Throw',
+          {
+            instruction,
+            ip: frame.ip,
+            stack,
+            chunk,
+          },
+          instructionPos
+        )
+      }
+      state.pendingAbrupt = {
+        kind: 'throw',
+        thrown,
+        original: new CljThrownSignal(thrown),
+        catchable: true,
+      }
+      break
+    }
     case Op.Jump: {
       const offset = chunk.code[frame.ip++]
       assertJumpOffset(
@@ -837,6 +878,90 @@ function currentFrame(state: VmState): VmCallFrame {
   return frame
 }
 
+function currentFrameOrNull(state: VmState): VmCallFrame | null {
+  return state.frames[state.frames.length - 1] ?? null
+}
+
+function beginAbruptFromThrown(state: VmState, error: unknown): void {
+  if (error instanceof RecurSignal) throw error
+
+  if (error instanceof CljThrownSignal) {
+    state.pendingAbrupt = {
+      kind: 'throw',
+      thrown: error.value,
+      original: error,
+      catchable: true,
+    }
+    return
+  }
+
+  if (isEvaluationError(error)) {
+    captureVmFrames(error, state)
+    state.pendingAbrupt = {
+      kind: 'throw',
+      thrown: runtimeErrorValue(error, state.ctx),
+      original: error,
+      catchable: true,
+    }
+    return
+  }
+
+  throw error
+}
+
+function drainAbruptCompletion(state: VmState): void {
+  while (state.pendingAbrupt !== null && !state.done) {
+    const frame = currentFrameOrNull(state)
+    if (frame === null) {
+      finishUncaughtAbrupt(state)
+      return
+    }
+
+    const _record = frame.unwindStack.pop()
+    if (_record === undefined) {
+      abortFrame(state, frame)
+      continue
+    }
+  }
+}
+
+function abortFrame(state: VmState, frame: VmCallFrame): void {
+  closeUpvaluesForFrame(state, frame, 0)
+  state.stack.length = frame.stackBase
+  state.frames.pop()
+}
+
+function finishUncaughtAbrupt(state: VmState): never {
+  const abrupt = state.pendingAbrupt
+  state.pendingAbrupt = null
+  if (abrupt === null) {
+    throw new EvaluationError('VM abrupt completion missing reason', {
+      stack: state.stack,
+    })
+  }
+  throw abrupt.original
+}
+
+function runtimeErrorValue(
+  error: EvaluationError,
+  ctx: EvaluationContext
+): CljValue {
+  const typeKeyword = error.code
+    ? v.keyword(`:${error.code}`)
+    : v.keyword(':error/runtime')
+  const entries: [CljValue, CljValue][] = [
+    [v.keyword(':type'), typeKeyword],
+    [v.keyword(':message'), v.string(error.message)],
+  ]
+  if (error.frames && error.frames.length > 0) {
+    entries.push([
+      v.keyword(':frames'),
+      framesToClj(error.frames, ctx.currentSource),
+    ])
+  }
+  return v.map(entries)
+}
+
 function returnFromFrame(state: VmState, value: CljValue): void {
   const frame = currentFrame(state)
   closeUpvaluesForFrame(state, frame, 0)
@@ -910,6 +1035,7 @@ function pushBytecodeFrame(
     fnName: fn.name ?? chunk.name ?? null,
     callPos: callPos ?? null,
     closure: arity.vmClosure ?? null,
+    unwindStack: [],
   })
 }
 

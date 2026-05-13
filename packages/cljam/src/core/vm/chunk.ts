@@ -179,6 +179,7 @@ function getStackDelta(opcode: number, operands: number[]): number {
     case Op.StoreLocal:
     case Op.Return:
     case Op.JumpIfFalsy:
+    case Op.Throw:
       return -1
     case Op.MakeVector:
     case Op.MakeSet:

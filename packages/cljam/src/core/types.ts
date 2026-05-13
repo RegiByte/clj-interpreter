@@ -491,7 +491,10 @@ export type VmCallFrame = {
   fnName: string | null
   callPos: Pos | null
   closure: VmFunctionClosure | null
+  unwindStack: VmUnwindRecord[]
 }
+
+export type VmUnwindRecord = never
 
 export type VmUpvalue = {
   frame: VmCallFrame | null

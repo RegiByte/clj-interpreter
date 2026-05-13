@@ -205,6 +205,9 @@ function emitExpression(
         if (name === specialFormKeywords['fn*']) {
           return emitFnStar(chunk, node, compileEnv)
         }
+        if (name === 'throw' && canEmitDirectThrow(node, compileEnv)) {
+          return emitThrow(chunk, node, compileEnv)
+        }
         if (isUnsupportedVmSpecialForm(name)) {
           return false
         }
@@ -400,6 +403,34 @@ function emitCall(
     emit(chunk, Op.Call, pos)
     emitOperand(chunk, args.length, pos)
 
+    return true
+  })
+}
+
+function canEmitDirectThrow(
+  node: CljList,
+  compileEnv: VmCompileEnv
+): boolean {
+  if (node.value.length !== 2) return false
+  const callee = node.value[0]
+  return (
+    is.symbol(callee) &&
+    callee.name === 'throw' &&
+    compileEnv.locals.get(callee.name) === undefined &&
+    !hasEnclosingLocal(compileEnv, callee.name)
+  )
+}
+
+function emitThrow(
+  chunk: VmChunk,
+  node: CljList,
+  compileEnv: VmCompileEnv
+): boolean {
+  return emitTransaction(chunk, () => {
+    const thrown = node.value[1]
+    if (!emitExpression(chunk, thrown, compileEnv)) return false
+
+    emit(chunk, Op.Throw, getPos(node) ?? null)
     return true
   })
 }
