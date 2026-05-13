@@ -208,41 +208,48 @@ export function compileBinding(
 
   return (env, ctx) => {
     const boundVars: CljVar[] = []
-    for (const [name, compiledInit] of pairs) {
-      const newVal = compiledInit(env, ctx)
-      // Support both unqualified (*my-var*) and qualified (my.ns/*my-var*) symbols.
-      const slashIdx = name.indexOf('/')
-      let varObj: CljVar | undefined
-      if (slashIdx > 0 && slashIdx < name.length - 1) {
-        const nsPrefix = name.slice(0, slashIdx)
-        const localName = name.slice(slashIdx + 1)
-        const nsEnv = getNamespaceEnv(env)
-        const targetNs = nsEnv.ns?.aliases.get(nsPrefix) ?? ctx.resolveNs(nsPrefix) ?? null
-        varObj = targetNs?.vars.get(localName)
-      } else {
-        varObj = lookupVar(name, env)
+    try {
+      for (const [name, compiledInit] of pairs) {
+        const newVal = compiledInit(env, ctx)
+        // Support both unqualified (*my-var*) and qualified (my.ns/*my-var*) symbols.
+        const slashIdx = name.indexOf('/')
+        let varObj: CljVar | undefined
+        if (slashIdx > 0 && slashIdx < name.length - 1) {
+          const nsPrefix = name.slice(0, slashIdx)
+          const localName = name.slice(slashIdx + 1)
+          const nsEnv = getNamespaceEnv(env)
+          const targetNs = nsEnv.ns?.aliases.get(nsPrefix) ?? ctx.resolveNs(nsPrefix) ?? null
+          varObj = targetNs?.vars.get(localName)
+        } else {
+          varObj = lookupVar(name, env)
+        }
+        if (!varObj) {
+          throw new EvaluationError(
+            `No var found for symbol '${name}' in binding form`,
+            { name }
+          )
+        }
+        if (!varObj.dynamic) {
+          throw new EvaluationError(
+            `Cannot use binding with non-dynamic var ${varObj.ns}/${varObj.name}. Mark it dynamic with (def ^:dynamic ${varObj.name} ...)`,
+            { name }
+          )
+        }
+        varObj.bindingStack ??= []
+        varObj.bindingStack.push(newVal)
+        boundVars.push(varObj)
       }
-      if (!varObj) {
-        throw new EvaluationError(
-          `No var found for symbol '${name}' in binding form`,
-          { name }
-        )
+    } catch (e) {
+      for (let i = boundVars.length - 1; i >= 0; i--) {
+        boundVars[i].bindingStack!.pop()
       }
-      if (!varObj.dynamic) {
-        throw new EvaluationError(
-          `Cannot use binding with non-dynamic var ${varObj.ns}/${varObj.name}. Mark it dynamic with (def ^:dynamic ${varObj.name} ...)`,
-          { name }
-        )
-      }
-      varObj.bindingStack ??= []
-      varObj.bindingStack.push(newVal)
-      boundVars.push(varObj)
+      throw e
     }
     try {
       return compiledBody(env, ctx)
     } finally {
-      for (const varObj of boundVars) {
-        varObj.bindingStack!.pop()
+      for (let i = boundVars.length - 1; i >= 0; i--) {
+        boundVars[i].bindingStack!.pop()
       }
     }
   }

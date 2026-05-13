@@ -61,58 +61,65 @@ export function setupBindingVars(
   const body = list.value.slice(2)
   const boundVars: CljVar[] = []
 
-  for (let i = 0; i < bindings.value.length; i += 2) {
-    const sym = bindings.value[i]
-    if (!is.symbol(sym)) {
-      throw new EvaluationError(
-        'binding left-hand side must be a symbol',
-        { sym },
-        getPos(sym) ?? getPos(list)
-      )
-    }
-
-    const newVal = ctx.evaluate(bindings.value[i + 1], env)
-
-    // Support both unqualified (*my-var*) and qualified (my.ns/*my-var*) symbols.
-    const slashIdx = sym.name.indexOf('/')
-    let targetVar: CljVar | undefined
-    if (slashIdx > 0 && slashIdx < sym.name.length - 1) {
-      const nsPrefix = sym.name.slice(0, slashIdx)
-      const localName = sym.name.slice(slashIdx + 1)
-      const nsEnv = getNamespaceEnv(env)
-      const targetNs =
-        nsEnv.ns?.aliases.get(nsPrefix) ?? ctx.resolveNs(nsPrefix) ?? null
-      if (!targetNs) {
+  try {
+    for (let i = 0; i < bindings.value.length; i += 2) {
+      const sym = bindings.value[i]
+      if (!is.symbol(sym)) {
         throw new EvaluationError(
-          `No such namespace: ${nsPrefix}`,
+          'binding left-hand side must be a symbol',
+          { sym },
+          getPos(sym) ?? getPos(list)
+        )
+      }
+
+      const newVal = ctx.evaluate(bindings.value[i + 1], env)
+
+      // Support both unqualified (*my-var*) and qualified (my.ns/*my-var*) symbols.
+      const slashIdx = sym.name.indexOf('/')
+      let targetVar: CljVar | undefined
+      if (slashIdx > 0 && slashIdx < sym.name.length - 1) {
+        const nsPrefix = sym.name.slice(0, slashIdx)
+        const localName = sym.name.slice(slashIdx + 1)
+        const nsEnv = getNamespaceEnv(env)
+        const targetNs =
+          nsEnv.ns?.aliases.get(nsPrefix) ?? ctx.resolveNs(nsPrefix) ?? null
+        if (!targetNs) {
+          throw new EvaluationError(
+            `No such namespace: ${nsPrefix}`,
+            { sym },
+            getPos(sym)
+          )
+        }
+        targetVar = targetNs.vars.get(localName)
+      } else {
+        targetVar = lookupVar(sym.name, env)
+      }
+
+      if (!targetVar) {
+        throw new EvaluationError(
+          `No var found for symbol '${sym.name}' in binding form`,
           { sym },
           getPos(sym)
         )
       }
-      targetVar = targetNs.vars.get(localName)
-    } else {
-      targetVar = lookupVar(sym.name, env)
-    }
+      if (!targetVar.dynamic) {
+        throw new EvaluationError(
+          `Cannot use binding with non-dynamic var ${targetVar.ns}/${targetVar.name}. ` +
+            `Mark it dynamic with (def ^:dynamic ${sym.name} ...)`,
+          { sym },
+          getPos(sym)
+        )
+      }
 
-    if (!targetVar) {
-      throw new EvaluationError(
-        `No var found for symbol '${sym.name}' in binding form`,
-        { sym },
-        getPos(sym)
-      )
+      targetVar.bindingStack ??= []
+      targetVar.bindingStack.push(newVal)
+      boundVars.push(targetVar)
     }
-    if (!targetVar.dynamic) {
-      throw new EvaluationError(
-        `Cannot use binding with non-dynamic var ${targetVar.ns}/${targetVar.name}. ` +
-          `Mark it dynamic with (def ^:dynamic ${sym.name} ...)`,
-        { sym },
-        getPos(sym)
-      )
+  } catch (e) {
+    for (let i = boundVars.length - 1; i >= 0; i--) {
+      boundVars[i].bindingStack!.pop()
     }
-
-    targetVar.bindingStack ??= []
-    targetVar.bindingStack.push(newVal)
-    boundVars.push(targetVar)
+    throw e
   }
 
   return { body, boundVars }

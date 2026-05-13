@@ -487,8 +487,8 @@ async function evaluateBindingAsync(
   try {
     return await evaluateFormsAsync(body, env, asyncCtx)
   } finally {
-    for (const v of boundVars) {
-      v.bindingStack!.pop()
+    for (let i = boundVars.length - 1; i >= 0; i--) {
+      boundVars[i].bindingStack!.pop()
     }
   }
 }

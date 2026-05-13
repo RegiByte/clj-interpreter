@@ -172,6 +172,28 @@ describe('Dynamic vars and binding form', () => {
     const s = mkSession()
     expect(() => s.evaluate('(binding [no-such-var 1] nil)')).toThrow()
   })
+
+  it('binding cleans up earlier pushes when a later compiled binding setup fails', () => {
+    const s = mkSession()
+    s.evaluate('(def ^:dynamic *a* :root)')
+    s.evaluate('(def b :not-dynamic)')
+
+    expect(() => s.evaluate('(binding [*a* :bound b :bad] nil)')).toThrow(
+      /non-dynamic/
+    )
+    expect((s.evaluate('*a*') as any).name).toBe(':root')
+  })
+
+  it('binding cleans up earlier pushes when interpreter fallback setup fails', () => {
+    const s = mkSession()
+    s.evaluate('(def ^:dynamic *a* :root)')
+    s.evaluate('(def b :not-dynamic)')
+
+    expect(() =>
+      s.evaluate('(binding [*a* :bound b (quote :bad)] nil)')
+    ).toThrow(/non-dynamic/)
+    expect((s.evaluate('*a*') as any).name).toBe(':root')
+  })
 })
 
 describe('defmacro and defmulti as Vars', () => {
