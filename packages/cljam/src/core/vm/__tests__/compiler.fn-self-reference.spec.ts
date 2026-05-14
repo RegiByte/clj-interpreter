@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import { createEvaluationContext } from '../../evaluator'
+import { applyFunctionWithContext } from '../../evaluator/apply'
 import { v } from '../../factories'
 import { createSession } from '../../session'
 import { disassembleChunk } from '../debug'
-import { compileFnBodyForTest } from './compiler-test-utils'
+import { compileFnBodyForTest, makeCallTestEnv } from './compiler-test-utils'
 
 describe('VM named fn* self-reference', () => {
   describe('compiler structure', () => {
@@ -72,6 +74,91 @@ describe('VM named fn* self-reference', () => {
 
       expect(disassembleChunk(arityChunk)).toContain('LoadLocal 1')
     })
+
+    it('tail-position self-call compiles to FnRecur instead of Call', () => {
+      const chunk = compileFnBodyForTest([], [
+        '(fn* countdown [n] (if (= n 0) :done (countdown (- n 1))))',
+      ])
+
+      expect(chunk).not.toBeNull()
+      if (chunk === null) return
+
+      const arityChunk = chunk.innerFunctions[0]?.arities[0]?.chunk
+      expect(arityChunk).toBeDefined()
+      if (arityChunk === undefined) return
+
+      const disassembly = disassembleChunk(arityChunk)
+      expect(disassembly).toContain('FnRecur 1 -> 0000')
+      expect(disassembly).not.toContain('Call')
+    })
+
+    it('variadic tail-position self-call compiles to FnRecurRest', () => {
+      const chunk = compileFnBodyForTest([], [
+        '(fn* collect [n & more] (if (= n 0) more (collect (- n 1) n (+ n 10))))',
+      ])
+
+      expect(chunk).not.toBeNull()
+      if (chunk === null) return
+
+      const arityChunk = chunk.innerFunctions[0]?.arities[0]?.chunk
+      expect(arityChunk).toBeDefined()
+      if (arityChunk === undefined) return
+
+      expect(disassembleChunk(arityChunk)).toContain(
+        'FnRecurRest 3 1 -> 0000'
+      )
+    })
+
+    it('non-tail self-call stays on the normal Call path', () => {
+      const chunk = compileFnBodyForTest([], [
+        '(fn* sumdown [n] (if (= n 0) 0 (+ n (sumdown (- n 1)))))',
+      ])
+
+      expect(chunk).not.toBeNull()
+      if (chunk === null) return
+
+      const arityChunk = chunk.innerFunctions[0]?.arities[0]?.chunk
+      expect(arityChunk).toBeDefined()
+      if (arityChunk === undefined) return
+
+      const disassembly = disassembleChunk(arityChunk)
+      expect(disassembly).toContain('Call 1')
+      expect(disassembly).not.toContain('FnRecur')
+    })
+
+    it('cross-arity self-call stays on the normal Call path', () => {
+      const chunk = compileFnBodyForTest([], [
+        '(fn* sum* ([n] (sum* n 0)) ([n acc] (if (= n 0) acc (sum* (- n 1) (+ acc n)))))',
+      ])
+
+      expect(chunk).not.toBeNull()
+      if (chunk === null) return
+
+      const arity1Chunk = chunk.innerFunctions[0]?.arities[0]?.chunk
+      expect(arity1Chunk).toBeDefined()
+      if (arity1Chunk === undefined) return
+
+      const disassembly = disassembleChunk(arity1Chunk)
+      expect(disassembly).toContain('Call 2')
+      expect(disassembly).not.toContain('FnRecur')
+    })
+
+    it('let* shadowing of the self-name prevents self-call TCO', () => {
+      const chunk = compileFnBodyForTest([], [
+        '(fn* f [n] (let* [f (fn* [x] x)] (f n)))',
+      ])
+
+      expect(chunk).not.toBeNull()
+      if (chunk === null) return
+
+      const arityChunk = chunk.innerFunctions[0]?.arities[0]?.chunk
+      expect(arityChunk).toBeDefined()
+      if (arityChunk === undefined) return
+
+      const disassembly = disassembleChunk(arityChunk)
+      expect(disassembly).toContain('Call 1')
+      expect(disassembly).not.toContain('FnRecur')
+    })
   })
 
   describe('runtime behaviour', () => {
@@ -128,6 +215,74 @@ describe('VM named fn* self-reference', () => {
           '((fn* sum* ([n] (sum* n 0)) ([n acc] (if (= n 0) acc (sum* (dec n) (+ n acc))))) 5)'
         )
       ).toEqual(v.number(15))
+    })
+
+    it('deep tail recursion by self-name runs past the VM frame limit', () => {
+      const chunk = compileFnBodyForTest(
+        ['n'],
+        ['(if (= n 0) n (down (- n 1)))'],
+        { selfName: 'down' }
+      )
+
+      expect(chunk).not.toBeNull()
+      if (chunk === null) return
+
+      const env = makeCallTestEnv()
+      const fn = v.multiArityFunction(
+        [
+          {
+            params: [v.symbol('n')],
+            restParam: null,
+            body: [],
+            bytecodeBody: chunk,
+          },
+        ],
+        env
+      )
+      fn.name = 'down'
+
+      expect(
+        applyFunctionWithContext(
+          fn,
+          [v.number(10005)],
+          createEvaluationContext(),
+          env
+        )
+      ).toEqual(v.number(0))
+    })
+
+    it('variadic self-tail-call repacks rest args', () => {
+      const chunk = compileFnBodyForTest(
+        ['n'],
+        ['(if (= n 0) more (collect (- n 1) n (+ n 10)))'],
+        { restParam: 'more', selfName: 'collect' }
+      )
+
+      expect(chunk).not.toBeNull()
+      if (chunk === null) return
+
+      const env = makeCallTestEnv()
+      const fn = v.multiArityFunction(
+        [
+          {
+            params: [v.symbol('n')],
+            restParam: v.symbol('more'),
+            body: [],
+            bytecodeBody: chunk,
+          },
+        ],
+        env
+      )
+      fn.name = 'collect'
+
+      expect(
+        applyFunctionWithContext(
+          fn,
+          [v.number(3)],
+          createEvaluationContext(),
+          env
+        )
+      ).toEqual(v.list([v.number(1), v.number(11)]))
     })
   })
 })

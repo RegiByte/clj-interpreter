@@ -107,6 +107,7 @@ export function compileFnBodyForTest(
   bodyCode: string[],
   options: {
     restParam?: string | null
+    selfName?: string | null
   } = {}
 ) {
   return compileVmFnBody(
@@ -114,7 +115,8 @@ export function compileFnBodyForTest(
     options.restParam === undefined || options.restParam === null
       ? null
       : v.symbol(options.restParam),
-    bodyCode.map(formToNode)
+    bodyCode.map(formToNode),
+    options.selfName ?? null
   )
 }
 
@@ -125,6 +127,7 @@ export function expectVmFnBodyCompilesTo(
   expected: CljValue,
   options: {
     restParam?: string | null
+    selfName?: string | null
   } = {}
 ) {
   const chunk = compileFnBodyForTest(paramNames, bodyCode, options)

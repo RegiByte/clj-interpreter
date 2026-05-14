@@ -60,6 +60,7 @@ type VmCompileEnv = {
   enclosing: VmCompileEnv | null
   functionDepth: number
   selfName: string | null
+  isTailPosition: boolean
 }
 
 type UpvalueResolution = number | null
@@ -149,6 +150,7 @@ export function compileVm(node: CljValue): VmChunk | null {
     enclosing: null,
     functionDepth: 0,
     selfName: null,
+    isTailPosition: false,
   } as VmCompileEnv
 
   if (!emitExpression(chunk, node, compileEnv)) {
@@ -276,38 +278,40 @@ function emitTry(
   compileEnv: VmCompileEnv
 ): boolean {
   return emitTransaction(chunk, () => {
-    const tryStructure = parseVmTryStructure(node)
-    if (tryStructure === null) return false
+    return withTailPosition(compileEnv, false, () => {
+      const tryStructure = parseVmTryStructure(node)
+      if (tryStructure === null) return false
 
-    const state = createTryEmitState(chunk, tryStructure, compileEnv)
-    const pos = getPos(node) ?? null
+      const state = createTryEmitState(chunk, tryStructure, compileEnv)
+      const pos = getPos(node) ?? null
 
-    emitInlineFnDiscriminators(chunk, tryStructure, state, compileEnv, pos)
+      emitInlineFnDiscriminators(chunk, tryStructure, state, compileEnv, pos)
 
-    const mainTry = emitPushTry(chunk, state.tableIndex, -1, 0, pos)
-    state.finallyOperands.push(mainTry.finallyOperand)
-    state.afterOperands.push(mainTry.afterOperand)
+      const mainTry = emitPushTry(chunk, state.tableIndex, -1, 0, pos)
+      state.finallyOperands.push(mainTry.finallyOperand)
+      state.afterOperands.push(mainTry.afterOperand)
 
-    if (!emitBodyForms(chunk, tryStructure.bodyForms, compileEnv, pos)) {
-      return false
-    }
-    emitNormalTryExit(chunk, state, pos)
-
-    for (let i = 0; i < tryStructure.catchClauses.length; i++) {
-      if (!emitCatchClause(chunk, tryStructure, state, compileEnv, i, pos)) {
+      if (!emitBodyForms(chunk, tryStructure.bodyForms, compileEnv, pos)) {
         return false
       }
-    }
+      emitNormalTryExit(chunk, state, pos)
 
-    if (state.hasFinally) {
-      if (!emitFinallyTail(chunk, tryStructure, state, compileEnv, pos)) {
-        return false
+      for (let i = 0; i < tryStructure.catchClauses.length; i++) {
+        if (!emitCatchClause(chunk, tryStructure, state, compileEnv, i, pos)) {
+          return false
+        }
       }
-    } else {
-      emitCatchOnlyTail(chunk, state)
-    }
 
-    return true
+      if (state.hasFinally) {
+        if (!emitFinallyTail(chunk, tryStructure, state, compileEnv, pos)) {
+          return false
+        }
+      } else {
+        emitCatchOnlyTail(chunk, state)
+      }
+
+      return true
+    })
   })
 }
 
@@ -536,6 +540,20 @@ function emitCatchOnlyTail(chunk: VmChunk, state: TryEmitState): void {
   chunk.code[state.afterOperands[0]] = chunk.code.length
 }
 
+function withTailPosition(
+  compileEnv: VmCompileEnv,
+  isTailPosition: boolean,
+  emitForm: () => boolean
+): boolean {
+  const previousTailPosition = compileEnv.isTailPosition
+  compileEnv.isTailPosition = isTailPosition
+  try {
+    return emitForm()
+  } finally {
+    compileEnv.isTailPosition = previousTailPosition
+  }
+}
+
 function emitBodyForms(
   chunk: VmChunk,
   body: CljValue[],
@@ -548,7 +566,15 @@ function emitBodyForms(
   }
 
   for (let i = 0; i < body.length; i++) {
-    if (!emitExpression(chunk, body[i], compileEnv)) return false
+    const isLast = i === body.length - 1
+    const isTailPosition = compileEnv.isTailPosition && isLast
+    if (
+      !withTailPosition(compileEnv, isTailPosition, () =>
+        emitExpression(chunk, body[i], compileEnv)
+      )
+    ) {
+      return false
+    }
     if (i < body.length - 1) {
       emit(chunk, Op.Pop, pos)
     }
@@ -636,8 +662,16 @@ function emitDo(
 
     for (let i = 0; i < body.length; i++) {
       const form = body[i]
+      const isLast = i === body.length - 1
+      const isTailPosition = compileEnv.isTailPosition && isLast
 
-      if (!emitExpression(chunk, form, compileEnv)) return false
+      if (
+        !withTailPosition(compileEnv, isTailPosition, () =>
+          emitExpression(chunk, form, compileEnv)
+        )
+      ) {
+        return false
+      }
 
       if (i < body.length - 1) {
         emit(chunk, Op.Pop, getPos(node) ?? null)
@@ -660,18 +694,37 @@ function emitIf(
     const test = parts[1]
     const thenBranch = parts[2]
     const elseBranch = parts[3] ?? v.nil()
+    const isTailPosition = compileEnv.isTailPosition
 
-    if (!emitExpression(chunk, test, compileEnv)) return false
+    if (
+      !withTailPosition(compileEnv, false, () =>
+        emitExpression(chunk, test, compileEnv)
+      )
+    ) {
+      return false
+    }
 
     const elseJump = emitJump(chunk, Op.JumpIfFalsy, getPos(node) ?? null)
 
-    if (!emitExpression(chunk, thenBranch, compileEnv)) return false
+    if (
+      !withTailPosition(compileEnv, isTailPosition, () =>
+        emitExpression(chunk, thenBranch, compileEnv)
+      )
+    ) {
+      return false
+    }
 
     const endJump = emitJump(chunk, Op.Jump, getPos(node) ?? null)
 
     patchJump(chunk, elseJump)
 
-    if (!emitExpression(chunk, elseBranch, compileEnv)) return false
+    if (
+      !withTailPosition(compileEnv, isTailPosition, () =>
+        emitExpression(chunk, elseBranch, compileEnv)
+      )
+    ) {
+      return false
+    }
 
     patchJump(chunk, endJump)
 
@@ -713,6 +766,10 @@ function emitCall(
   return emitTransaction(chunk, () => {
     const callee = node.value[0]
     const args = node.value.slice(1)
+    if (emitTailSelfCall(chunk, callee, args, compileEnv, getPos(node) ?? null)) {
+      return true
+    }
+
     if (
       is.symbol(callee) &&
       !isQualifiedSymbolName(callee.name) &&
@@ -722,7 +779,13 @@ function emitCall(
       const intrinsicOpcode = intrinsicOpcodeFor(callee.name as IntrinsicName)
       if (intrinsicOpcode !== null) {
         for (let i = 0; i < args.length; i++) {
-          if (!emitExpression(chunk, args[i], compileEnv)) return false
+          if (
+            !withTailPosition(compileEnv, false, () =>
+              emitExpression(chunk, args[i], compileEnv)
+            )
+          ) {
+            return false
+          }
         }
 
         const pos = getPos(node) ?? null
@@ -733,10 +796,22 @@ function emitCall(
       }
     }
 
-    if (!emitExpression(chunk, callee, compileEnv)) return false
+    if (
+      !withTailPosition(compileEnv, false, () =>
+        emitExpression(chunk, callee, compileEnv)
+      )
+    ) {
+      return false
+    }
 
     for (let i = 0; i < args.length; i++) {
-      if (!emitExpression(chunk, args[i], compileEnv)) return false
+      if (
+        !withTailPosition(compileEnv, false, () =>
+          emitExpression(chunk, args[i], compileEnv)
+        )
+      ) {
+        return false
+      }
     }
 
     const pos = getPos(node) ?? null
@@ -745,6 +820,56 @@ function emitCall(
 
     return true
   })
+}
+
+function emitTailSelfCall(
+  chunk: VmChunk,
+  callee: CljValue,
+  args: CljValue[],
+  compileEnv: VmCompileEnv,
+  pos: Pos | null
+): boolean {
+  const recurTarget = compileEnv.recurTarget
+  if (
+    !compileEnv.isTailPosition ||
+    recurTarget === null ||
+    recurTarget.kind !== 'fn' ||
+    compileEnv.selfName === null ||
+    chunk.selfSlot < 0 ||
+    !is.symbol(callee) ||
+    isQualifiedSymbolName(callee.name) ||
+    callee.name !== compileEnv.selfName ||
+    compileEnv.locals.get(callee.name) !== chunk.selfSlot
+  ) {
+    return false
+  }
+
+  if (recurTarget.hasRestParam) {
+    if (args.length < recurTarget.paramCount) return false
+  } else if (args.length !== recurTarget.paramCount) {
+    return false
+  }
+
+  for (let i = 0; i < args.length; i++) {
+    if (
+      !withTailPosition(compileEnv, false, () =>
+        emitExpression(chunk, args[i], compileEnv)
+      )
+    ) {
+      return false
+    }
+  }
+
+  if (recurTarget.hasRestParam) {
+    emit(chunk, Op.FnRecurRest, pos)
+    emitOperand(chunk, args.length, pos)
+    emitOperand(chunk, recurTarget.paramCount, pos)
+  } else {
+    emit(chunk, Op.FnRecur, pos)
+    emitOperand(chunk, recurTarget.paramCount, pos)
+  }
+
+  return true
 }
 
 function canEmitDirectThrow(
@@ -768,7 +893,13 @@ function emitThrow(
 ): boolean {
   return emitTransaction(chunk, () => {
     const thrown = node.value[1]
-    if (!emitExpression(chunk, thrown, compileEnv)) return false
+    if (
+      !withTailPosition(compileEnv, false, () =>
+        emitExpression(chunk, thrown, compileEnv)
+      )
+    ) {
+      return false
+    }
 
     emit(chunk, Op.Throw, getPos(node) ?? null)
     return true
@@ -797,7 +928,13 @@ function emitVector(
       return true
     }
     for (let i = 0; i < elements.length; i++) {
-      if (!emitExpression(chunk, elements[i], compileEnv)) return false
+      if (
+        !withTailPosition(compileEnv, false, () =>
+          emitExpression(chunk, elements[i], compileEnv)
+        )
+      ) {
+        return false
+      }
     }
 
     emit(chunk, Op.MakeVector, pos)
@@ -823,8 +960,20 @@ function emitMap(
     }
 
     for (const [key, value] of entries) {
-      if (!emitExpression(chunk, key, compileEnv)) return false
-      if (!emitExpression(chunk, value, compileEnv)) return false
+      if (
+        !withTailPosition(compileEnv, false, () =>
+          emitExpression(chunk, key, compileEnv)
+        )
+      ) {
+        return false
+      }
+      if (
+        !withTailPosition(compileEnv, false, () =>
+          emitExpression(chunk, value, compileEnv)
+        )
+      ) {
+        return false
+      }
     }
 
     emit(chunk, Op.MakeMap, pos)
@@ -854,7 +1003,13 @@ function emitSet(
     }
 
     for (let i = 0; i < elements.length; i++) {
-      if (!emitExpression(chunk, elements[i], compileEnv)) return false
+      if (
+        !withTailPosition(compileEnv, false, () =>
+          emitExpression(chunk, elements[i], compileEnv)
+        )
+      ) {
+        return false
+      }
     }
 
     const pos = getPos(node) ?? null
@@ -885,7 +1040,13 @@ function emitLetStar(
         previousSlots.set(name.name, compileEnv.locals.get(name.name))
       }
       const expr = bindings.value[i + 1]
-      if (!emitExpression(chunk, expr, compileEnv)) return false
+      if (
+        !withTailPosition(compileEnv, false, () =>
+          emitExpression(chunk, expr, compileEnv)
+        )
+      ) {
+        return false
+      }
       emit(chunk, Op.StoreLocal)
       emitOperand(chunk, slot)
       declareLocal(compileEnv, name.name, slot, false)
@@ -894,7 +1055,15 @@ function emitLetStar(
 
     for (let i = 0; i < body.length; i++) {
       const form = body[i]
-      if (!emitExpression(chunk, form, compileEnv)) return false
+      const isLast = i === body.length - 1
+      const isTailPosition = compileEnv.isTailPosition && isLast
+      if (
+        !withTailPosition(compileEnv, isTailPosition, () =>
+          emitExpression(chunk, form, compileEnv)
+        )
+      ) {
+        return false
+      }
 
       if (i < body.length - 1) {
         emit(chunk, Op.Pop)
@@ -931,14 +1100,24 @@ function emitBinding(
       if (!is.symbol(sym)) return false
 
       const expr = bindings.value[i + 1]
-      if (!emitExpression(chunk, expr, compileEnv)) return false
+      if (
+        !withTailPosition(compileEnv, false, () =>
+          emitExpression(chunk, expr, compileEnv)
+        )
+      ) {
+        return false
+      }
 
       const symPos = getPos(sym) ?? pos
       emit(chunk, Op.PushDynamicBinding, symPos)
       emitOperand(chunk, addConstant(chunk, sym), symPos)
     }
 
-    if (!emitBodyForms(chunk, node.value.slice(2), compileEnv, pos)) {
+    if (
+      !withTailPosition(compileEnv, false, () =>
+        emitBodyForms(chunk, node.value.slice(2), compileEnv, pos)
+      )
+    ) {
       return false
     }
     emit(chunk, Op.PopBindingFrame, pos)
@@ -960,7 +1139,13 @@ function emitSetBang(
 
   return emitTransaction(chunk, () => {
     const expr = node.value[2]
-    if (!emitExpression(chunk, expr, compileEnv)) return false
+    if (
+      !withTailPosition(compileEnv, false, () =>
+        emitExpression(chunk, expr, compileEnv)
+      )
+    ) {
+      return false
+    }
     const pos = getPos(node) ?? null
     const symPos = getPos(sym) ?? pos
     emit(chunk, Op.SetDynamic, symPos)
@@ -995,7 +1180,13 @@ function emitLoopStar(
         previousSlots.set(name.name, compileEnv.locals.get(name.name))
       }
       const expr = bindings.value[i + 1]
-      if (!emitExpression(chunk, expr, compileEnv)) return false
+      if (
+        !withTailPosition(compileEnv, false, () =>
+          emitExpression(chunk, expr, compileEnv)
+        )
+      ) {
+        return false
+      }
       emit(chunk, Op.StoreLocal)
       emitOperand(chunk, slot)
       declareLocal(compileEnv, name.name, slot, true)
@@ -1017,7 +1208,13 @@ function emitLoopStar(
 
     for (let i = 0; i < body.length; i++) {
       const form = body[i]
-      if (!emitExpression(chunk, form, compileEnv)) {
+      const isLast = i === body.length - 1
+      const isTailPosition = compileEnv.isTailPosition && isLast
+      if (
+        !withTailPosition(compileEnv, isTailPosition, () =>
+          emitExpression(chunk, form, compileEnv)
+        )
+      ) {
         bodyCompiled = false
         break
       }
@@ -1120,6 +1317,7 @@ function compileVmFnBodyInternal(
     enclosing: options.enclosing,
     functionDepth: (options.enclosing?.functionDepth ?? -1) + 1,
     selfName: null,
+    isTailPosition: false,
   } as VmCompileEnv
 
   params.forEach((param, index) => {
@@ -1146,7 +1344,14 @@ function compileVmFnBodyInternal(
 
   for (let i = 0; i < body.length; i++) {
     const form = body[i]
-    if (!emitExpression(chunk, form, compileEnv)) return null
+    const isLast = i === body.length - 1
+    if (
+      !withTailPosition(compileEnv, isLast, () =>
+        emitExpression(chunk, form, compileEnv)
+      )
+    ) {
+      return null
+    }
 
     if (i < body.length - 1) {
       emit(chunk, Op.Pop)
