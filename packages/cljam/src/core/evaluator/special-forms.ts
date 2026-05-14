@@ -294,7 +294,8 @@ function evaluateFnStar(
       const bytecodeBody = compileVmFnBody(
         arity.params,
         arity.restParam,
-        arity.body
+        arity.body,
+        fnName
       )
       if (bytecodeBody !== null) {
         arity.bytecodeBody = bytecodeBody

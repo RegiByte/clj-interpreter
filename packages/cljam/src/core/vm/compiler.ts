@@ -59,6 +59,7 @@ type VmCompileEnv = {
   allowNestedFn: boolean
   enclosing: VmCompileEnv | null
   functionDepth: number
+  selfName: string | null
 }
 
 type UpvalueResolution = number | null
@@ -147,6 +148,7 @@ export function compileVm(node: CljValue): VmChunk | null {
     allowNestedFn: false,
     enclosing: null,
     functionDepth: 0,
+    selfName: null,
   } as VmCompileEnv
 
   if (!emitExpression(chunk, node, compileEnv)) {
@@ -564,13 +566,17 @@ function emitFnStar(
 
   return emitTransaction(chunk, () => {
     const rest = node.value.slice(1)
+
+    let selfName: string | null = null
+    let arityForms = rest
     if (rest[0] && is.symbol(rest[0])) {
-      return false
+      selfName = rest[0].name
+      arityForms = rest.slice(1)
     }
 
     let arities: Arity[]
     try {
-      arities = parseArities(rest, emptyEnvForVmParsing())
+      arities = parseArities(arityForms, emptyEnvForVmParsing())
     } catch {
       return false
     }
@@ -588,6 +594,7 @@ function emitFnStar(
           allowNestedFn: true,
           enclosing: compileEnv,
           upvalueDescriptors,
+          selfName,
         }
       )
       if (arityChunk === null) return false
@@ -1078,11 +1085,13 @@ function emitRecur(
 export function compileVmFnBody(
   params: CljSymbol[],
   restParam: CljSymbol | null,
-  body: CljValue[]
+  body: CljValue[],
+  selfName?: string | null
 ): VmChunk | null {
   return compileVmFnBodyInternal(params, restParam, body, {
     allowNestedFn: true,
     enclosing: null,
+    selfName,
   })
 }
 
@@ -1094,6 +1103,7 @@ function compileVmFnBodyInternal(
     allowNestedFn: boolean
     enclosing: VmCompileEnv | null
     upvalueDescriptors?: VmUpvalueDescriptor[]
+    selfName?: string | null
   }
 ): VmChunk | null {
   const compileEnv = {
@@ -1109,6 +1119,7 @@ function compileVmFnBodyInternal(
     allowNestedFn: options.allowNestedFn,
     enclosing: options.enclosing,
     functionDepth: (options.enclosing?.functionDepth ?? -1) + 1,
+    selfName: null,
   } as VmCompileEnv
 
   params.forEach((param, index) => {
@@ -1123,6 +1134,15 @@ function compileVmFnBodyInternal(
   const paramSlotCount = params.length + (restParam === null ? 0 : 1)
   chunk.localCount = paramSlotCount
   compileEnv.nextLocalSlot = paramSlotCount
+
+  const selfName = options.selfName ?? null
+  if (selfName !== null && !compileEnv.locals.has(selfName)) {
+    const selfSlot = compileEnv.nextLocalSlot++
+    chunk.selfSlot = selfSlot
+    chunk.localCount = compileEnv.nextLocalSlot
+    declareLocal(compileEnv, selfName, selfSlot, false)
+    compileEnv.selfName = selfName
+  }
 
   for (let i = 0; i < body.length; i++) {
     const form = body[i]

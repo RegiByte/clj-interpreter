@@ -30,6 +30,7 @@ export function makeChunk(name?: string): VmChunk {
     localCount: 0,
     innerFunctions: [],
     catchTables: [],
+    selfSlot: -1,
   }
   stackDepthByChunk.set(chunk, 0)
   return chunk

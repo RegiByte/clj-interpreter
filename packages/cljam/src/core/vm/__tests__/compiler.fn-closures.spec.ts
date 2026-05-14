@@ -112,10 +112,6 @@ describe('VM function closure and upvalue compilation', () => {
     ).toEqual(v.vector([v.number(11), v.number(13)]))
   })
 
-  it('falls back for named anonymous fn* until VM self-reference is designed', () => {
-    expect(compileFnBodyForTest([], ['(fn* local-name [] 42)'])).toBeNull()
-  })
-
   it('compiles nested rest-param fn* closures', () => {
     const chunk = compileFnBodyForTest([], ['(fn* [x & more] more)'])
 

@@ -574,6 +574,7 @@ export type VmChunk = {
   localCount: number
   innerFunctions: VmFunctionTemplate[]
   catchTables: VmCatchTable[]
+  selfSlot: number
 }
 
 export type VmExecuteInput = {

@@ -37,13 +37,16 @@ export function applyFunctionWithContext(
     const arity = resolveArity(fn.arities, args.length)
 
     if (arity.bytecodeBody) {
+      const chunk = arity.bytecodeBody
       let locals = slotValuesForArity(arity, args)
-      const localCount = arity.bytecodeBody.localCount
-      while (locals.length < localCount) {
+      while (locals.length < chunk.localCount) {
         locals.push(cljNil())
       }
+      if (chunk.selfSlot >= 0) {
+        locals[chunk.selfSlot] = fn
+      }
       return executeChunk({
-        chunk: arity.bytecodeBody,
+        chunk,
         env: fn.env,
         ctx,
         locals,

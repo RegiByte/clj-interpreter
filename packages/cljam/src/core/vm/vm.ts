@@ -1554,6 +1554,10 @@ function pushBytecodeFrame(
     locals.push(v.nil())
   }
 
+  if (chunk.selfSlot >= 0) {
+    locals[chunk.selfSlot] = fn
+  }
+
   state.frames.push({
     chunk,
     env: fn.env,
