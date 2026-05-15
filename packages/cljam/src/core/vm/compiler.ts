@@ -153,7 +153,7 @@ export function tryCompileVm(node: CljValue): VmCompileResult {
     upvalueDescriptors: [],
     nextLocalSlot: 0,
     recurTarget: null,
-    allowNestedFn: false,
+    allowNestedFn: true,
     enclosing: null,
     functionDepth: 0,
     selfName: null,

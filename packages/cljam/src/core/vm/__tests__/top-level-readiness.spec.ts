@@ -63,6 +63,34 @@ const readyCases: ReadyCase[] = [
     code: '(let [{:keys [a b] :or {b 7}} {:a 1}] [a b])',
   },
   { name: 'vec over map', code: '(vec (map inc [1 2 3]))' },
+  {
+    name: 'top-level anonymous fn call',
+    code: '((fn [x] (+ x 1)) 4)',
+  },
+  {
+    name: 'inline fn argument',
+    code: '(vec (map (fn [x] (* x x)) [1 2 3]))',
+  },
+  {
+    name: 'top-level named anonymous recursion',
+    code: '((fn fact [n] (if (= n 0) 1 (* n (fact (- n 1))))) 5)',
+  },
+  {
+    name: 'top-level rest-param fn literal',
+    code: '((fn [x & more] [x more]) 1 2 3)',
+  },
+  {
+    name: 'top-level let closure capture',
+    code: '((let [x 10] (fn [y] (+ x y))) 5)',
+  },
+  {
+    name: 'top-level returned closure keeps captured local',
+    code: '(((let [x 10] (fn [] (fn [] x)))))',
+  },
+  {
+    name: 'top-level multi-arity fn literal',
+    code: '((fn ([x] (+ x 1)) ([x y] (+ x y))) 20 22)',
+  },
   { name: 'vec over filter and range', code: '(vec (filter odd? (range 6)))' },
   { name: 'vec over take and range', code: '(vec (take 5 (range 10)))' },
   {
@@ -132,7 +160,7 @@ const fallbackCases: FallbackCase[] = [
   {
     name: 'letfn macro expansion',
     code: '(letfn [(even? [n] (if (= n 0) true (odd? (- n 1)))) (odd? [n] (if (= n 0) false (even? (- n 1))))] (even? 4))',
-    category: 'compile-error',
+    category: 'unsupported-special-form',
   },
   {
     name: 'JS interop call',
@@ -161,14 +189,9 @@ const fallbackCases: FallbackCase[] = [
     category: 'compile-error',
   },
   {
-    name: 'top-level anonymous fn call',
-    code: '((fn [x] (+ x 1)) 4)',
-    category: 'compile-error',
-  },
-  {
-    name: 'inline fn argument',
-    code: '(vec (map (fn [x] (* x x)) [1 2 3]))',
-    category: 'compile-error',
+    name: 'top-level fn literal with unsupported body',
+    code: '(fn [] (letfn* [f (fn* [] nil)] (f)))',
+    category: 'unsupported-special-form',
   },
 ]
 
@@ -292,8 +315,8 @@ describe('VM top-level readiness harness', () => {
     expect(histogram).toEqual(
       new Map([
         ['unsupported-top-level-mutation', 3],
-        ['unsupported-special-form', 3],
-        ['compile-error', 4],
+        ['unsupported-special-form', 5],
+        ['compile-error', 1],
         ['unsupported-js-interop', 3],
         ['unsupported-binding-form', 1],
       ])
