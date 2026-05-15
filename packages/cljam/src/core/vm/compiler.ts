@@ -103,7 +103,6 @@ const unsupportedVmSpecialForms = new Set<string>([
   specialFormKeywords['def'],
   specialFormKeywords['quote'],
   specialFormKeywords['var'],
-  specialFormKeywords['lazy-seq'],
   specialFormKeywords['async'],
   specialFormKeywords['.'],
   specialFormKeywords['js/new'],
@@ -720,7 +719,7 @@ function emitFnStar(
 
     for (const arity of arities) {
       assertRecurInTailPosition(arity.body)
-      const arityChunk = compileVmFnBodyInternal(
+      const arityResult = compileVmFnBodyInternal(
         arity.params,
         arity.restParam,
         arity.body,
@@ -731,11 +730,11 @@ function emitFnStar(
           selfName,
         }
       )
-      if (arityChunk === null) return false
+      if (!arityResult.ok) return fail(compileEnv, arityResult.reason)
       templateArityChunks.push({
         params: arity.params,
         restParam: arity.restParam,
-        chunk: arityChunk,
+        chunk: arityResult.chunk,
       })
     }
 
@@ -1419,6 +1418,16 @@ export function compileVmFnBody(
   body: CljValue[],
   selfName?: string | null
 ): VmChunk | null {
+  const result = tryCompileVmFnBody(params, restParam, body, selfName)
+  return result.ok ? result.chunk : null
+}
+
+export function tryCompileVmFnBody(
+  params: CljSymbol[],
+  restParam: CljSymbol | null,
+  body: CljValue[],
+  selfName?: string | null
+): VmCompileResult {
   return compileVmFnBodyInternal(params, restParam, body, {
     allowNestedFn: true,
     enclosing: null,
@@ -1436,7 +1445,7 @@ function compileVmFnBodyInternal(
     upvalueDescriptors?: VmUpvalueDescriptor[]
     selfName?: string | null
   }
-): VmChunk | null {
+): VmCompileResult {
   const compileEnv = {
     locals: new Map<string, number>(),
     localInfo: [],
@@ -1477,25 +1486,38 @@ function compileVmFnBodyInternal(
     compileEnv.selfName = selfName
   }
 
-  for (let i = 0; i < body.length; i++) {
-    const form = body[i]
-    const isLast = i === body.length - 1
-    if (
-      !withTailPosition(compileEnv, isLast, () =>
-        emitExpression(chunk, form, compileEnv)
-      )
-    ) {
-      return null
-    }
+  try {
+    for (let i = 0; i < body.length; i++) {
+      const form = body[i]
+      const isLast = i === body.length - 1
+      if (
+        !withTailPosition(compileEnv, isLast, () =>
+          emitExpression(chunk, form, compileEnv)
+        )
+      ) {
+        return {
+          ok: false,
+          reason: compileEnv.failureReason ?? fallbackReasonForNode(form),
+        }
+      }
 
-    if (i < body.length - 1) {
-      emit(chunk, Op.Pop)
+      if (i < body.length - 1) {
+        emit(chunk, Op.Pop)
+      }
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      reason: {
+        category: 'compile-error',
+        detail: error instanceof Error ? error.message : String(error),
+      },
     }
   }
 
   emit(chunk, Op.Return)
 
-  return chunk
+  return { ok: true, chunk }
 }
 
 function declareLocal(

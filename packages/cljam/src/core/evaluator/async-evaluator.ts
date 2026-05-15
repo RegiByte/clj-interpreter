@@ -20,7 +20,7 @@
  * Forms that are safe to delegate to syncCtx.evaluate:
  *   - `quote`, `var`, `fn/fn*`, `ns` — no sub-expression evaluation at the
  *     creation site; fn bodies are evaluated async only when the fn is called.
- *   - `defmacro`, `defmulti`, `defmethod`, `letfn`, `delay`, `lazy-seq`,
+ *   - `defmacro`, `defmulti`, `defmethod`, `letfn`, `delay`,
  *     `quasiquote` — create thunks or install definitions; content is
  *     evaluated lazily or later.
  *   - `binding` — body runs async (see evaluateBindingAsync); binding VALUES
@@ -195,7 +195,6 @@ const ASYNC_SPECIAL_FORMS = new Set([
   'var',
   'defmacro',
   'letfn*',
-  'lazy-seq',
   'ns',
   'async',
   // JS interop — delegate to sync; args inside (async ...) are not awaited
@@ -368,7 +367,7 @@ async function evaluateSpecialFormAsync(
       return asyncCtx.syncCtx.evaluate(newList, env)
     }
 
-    // defmacro, quasiquote, defmulti, defmethod, letfn, delay, lazy-seq, async:
+    // defmacro, quasiquote, defmulti, defmethod, letfn, delay, async:
     // delegate to sync evaluator (they don't have async sub-expressions in their
     // definition forms, or they create thunks that are evaluated sync later)
     default:

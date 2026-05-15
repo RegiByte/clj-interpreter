@@ -77,4 +77,28 @@ export const lazyFunctions = {
         docGroup: DocGroups.lazy,
       }),
     ]),
+  'make-lazy-seq': v
+    .nativeFnCtx(
+      'make-lazy-seq',
+      function makeLazySeqImpl(
+        ctx: EvaluationContext,
+        callEnv: Env,
+        fn: CljValue
+      ) {
+        if (!is.aFunction(fn)) {
+          throw new EvaluationError(
+            `make-lazy-seq: argument must be a function, got ${fn.kind}`,
+            { fn }
+          )
+        }
+        return v.lazySeq(() => ctx.applyCallable(fn, [], callEnv))
+      }
+    )
+    .withMeta([
+      ...docMeta({
+        doc: 'Creates a LazySeq that invokes thunk-fn (a zero-arg function) on first realization.',
+        arglists: [['thunk-fn']],
+        docGroup: DocGroups.lazy,
+      }),
+    ]),
 }

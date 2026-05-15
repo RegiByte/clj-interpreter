@@ -18,8 +18,6 @@ export const specialFormKeywords = {
   binding: 'binding',
   'set!': 'set!',
   'letfn*': 'letfn*',
-  // Lazy forms
-  'lazy-seq': 'lazy-seq',
   async: 'async',
   // JS INTEROP
   '.': '.',

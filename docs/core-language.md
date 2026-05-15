@@ -285,18 +285,6 @@ The `async` form is cljam-specific. It is **not** equivalent to a JS `async` fun
 
 ---
 
-### `lazy-seq`
-
-```clojure
-(lazy-seq body)
-```
-
-Creates a lazy sequence. `body` is not evaluated until the sequence is realized. Body must return `nil` (empty) or a `CljSeq`.
-
-Used by the `lazy-seq` macro (in `clojure/core.clj`) which wraps body in a thunk automatically. The special form receives the pre-wrapped thunk.
-
----
-
 ## Tier 2 — Bootstrap-Only Forms
 
 These forms appear during macro loading but should not appear in user programs after expansion.
@@ -338,6 +326,7 @@ For reference — the major macros and their expansion targets:
 | `for` | `lazy-seq` + `let*` + `if` + `recur` |
 | `doseq` | `loop*` + `recur` + `if` |
 | `delay` | `make-delay` + `fn*` |
+| `lazy-seq` | `make-lazy-seq` + `fn*` |
 | `defmulti` | `def` + `make-multimethod` (with re-eval guard) |
 | `defmethod` | `add-method!` |
 | `with-out-str` | `binding` + `*out*` + `StringBuilder` |

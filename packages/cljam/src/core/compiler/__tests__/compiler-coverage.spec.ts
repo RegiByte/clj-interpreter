@@ -901,13 +901,10 @@ describe('Compiler Coverage — bails → null', () => {
   })
 
   // -------------------------------------------------------------------------
-  // Special forms — lazy / async
+  // Special forms — async
   // -------------------------------------------------------------------------
-  describe('Special forms — lazy and async (lazy-seq, async)', () => {
-    it.each([
-      ['lazy-seq', '(lazy-seq (cons 1 nil))'],
-      ['async', '(async (+ 1 2))'],
-    ])('%s: %s → null', (_, code) => {
+  describe('Special forms — async', () => {
+    it.each([['async', '(async (+ 1 2))']])('%s: %s → null', (_, code) => {
       expect(compileForm(code)).toBeNull()
     })
   })

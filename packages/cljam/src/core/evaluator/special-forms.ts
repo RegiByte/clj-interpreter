@@ -26,7 +26,7 @@ import { evaluateDot, evaluateNew } from './js-interop'
 import { assertRecurInTailPosition } from './recur-check'
 
 import { compile, compileFnBody } from '../compiler/index.ts'
-import { compileVmFnBody } from '../vm/compiler.ts'
+import { tryCompileVmFnBody } from '../vm/compiler.ts'
 
 function hasDynamicMeta(meta: CljMap | undefined): boolean {
   if (!meta) return false
@@ -292,14 +292,14 @@ function evaluateFnStar(
     assertRecurInTailPosition(arity.body)
 
     if (canUseVmBody) {
-      const bytecodeBody = compileVmFnBody(
+      const vmResult = tryCompileVmFnBody(
         arity.params,
         arity.restParam,
         arity.body,
         fnName
       )
-      if (bytecodeBody !== null) {
-        arity.bytecodeBody = bytecodeBody
+      if (vmResult.ok) {
+        arity.bytecodeBody = vmResult.chunk
         ctx.instrumentation?.onEvent({
           path: 'vm:function-body-compiled',
           mode: ctx.vmExecutionMode ?? 'function-body',
@@ -309,6 +309,20 @@ function evaluateFnStar(
             functionName: fnName ?? null,
             fixedParamCount: arity.params.length,
             hasRestParam: arity.restParam !== null,
+          },
+        })
+      } else {
+        ctx.instrumentation?.onEvent({
+          path: 'fallback',
+          mode: ctx.vmExecutionMode ?? 'function-body',
+          reason: vmResult.reason,
+          formKind: 'fn*',
+          ast: list,
+          details: {
+            functionName: fnName ?? null,
+            fixedParamCount: arity.params.length,
+            hasRestParam: arity.restParam !== null,
+            phase: 'vm:function-body-compile',
           },
         })
       }
@@ -660,15 +674,6 @@ function evaluateSet(
   return newVal
 }
 
-function evaluateLazySeqForm(
-  list: CljList,
-  env: Env,
-  ctx: EvaluationContext
-): CljValue {
-  const body = list.value.slice(1)
-  return v.lazySeq(() => ctx.evaluateForms(body, env))
-}
-
 // --- ASYNC BLOCK HANDLER (experimental) ---
 // Gateway into the async sub-evaluator. See async-evaluator.ts.
 // To revert: remove this function, the `async` case below, and the import above.
@@ -707,7 +712,6 @@ const specialFormEvaluatorEntries = {
   binding: evaluateBinding,
   'set!': evaluateSet,
   'letfn*': evaluateLetfnStar,
-  'lazy-seq': evaluateLazySeqForm,
   // --- ASYNC (experimental) ---
   async: evaluateAsyncBlock,
   // --- END ASYNC ---

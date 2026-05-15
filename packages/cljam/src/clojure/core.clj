@@ -123,6 +123,15 @@
   [& body]
   `(make-delay (fn* [] ~@body)))
 
+;; lazy-seq: wraps body in a zero-arg fn and defers evaluation until realized.
+;; make-lazy-seq is a native primitive that creates the CljLazySeq value.
+(defmacro
+  ^{:doc-group "Sequences"}
+  lazy-seq
+  "Takes a body of expressions that returns a seq or nil, and yields a LazySeq that will invoke the body only the first time it is realized."
+  [& body]
+  `(make-lazy-seq (fn* [] ~@body)))
+
 
 (defn
   ^{:doc-group "Metadata"}

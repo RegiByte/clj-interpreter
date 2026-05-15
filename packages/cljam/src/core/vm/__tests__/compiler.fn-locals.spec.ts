@@ -106,7 +106,6 @@ describe('VM function body locals and let* compilation', () => {
   it.each([
     ['def', '(def y x)'],
     ['var', '(var x)'],
-    ['lazy-seq', '(lazy-seq x)'],
     ['async', '(async x)'],
     ['JS interop dot', '(. x foo)'],
     ['JS constructor interop', '(js/new Date)'],
