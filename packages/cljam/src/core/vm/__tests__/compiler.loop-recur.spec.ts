@@ -131,6 +131,17 @@ describe('VM loop* compilation', () => {
     )
   })
 
+  it('keeps loop local slots contiguous when init expressions allocate temporaries', () => {
+    expectVmFnBodyCompilesTo(
+      [],
+      [
+        '(loop* [acc (let* [x 0] x) n 0 limit 2 seen false] (if (= n limit) acc (recur (+ acc n) (+ n 1) limit seen)))',
+      ],
+      [v.nil(), v.nil(), v.nil(), v.nil(), v.nil()],
+      v.number(1)
+    )
+  })
+
   it('compiles nested loop* forms so inner recur targets the inner loop', () => {
     const chunk = compileFnBodyForTest(
       [],

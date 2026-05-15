@@ -15,7 +15,13 @@ import { readForms } from './reader'
 import type { Runtime, RuntimeSnapshot } from './runtime'
 import { createRuntime, restoreRuntime } from './runtime'
 import { tokenize } from './tokenizer'
-import type { CljNamespace, CljValue, Env } from './types'
+import type {
+  CljNamespace,
+  CljValue,
+  Env,
+  EvalEvent,
+  VmExecutionMode,
+} from './types'
 
 // Extract the :message from an ex-info value. Only applies to maps that were
 // created via (ex-info ...) — identified by having both :message and :data keys.
@@ -84,6 +90,18 @@ export type SessionOptions = {
    *   Example: ['node:path', 'node:url'] allows only those two modules.
    */
   allowedHostModules?: string[] | 'all'
+  /**
+   * Controls VM participation for this session, including bootstrap source
+   * loading when provided at createSession time.
+   */
+  vmExecutionMode?: VmExecutionMode
+  /**
+   * Optional execution/compile decision sink. When provided at createSession
+   * time it also observes clojure.core bootstrap loading.
+   */
+  instrumentation?: {
+    onEvent: (event: EvalEvent) => void
+  }
   /**
    * Initial working directory for this session. Defaults to process.cwd() in
    * Node/Bun environments; "/" in browser/embedded contexts. Exposed via `pwd`
@@ -195,6 +213,8 @@ function buildSessionFacade(
   ctx.importModule = options?.importModule
   ctx.allowedPackages = options?.allowedPackages ?? 'all'
   ctx.allowedHostModules = options?.allowedHostModules ?? 'all'
+  ctx.vmExecutionMode = options?.vmExecutionMode
+  ctx.instrumentation = options?.instrumentation
   ctx.setCurrentNs = (name: string) => {
     runtime.ensureNamespace(name)
     currentNs = name

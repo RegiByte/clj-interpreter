@@ -228,6 +228,28 @@ export type EvaluationContext = {
    *   string[]        — only specifiers that exactly match or start with one of these prefixes
    */
   allowedHostModules?: string[] | 'all'
+  /**
+   * Controls VM participation in sync evaluation.
+   *
+   * - function-body: current default; bytecode-backed function bodies may run.
+   * - opportunistic: outer evaluation forms try top-level VM first, then fall back.
+   * - vm-required: outer evaluation forms must compile to VM or throw.
+   * - off: bypass VM execution where the current dispatch can do so.
+   */
+  vmExecutionMode?: VmExecutionMode
+  /**
+   * Optional execution decision sink. This is deliberately opt-in so normal
+   * evaluation keeps the existing value-oriented API.
+   */
+  instrumentation?: {
+    onEvent: (event: EvalEvent) => void
+  }
+  /**
+   * Internal recursion guard used to keep first top-level VM integration at the
+   * whole-form boundary instead of opportunistically compiling interpreter
+   * subexpressions.
+   */
+  evaluationDepth?: number
 }
 
 export type CljNativeFunction = {
@@ -476,6 +498,40 @@ export type CompileEnv = {
  */
 
 export type OpCode = number
+
+export type VmExecutionMode =
+  | 'off'
+  | 'function-body'
+  | 'opportunistic'
+  | 'vm-required'
+
+export type VmFallbackReason =
+  | { category: 'unsupported-special-form'; detail: string }
+  | { category: 'unsupported-binding-form'; detail: string }
+  | { category: 'unsupported-callee'; detail: string }
+  | { category: 'unsupported-top-level-mutation'; detail: string }
+  | { category: 'unexpanded-macro'; detail: string }
+  | { category: 'unsupported-js-interop'; detail: string }
+  | { category: 'compile-error'; detail: string }
+
+export type VmCompileResult =
+  | { ok: true; chunk: VmChunk }
+  | { ok: false; reason: VmFallbackReason }
+
+export type EvalEvent = {
+  path:
+    | 'interpreter'
+    | 'closure-compiler'
+    | 'vm:function-body-compiled'
+    | 'vm:function-body'
+    | 'vm:top-level'
+    | 'fallback'
+  mode: VmExecutionMode
+  reason?: VmFallbackReason
+  formKind?: string
+  ast?: CljValue
+  details?: Record<string, unknown>
+}
 
 export type VmUpvalueDescriptor = {
   isLocal: boolean

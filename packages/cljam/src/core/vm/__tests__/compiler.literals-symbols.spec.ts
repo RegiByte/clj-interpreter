@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { define, makeEnv } from '../../env'
 import { createEvaluationContext } from '../../evaluator'
 import { v } from '../../factories'
-import { compileVm } from '../compiler'
+import { compileVm, tryCompileVm } from '../compiler'
 import { disassembleChunk } from '../debug'
 import { executeChunk } from '../vm'
 import {
@@ -45,6 +45,22 @@ describe('VM compiler literals', () => {
     expect(disassembleChunk(chunk)).toBe(
       ['== vm-expression ==', '0000 True', '0001 Return'].join('\n')
     )
+  })
+
+  it('compiles quote as a literal constant at the expression boundary', () => {
+    expectVmCompilesTo('(quote &)', v.symbol('&'))
+    expectVmCompilesTo('(quote [a b])', v.vector([v.symbol('a'), v.symbol('b')]))
+  })
+
+  it('preserves nested structured fallback reasons from child emitters', () => {
+    const result = tryCompileVm(formToNode('[foo/bar.baz]'))
+
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.reason).toEqual({
+      category: 'unsupported-js-interop',
+      detail: 'VM does not support JS interop symbol foo/bar.baz',
+    })
   })
 })
 

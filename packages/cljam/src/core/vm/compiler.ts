@@ -16,8 +16,10 @@ import type {
   CljVector,
   OpCode,
   Pos,
+  VmCompileResult,
   VmCatchClause,
   VmChunk,
+  VmFallbackReason,
   VmFunctionTemplate,
   VmUpvalueDescriptor,
 } from '../types'
@@ -61,6 +63,7 @@ type VmCompileEnv = {
   functionDepth: number
   selfName: string | null
   isTailPosition: boolean
+  failureReason: VmFallbackReason | null
 }
 
 type UpvalueResolution = number | null
@@ -139,6 +142,11 @@ function intrinsicOpcodeFor(name: string): OpCode | null {
 }
 
 export function compileVm(node: CljValue): VmChunk | null {
+  const result = tryCompileVm(node)
+  return result.ok ? result.chunk : null
+}
+
+export function tryCompileVm(node: CljValue): VmCompileResult {
   const chunk = makeChunk('vm-expression')
   const compileEnv = {
     locals: new Map<string, number>(),
@@ -151,14 +159,94 @@ export function compileVm(node: CljValue): VmChunk | null {
     functionDepth: 0,
     selfName: null,
     isTailPosition: false,
+    failureReason: null,
   } as VmCompileEnv
 
-  if (!emitExpression(chunk, node, compileEnv)) {
-    return null
+  try {
+    if (!emitExpression(chunk, node, compileEnv)) {
+      return {
+        ok: false,
+        reason: compileEnv.failureReason ?? fallbackReasonForNode(node),
+      }
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      reason: {
+        category: 'compile-error',
+        detail: error instanceof Error ? error.message : String(error),
+      },
+    }
   }
 
   emit(chunk, Op.Return)
-  return chunk
+  return { ok: true, chunk }
+}
+
+function fallbackReasonForNode(node: CljValue): VmFallbackReason {
+  if (is.symbol(node)) {
+    const slashIdx = node.name.indexOf('/')
+    if (
+      slashIdx > 0 &&
+      slashIdx < node.name.length - 1 &&
+      node.name.slice(slashIdx + 1).includes('.')
+    ) {
+      return {
+        category: 'unsupported-js-interop',
+        detail: `VM does not support JS interop symbol ${node.name}`,
+      }
+    }
+  }
+
+  if (is.list(node) && node.value.length > 0) {
+    const head = node.value[0]
+    if (is.symbol(head)) {
+      const name = head.name
+      if (name === specialFormKeywords['def'] || name === specialFormKeywords.ns) {
+        return {
+          category: 'unsupported-top-level-mutation',
+          detail: `VM does not support top-level mutation form ${name}`,
+        }
+      }
+      if (name === specialFormKeywords['.'] || name === specialFormKeywords['js/new']) {
+        return {
+          category: 'unsupported-js-interop',
+          detail: `VM does not support JS interop form ${name}`,
+        }
+      }
+      if (name === specialFormKeywords['let*'] || name === specialFormKeywords['loop*']) {
+        const bindings = node.value[1]
+        if (
+          is.vector(bindings) &&
+          bindings.value.some((binding, index) => index % 2 === 0 && !is.symbol(binding))
+        ) {
+          return {
+            category: 'unsupported-binding-form',
+            detail: `VM only supports simple symbol bindings in ${name}`,
+          }
+        }
+      }
+      if (isUnsupportedVmSpecialForm(name)) {
+        return {
+          category: 'unsupported-special-form',
+          detail: `VM does not support special form ${name}`,
+        }
+      }
+    }
+  }
+
+  return {
+    category: 'compile-error',
+    detail: `VM could not compile ${node.kind} form`,
+  }
+}
+
+function fail(
+  compileEnv: VmCompileEnv,
+  reason: VmFallbackReason
+): false {
+  compileEnv.failureReason ??= reason
+  return false
 }
 
 function emitExpression(
@@ -203,8 +291,10 @@ function emitExpression(
       if (slashIdx > 0 && slashIdx < symbolName.length - 1) {
         const localName = symbolName.slice(slashIdx + 1)
         if (localName.includes('.')) {
-          // js interop form not yet supported, e.g (js/console.log "hello")
-          return false
+          return fail(compileEnv, {
+            category: 'unsupported-js-interop',
+            detail: `VM does not support JS interop symbol ${symbolName}`,
+          })
         }
         const index = addConstant(chunk, node)
         const pos = getPos(node) ?? null
@@ -242,6 +332,9 @@ function emitExpression(
         if (name === specialFormKeywords['fn*']) {
           return emitFnStar(chunk, node, compileEnv)
         }
+        if (name === specialFormKeywords['quote']) {
+          return emitQuote(chunk, node, compileEnv)
+        }
         if (name === specialFormKeywords['try']) {
           return emitTry(chunk, node, compileEnv)
         }
@@ -252,7 +345,22 @@ function emitExpression(
           return emitSetBang(chunk, node, compileEnv)
         }
         if (isUnsupportedVmSpecialForm(name)) {
-          return false
+          if (name === specialFormKeywords['def'] || name === specialFormKeywords.ns) {
+            return fail(compileEnv, {
+              category: 'unsupported-top-level-mutation',
+              detail: `VM does not support top-level mutation form ${name}`,
+            })
+          }
+          if (name === specialFormKeywords['.'] || name === specialFormKeywords['js/new']) {
+            return fail(compileEnv, {
+              category: 'unsupported-js-interop',
+              detail: `VM does not support JS interop form ${name}`,
+            })
+          }
+          return fail(compileEnv, {
+            category: 'unsupported-special-form',
+            detail: `VM does not support special form ${name}`,
+          })
         }
       }
 
@@ -642,6 +750,25 @@ function emitFnStar(
 
     return true
   })
+}
+
+function emitQuote(
+  chunk: VmChunk,
+  node: CljList,
+  compileEnv: VmCompileEnv
+): boolean {
+  if (node.value.length !== 2) {
+    return fail(compileEnv, {
+      category: 'compile-error',
+      detail: 'VM quote expects exactly one argument',
+    })
+  }
+
+  const index = addConstant(chunk, node.value[1])
+  const pos = getPos(node) ?? null
+  emit(chunk, Op.Constant, pos)
+  emitOperand(chunk, index, pos)
+  return true
 }
 
 function emptyEnvForVmParsing(): Env {
@@ -1168,12 +1295,14 @@ function emitLoopStar(
 
     const localStart = compileEnv.nextLocalSlot
     const localCount = bindings.value.length / 2
+    compileEnv.nextLocalSlot += localCount
+    chunk.localCount = Math.max(chunk.localCount, compileEnv.nextLocalSlot)
 
     const previousSlots = new Map<string, number | undefined>()
 
     // init loop bindings
     for (let i = 0; i < bindings.value.length; i += 2) {
-      const slot = compileEnv.nextLocalSlot++
+      const slot = localStart + i / 2
       const name = bindings.value[i]
       if (!is.symbol(name)) return false
       if (!previousSlots.has(name.name)) {
@@ -1190,7 +1319,6 @@ function emitLoopStar(
       emit(chunk, Op.StoreLocal)
       emitOperand(chunk, slot)
       declareLocal(compileEnv, name.name, slot, true)
-      chunk.localCount = Math.max(chunk.localCount, compileEnv.nextLocalSlot)
     }
 
     const loopHeader = chunk.code.length
@@ -1258,7 +1386,13 @@ function emitRecur(
 
     // Emit expressions for the arguments that will be placed in the stack
     for (let i = 0; i < args.length; i++) {
-      if (!emitExpression(chunk, args[i], compileEnv)) return false
+      if (
+        !withTailPosition(compileEnv, false, () =>
+          emitExpression(chunk, args[i], compileEnv)
+        )
+      ) {
+        return false
+      }
     }
 
     if (recurTarget.kind === 'loop') {
@@ -1318,6 +1452,7 @@ function compileVmFnBodyInternal(
     functionDepth: (options.enclosing?.functionDepth ?? -1) + 1,
     selfName: null,
     isTailPosition: false,
+    failureReason: null,
   } as VmCompileEnv
 
   params.forEach((param, index) => {

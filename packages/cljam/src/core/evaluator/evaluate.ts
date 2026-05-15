@@ -12,7 +12,15 @@ import { EvaluationError } from '../errors'
 import { v } from '../factories'
 import { valueKeywords } from '../keywords.ts'
 import { getPos } from '../positions'
-import type { CljValue, Env, EvaluationContext } from '../types'
+import type {
+  CljValue,
+  Env,
+  EvalEvent,
+  EvaluationContext,
+  VmExecutionMode,
+} from '../types'
+import { tryCompileVm } from '../vm/compiler'
+import { executeChunk } from '../vm/vm'
 import { evaluateMap, evaluateSet, evaluateVector } from './collections'
 import { evaluateList } from './dispatch'
 
@@ -26,14 +34,109 @@ function nowMs(): number {
   return Date.now()
 }
 
+function vmMode(ctx: EvaluationContext): VmExecutionMode {
+  return ctx.vmExecutionMode ?? 'function-body'
+}
+
+function formKind(expr: CljValue): string {
+  if (expr.kind === valueKeywords.list && expr.value.length > 0) {
+    const head = expr.value[0]
+    return head.kind === valueKeywords.symbol ? `list:${head.name}` : 'list'
+  }
+  return expr.kind
+}
+
+function emitEvalEvent(ctx: EvaluationContext, event: Omit<EvalEvent, 'mode'>): void {
+  ctx.instrumentation?.onEvent({
+    mode: vmMode(ctx),
+    ...event,
+  })
+}
+
+function evaluateTopLevelWithVm(
+  expr: CljValue,
+  env: Env,
+  ctx: EvaluationContext,
+  mode: VmExecutionMode
+): CljValue | null {
+  if (mode !== 'opportunistic' && mode !== 'vm-required') return null
+
+  const result = tryCompileVm(expr)
+  if (result.ok) {
+    emitEvalEvent(ctx, {
+      path: 'vm:top-level',
+      formKind: formKind(expr),
+      ast: expr,
+    })
+    return executeChunk({ chunk: result.chunk, env, ctx })
+  }
+
+  if (mode === 'vm-required') {
+    emitEvalEvent(ctx, {
+      path: 'fallback',
+      reason: result.reason,
+      formKind: formKind(expr),
+      ast: expr,
+    })
+    throw new EvaluationError(
+      `VM required but cannot compile: ${result.reason.detail}`,
+      { reason: result.reason, expr, env },
+      getPos(expr)
+    )
+  }
+
+  emitEvalEvent(ctx, {
+    path: 'fallback',
+    reason: result.reason,
+    formKind: formKind(expr),
+    ast: expr,
+  })
+  return null
+}
+
 export function evaluateWithContext(
   expr: CljValue,
   env: Env,
   ctx: EvaluationContext
 ): CljValue {
+  const depth = ctx.evaluationDepth ?? 0
+  ctx.evaluationDepth = depth + 1
+  try {
+    const mode = vmMode(ctx)
+    if (depth === 0) {
+      const vmResult = evaluateTopLevelWithVm(expr, env, ctx, mode)
+      if (vmResult !== null) return vmResult
+    }
+
+    return evaluateWithContextInner(expr, env, ctx, depth === 0)
+  } finally {
+    ctx.evaluationDepth = depth
+  }
+}
+
+function evaluateWithContextInner(
+  expr: CljValue,
+  env: Env,
+  ctx: EvaluationContext,
+  shouldEmitPathEvent: boolean
+): CljValue {
   const compiled = compile(expr)
   if (compiled !== null) {
+    if (shouldEmitPathEvent) {
+      emitEvalEvent(ctx, {
+        path: 'closure-compiler',
+        formKind: formKind(expr),
+        ast: expr,
+      })
+    }
     return compiled(env, ctx)
+  }
+  if (shouldEmitPathEvent) {
+    emitEvalEvent(ctx, {
+      path: 'interpreter',
+      formKind: formKind(expr),
+      ast: expr,
+    })
   }
   switch (expr.kind) {
     // self-evaluating forms

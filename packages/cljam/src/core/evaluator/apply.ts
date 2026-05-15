@@ -36,7 +36,7 @@ export function applyFunctionWithContext(
   if (fn.kind === valueKeywords.function) {
     const arity = resolveArity(fn.arities, args.length)
 
-    if (arity.bytecodeBody) {
+    if (arity.bytecodeBody && ctx.vmExecutionMode !== 'off') {
       const chunk = arity.bytecodeBody
       let locals = slotValuesForArity(arity, args)
       while (locals.length < chunk.localCount) {
@@ -45,6 +45,11 @@ export function applyFunctionWithContext(
       if (chunk.selfSlot >= 0) {
         locals[chunk.selfSlot] = fn
       }
+      ctx.instrumentation?.onEvent({
+        path: 'vm:function-body',
+        mode: ctx.vmExecutionMode ?? 'function-body',
+        formKind: 'fn*',
+      })
       return executeChunk({
         chunk,
         env: fn.env,

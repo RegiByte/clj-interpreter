@@ -105,7 +105,6 @@ describe('VM function body locals and let* compilation', () => {
 
   it.each([
     ['def', '(def y x)'],
-    ['quote', '(quote x)'],
     ['var', '(var x)'],
     ['lazy-seq', '(lazy-seq x)'],
     ['async', '(async x)'],
@@ -120,6 +119,21 @@ describe('VM function body locals and let* compilation', () => {
       expect(compileFnBodyForTest(['x'], [code])).toBeNull()
     }
   )
+
+  it('compiles quote in function bodies as a literal constant', () => {
+    const chunk = compileFnBodyForTest(['x'], ['(quote x)'])
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+    expect(
+      executeChunk({
+        chunk,
+        env: makeCallTestEnv(),
+        ctx: createEvaluationContext(),
+        locals: [v.number(40)],
+      })
+    ).toEqual(v.symbol('x'))
+  })
 
   it('compiles rest params into the slot after fixed params', () => {
     const chunk = compileFnBodyForTest(['x'], ['more'], { restParam: 'more' })

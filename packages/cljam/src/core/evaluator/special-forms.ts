@@ -276,7 +276,7 @@ function evaluateLetStar(
 function evaluateFnStar(
   list: CljList,
   env: Env,
-  _ctx: EvaluationContext
+  ctx: EvaluationContext
 ): CljValue {
   const rest = list.value.slice(1)
   let fnName: string | undefined
@@ -286,7 +286,8 @@ function evaluateFnStar(
     arityForms = rest.slice(1)
   }
   const arities = parseArities(arityForms, env)
-  const canUseVmBody = canCompileVmFnBodyInEnv(env)
+  const canUseVmBody =
+    ctx.vmExecutionMode !== 'off' && canCompileVmFnBodyInEnv(env)
   for (const arity of arities) {
     assertRecurInTailPosition(arity.body)
 
@@ -299,6 +300,17 @@ function evaluateFnStar(
       )
       if (bytecodeBody !== null) {
         arity.bytecodeBody = bytecodeBody
+        ctx.instrumentation?.onEvent({
+          path: 'vm:function-body-compiled',
+          mode: ctx.vmExecutionMode ?? 'function-body',
+          formKind: 'fn*',
+          ast: list,
+          details: {
+            functionName: fnName ?? null,
+            fixedParamCount: arity.params.length,
+            hasRestParam: arity.restParam !== null,
+          },
+        })
       }
     }
     // Phase 4b: params and rest param are all guaranteed simple symbols
