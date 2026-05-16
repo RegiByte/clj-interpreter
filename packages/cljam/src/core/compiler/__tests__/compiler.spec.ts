@@ -253,7 +253,12 @@ describe('Compiler Phase 3B', () => {
 describe('Compiler Phase 4', () => {
   it('should bail on uncompilable fn', () => {
     const result = session().evaluate('((fn [x] (def z x)) 1)')
-    expect(result.kind).toBe('nil')
+    expect(result).toMatchObject({
+      kind: 'var',
+      ns: 'user',
+      name: 'z',
+      value: v.number(1),
+    })
 
     const compiledFn = session().evaluate('(fn [x] (def z x))')
     expect(compiledFn.kind).toBe('function')

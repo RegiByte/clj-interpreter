@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { define, makeEnv } from '../../env'
 import { createEvaluationContext } from '../../evaluator'
 import { v } from '../../factories'
-import { createSession } from '../../session'
+import {
+  createSession,
+  createSessionFromSnapshot,
+  snapshotSession,
+} from '../../session'
 import { compileVm, tryCompileVm } from '../compiler'
 import { disassembleChunk } from '../debug'
 import { executeChunk } from '../vm'
@@ -11,6 +15,12 @@ import {
   formToNode,
   makeCallTestEnv,
 } from './compiler-test-utils'
+
+function createVmRequiredSession() {
+  return createSessionFromSnapshot(snapshotSession(createSession()), {
+    vmExecutionMode: 'vm-required',
+  })
+}
 
 describe('VM compiler literals', () => {
   it.each([
@@ -77,6 +87,89 @@ describe('VM compiler literals', () => {
 })
 
 describe('VM Symbols', () => {
+  it('compiles def as initializer plus Def', () => {
+    const chunk = compileVm(formToNode('(def x 1)'))
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    expect(disassembleChunk(chunk)).toBe(
+      [
+        '== vm-expression ==',
+        '0000 Constant 0 ; 1',
+        '0002 Def 1 ; x',
+        '0004 Return',
+      ].join('\n')
+    )
+  })
+
+  it('executes compiled def and returns the interned Var', () => {
+    const chunk = compileVm(formToNode('(def x 1)'))
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    const env = makeEnv()
+    env.ns = v.namespace('user')
+    const result = executeChunk({ chunk, env, ctx: createEvaluationContext() })
+
+    expect(result.kind).toBe('var')
+    expect(result).toBe(env.ns.vars.get('x'))
+    expect(env.ns.vars.get('x')?.value).toEqual(v.number(1))
+  })
+
+  it('compiled def docstring is attached to the returned Var metadata', () => {
+    const s = createVmRequiredSession()
+    const result = s.evaluate('(meta (def x "doc text" 1))')
+
+    expect((s.evaluate('(:doc (meta #\'x))') as any).value).toBe('doc text')
+    expect((result as any).entries).toContainEqual([
+      v.keyword(':doc'),
+      v.string('doc text'),
+    ])
+  })
+
+  it('var-get can consume def in vm-required mode', () => {
+    const s = createVmRequiredSession()
+
+    expect((s.evaluate('(var-get (def x 1))') as any).value).toBe(1)
+  })
+
+  it('compiled redef preserves Var identity', () => {
+    const s = createVmRequiredSession()
+    const original = s.evaluate('(def x 1)')
+    const redefined = s.evaluate('(def x 2)')
+
+    expect(redefined).toBe(original)
+    expect(s.evaluate('#\'x')).toBe(original)
+    expect((s.evaluate('x') as any).value).toBe(2)
+  })
+
+  it('compiles bare def declarations as nil no-ops', () => {
+    const chunk = compileVm(formToNode('(def native-shim)'))
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    expect(disassembleChunk(chunk)).toBe(
+      ['== vm-expression ==', '0000 Nil', '0001 Return'].join('\n')
+    )
+  })
+
+  it('executes compiled bare def without interning a Var', () => {
+    const chunk = compileVm(formToNode('(def native-shim)'))
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    const env = makeEnv()
+    env.ns = v.namespace('user')
+    const result = executeChunk({ chunk, env, ctx: createEvaluationContext() })
+
+    expect(result).toEqual(v.nil())
+    expect(env.ns.vars.has('native-shim')).toBe(false)
+  })
+
   it('compiles unqualified symbols to LoadGlobal plus Return', () => {
     const chunk = compileVm(formToNode('x'))
 

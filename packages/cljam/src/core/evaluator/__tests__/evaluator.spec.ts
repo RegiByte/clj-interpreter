@@ -67,7 +67,12 @@ describe('evaluator spec', () => {
     it('should evaluate def special form', () => {
       const session = freshSession()
       const result = session.evaluate('(def some-symbol 1)')
-      expect(result).toMatchObject(v.nil())
+      expect(result).toMatchObject({
+        kind: 'var',
+        ns: 'user',
+        name: 'some-symbol',
+        value: v.number(1),
+      })
       expect(
         lookup('some-symbol', session.registry.get('user')!)
       ).toMatchObject(v.number(1))

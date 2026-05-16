@@ -121,14 +121,14 @@ describe('VM letfn* compilation', () => {
     const result = tryCompileVmFnBody(
       [],
       null,
-      [formToNode('(letfn* [f (fn* [] (def x 1))] (f))')]
+      [formToNode('(letfn* [f (fn* [] (defmacro m [] 1))] (f))')]
     )
 
     expect(result).toEqual({
       ok: false,
       reason: {
-        category: 'unsupported-top-level-mutation',
-        detail: 'VM does not support top-level mutation form def',
+        category: 'unsupported-special-form',
+        detail: 'VM does not support special form defmacro',
       },
     })
   })

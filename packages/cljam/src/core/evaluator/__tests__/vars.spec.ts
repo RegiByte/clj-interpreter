@@ -33,6 +33,34 @@ describe('Var system', () => {
     expect((s.evaluate('x') as any).value).toBe(10)
   })
 
+  it('value-bearing def returns the interned Var', () => {
+    const s = mkSession()
+    const result = s.evaluate('(def x 1)')
+    expect(result.kind).toBe('var')
+    expect(printString(result)).toBe("#'user/x")
+  })
+
+  it('var-get can consume the Var returned by def', () => {
+    const s = mkSession()
+    expect((s.evaluate('(var-get (def x 1))') as any).value).toBe(1)
+  })
+
+  it('redef returns the same Var identity', () => {
+    const s = mkSession()
+    const original = s.evaluate('(def x 1)')
+    const redefined = s.evaluate('(def x 2)')
+    expect(redefined).toBe(original)
+    expect(s.evaluate("#'x")).toBe(original)
+    expect((s.evaluate('x') as any).value).toBe(2)
+  })
+
+  it('bare def declaration remains a no-op', () => {
+    const s = mkSession()
+    const result = s.evaluate('(def native-shim)')
+    expect(result).toMatchObject({ kind: 'nil', value: null })
+    expect(s.getNs('user')?.vars.has('native-shim')).toBe(false)
+  })
+
   it('var? on a Var returns true', () => {
     const s = mkSession()
     s.evaluate('(def x 5)')

@@ -142,6 +142,34 @@ const readyCases: ReadyCase[] = [
                (even? 4))`,
   },
   {
+    name: 'top-level def',
+    code: '(def x 1)',
+  },
+  {
+    name: 'nested def in do',
+    code: '(do (def x 1) (+ x 2))',
+  },
+  {
+    name: 'bare def declaration',
+    code: '(def native-shim)',
+  },
+  {
+    name: 'bare def declaration in do',
+    code: '(do (def native-shim) 42)',
+  },
+  {
+    name: 'def dynamic var with binding and set!',
+    code: '(do (def ^:dynamic *x* :root) (binding [*x* :bound] (set! *x* :mutated) *x*))',
+  },
+  {
+    name: 'defn macro expansion',
+    code: '(do (defn triple [x] (* x 3)) (triple 7))',
+  },
+  {
+    name: 'function-body def interns globally',
+    code: '(do ((fn [] (def inside-fn 42))) inside-fn)',
+  },
+  {
     name: 'prepared direct function call',
     setup: ['(def add1 (fn [x] (+ x 1)))'],
     code: '(add1 4)',
@@ -159,16 +187,6 @@ const readyCases: ReadyCase[] = [
 ]
 
 const fallbackCases: FallbackCase[] = [
-  {
-    name: 'top-level def',
-    code: '(def x 1)',
-    category: 'unsupported-top-level-mutation',
-  },
-  {
-    name: 'nested top-level mutation',
-    code: '(do (def x 1) (+ x 2))',
-    category: 'unsupported-top-level-mutation',
-  },
   {
     name: 'namespace declaration',
     code: '(ns readiness.foo)',
@@ -212,14 +230,14 @@ const fallbackCases: FallbackCase[] = [
   },
   {
     name: 'top-level fn literal with unsupported body',
-    code: '(fn [] (letfn* [f (fn* [] (def x 1))] (f)))',
-    category: 'unsupported-top-level-mutation',
+    code: '(fn [] (letfn* [f (fn* [] (defmacro m [] 1))] (f)))',
+    category: 'unsupported-special-form',
   },
 ]
 
 function prepareSnapshot(setup: string[] = []): SessionSnapshot {
   const session = createSessionFromSnapshot(baseline, {
-    vmExecutionMode: 'opportunistic',
+    vmExecutionMode: 'off',
   })
   for (const source of setup) {
     session.evaluate(source)
@@ -344,8 +362,8 @@ describe('VM top-level readiness harness', () => {
 
     expect(histogram).toEqual(
       new Map([
-        ['unsupported-top-level-mutation', 4],
-        ['unsupported-special-form', 2],
+        ['unsupported-top-level-mutation', 1],
+        ['unsupported-special-form', 3],
         ['compile-error', 1],
         ['unsupported-js-interop', 3],
         ['unsupported-binding-form', 1],

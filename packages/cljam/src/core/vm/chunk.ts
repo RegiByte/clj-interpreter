@@ -144,6 +144,7 @@ function getOperandCount(opcode: number): number {
     case Op.LoadQualified:
     case Op.LoadVar:
     case Op.LoadLexicalVar:
+    case Op.Def:
     case Op.LoadUpvalue:
     case Op.PushDynamicBinding:
     case Op.SetDynamic:
@@ -190,6 +191,7 @@ function getStackDelta(opcode: number, operands: number[]): number {
     case Op.LoadQualified:
     case Op.LoadVar:
     case Op.LoadLexicalVar:
+    case Op.Def:
     case Op.LoadUpvalue:
     case Op.Closure:
       return 1
@@ -214,6 +216,7 @@ function getStackDelta(opcode: number, operands: number[]): number {
     case Op.MakeMap:
       return 1 - countOperand(operands[0]) * 2
     case Op.WithMeta:
+    case Op.Def:
       return 0
     case Op.Call:
       return -countOperand(operands[0])

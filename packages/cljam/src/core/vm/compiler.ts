@@ -1,5 +1,6 @@
 import { is } from '../assertions'
 import { parseArities } from '../evaluator/arity'
+import { mergeDocIntoMeta } from '../evaluator/defs'
 import { parseTryStructure } from '../evaluator/form-parsers'
 import { assertRecurInTailPosition } from '../evaluator/recur-check'
 import { v } from '../factories'
@@ -108,7 +109,6 @@ type TryEmitState = {
 }
 
 const unsupportedVmSpecialForms = new Set<string>([
-  specialFormKeywords['def'],
   specialFormKeywords['quote'],
   specialFormKeywords['async'],
   specialFormKeywords['.'],
@@ -347,6 +347,9 @@ function emitExpression(
         if (name === specialFormKeywords['var']) {
           return emitVar(chunk, node, compileEnv)
         }
+        if (name === specialFormKeywords['def']) {
+          return emitDef(chunk, node, compileEnv)
+        }
         if (name === specialFormKeywords['try']) {
           return emitTry(chunk, node, compileEnv)
         }
@@ -357,7 +360,7 @@ function emitExpression(
           return emitSetBang(chunk, node, compileEnv)
         }
         if (isUnsupportedVmSpecialForm(name)) {
-          if (name === specialFormKeywords['def'] || name === specialFormKeywords.ns) {
+          if (name === specialFormKeywords.ns) {
             return fail(compileEnv, {
               category: 'unsupported-top-level-mutation',
               detail: `VM does not support top-level mutation form ${name}`,
@@ -820,6 +823,57 @@ function emitVar(
   emit(chunk, Op.LoadVar, targetPos)
   emitOperand(chunk, index, targetPos)
   return true
+}
+
+function emitDef(
+  chunk: VmChunk,
+  node: CljList,
+  compileEnv: VmCompileEnv
+): boolean {
+  return emitTransaction(chunk, () => {
+    const name = node.value[1]
+    if (!is.symbol(name)) {
+      return fail(compileEnv, {
+        category: 'compile-error',
+        detail: 'VM def expects a symbol name',
+      })
+    }
+
+    if (node.value.length === 2) {
+      emit(chunk, Op.Nil, getPos(node) ?? null)
+      return true
+    }
+
+    const maybeDocstring = node.value[2]
+    const hasDocstring = node.value.length === 4 && is.string(maybeDocstring)
+    if (node.value.length !== 3 && !hasDocstring) {
+      return fail(compileEnv, {
+        category: 'compile-error',
+        detail: 'VM def expects a name and value, with optional docstring',
+      })
+    }
+
+    const valueIdx = hasDocstring ? 3 : 2
+    if (
+      !withTailPosition(compileEnv, false, () =>
+        emitExpression(chunk, node.value[valueIdx], compileEnv)
+      )
+    ) {
+      return false
+    }
+
+    const symbolConstant = hasDocstring
+      ? {
+          ...name,
+          meta: mergeDocIntoMeta(name.meta, maybeDocstring.value),
+        }
+      : name
+    const pos = getPos(name) ?? getPos(node) ?? null
+    const index = addConstant(chunk, symbolConstant)
+    emit(chunk, Op.Def, pos)
+    emitOperand(chunk, index, pos)
+    return true
+  })
 }
 
 function isQualifiedSymbol(name: string): boolean {

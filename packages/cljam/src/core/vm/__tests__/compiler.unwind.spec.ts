@@ -123,7 +123,7 @@ describe('VM try/catch unwind compilation', () => {
   it(
     'does not store bytecodeBody for unsupported try bodies with unsupported catch body and still evaluates',
     () => {
-      const code = '(try x (catch :default e (def caught e)))'
+      const code = '(try x (catch :default e (defmacro m [] e)))'
       const fn = createSession().evaluate(`(fn [x] ${code})`)
 
       expect(fn.kind).toBe('function')

@@ -6,10 +6,9 @@ import { v } from '../factories'
 import { createAsyncEvalCtx } from './async-evaluator'
 // --- END ASYNC ---
 import { specialFormKeywords } from '../keywords.ts'
-import { framesToClj, getLineCol, getPos } from '../positions'
+import { framesToClj, getPos } from '../positions'
 import type {
   CljList,
-  CljMap,
   CljValue,
   Env,
   EvaluationContext,
@@ -21,27 +20,13 @@ import {
   parseTryStructure,
   validateBindingVector,
 } from './form-parsers'
+import { buildVarMeta, defineVar, mergeDocIntoMeta } from './defs'
 import { evaluateDot, evaluateNew } from './js-interop'
 
 import { assertRecurInTailPosition } from './recur-check'
 
 import { compile, compileFnBody } from '../compiler/index.ts'
 import { tryCompileVmFnBody } from '../vm/compiler.ts'
-
-function hasDynamicMeta(meta: CljMap | undefined): boolean {
-  if (!meta) return false
-  for (const [k, v] of meta.entries) {
-    if (
-      is.keyword(k) &&
-      k.name === ':dynamic' &&
-      is.boolean(v) &&
-      v.value === true
-    ) {
-      return true
-    }
-  }
-  return false
-}
 
 function evaluateTry(
   list: CljList,
@@ -112,46 +97,6 @@ function evaluateQuote(
   return list.value[1]
 }
 
-/**
- * Merge reader-attached symbol metadata with source-position metadata
- * (:line, :column, :file) derived from the current evaluation context.
- * Returns undefined if there is nothing to attach.
- */
-function buildVarMeta(
-  symMeta: CljMap | undefined,
-  ctx: EvaluationContext,
-  nameVal?: CljValue
-): CljMap | undefined {
-  const pos = nameVal ? getPos(nameVal) : undefined
-  const hasPosInfo = pos && ctx.currentSource
-
-  if (!symMeta && !hasPosInfo) return undefined
-
-  const posEntries: [CljValue, CljValue][] = []
-  if (hasPosInfo) {
-    const { line, col } = getLineCol(ctx.currentSource!, pos!.start)
-    const lineOffset = ctx.currentLineOffset ?? 0
-    const colOffset = ctx.currentColOffset ?? 0
-    posEntries.push([v.keyword(':line'), v.number(line + lineOffset)])
-    posEntries.push([
-      v.keyword(':column'),
-      v.number(line === 1 ? col + colOffset : col),
-    ])
-    if (ctx.currentFile) {
-      posEntries.push([v.keyword(':file'), v.string(ctx.currentFile)])
-    }
-  }
-
-  // Preserve all existing symMeta entries except the three we're stamping.
-  const POS_KEYS = new Set([':line', ':column', ':file'])
-  const baseEntries = (symMeta?.entries ?? []).filter(
-    ([k]) => !(is.keyword(k) && POS_KEYS.has(k.name))
-  )
-
-  const allEntries = [...baseEntries, ...posEntries]
-  return allEntries.length > 0 ? v.map(allEntries) : undefined
-}
-
 function evaluateDef(
   list: CljList,
   env: Env,
@@ -180,43 +125,8 @@ function evaluateDef(
   const docstring = is.string(maybeDocstring) ? maybeDocstring.value : undefined
   const valueIdx = hasDocstring ? 3 : 2
 
-  const nsEnv = getNamespaceEnv(env)
-  const cljNs = nsEnv.ns!
   const newValue = ctx.evaluate(list.value[valueIdx], env)
-
-  // Compute source position metadata (:line/:column/:file) if available.
-  const varMeta = buildVarMeta(name.meta, ctx, name)
-  const finalMeta = docstring ? mergeDocIntoMeta(varMeta, docstring) : varMeta
-
-  // Propagate :doc from var meta to the function value's meta so that
-  // (describe fn) and (describe ns) can find the docstring without needing
-  // the var. The var owns the canonical doc; the function gets a copy.
-  if (finalMeta && is.function(newValue)) {
-    const docEntry = finalMeta.entries.find(
-      ([k]) => is.keyword(k) && k.name === ':doc'
-    )
-    if (docEntry) {
-      const prevEntries = newValue.meta?.entries ?? []
-      const filtered = prevEntries.filter(
-        ([k]) => !(is.keyword(k) && k.name === ':doc')
-      )
-      newValue.meta = v.map([...filtered, docEntry])
-    }
-  }
-
-  const existing = cljNs.vars.get(name.name)
-  if (existing) {
-    existing.value = newValue
-    if (finalMeta) {
-      existing.meta = finalMeta
-      if (hasDynamicMeta(finalMeta)) existing.dynamic = true
-    }
-  } else {
-    const newVar = v.var(cljNs.name, name.name, newValue, finalMeta)
-    if (hasDynamicMeta(finalMeta)) newVar.dynamic = true
-    cljNs.vars.set(name.name, newVar)
-  }
-  return v.nil()
+  return defineVar({ name, value: newValue, env, ctx, docstring })
 }
 
 const evaluateNs = (
@@ -479,17 +389,6 @@ function evaluateLetfnStar(
   }
 
   return ctx.evaluateForms(body, sharedEnv)
-}
-
-function mergeDocIntoMeta(base: CljMap | undefined, docstring: string): CljMap {
-  const docEntry: [CljValue, CljValue] = [
-    v.keyword(':doc'),
-    v.string(docstring),
-  ]
-  const existing = (base?.entries ?? []).filter(
-    ([k]) => !(is.keyword(k) && k.name === ':doc')
-  )
-  return v.map([...existing, docEntry])
 }
 
 function evaluateDefmacro(

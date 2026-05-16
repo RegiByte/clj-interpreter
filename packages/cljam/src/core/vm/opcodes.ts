@@ -39,6 +39,7 @@ export const Op = {
   SetDynamic: 54,
   LoadVar: 55,
   LoadLexicalVar: 56,
+  Def: 57,
 
   Add: 70,
   Sub: 71,

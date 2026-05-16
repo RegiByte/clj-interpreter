@@ -44,10 +44,10 @@ describe('VM function closure and upvalue compilation', () => {
   })
 
   it('falls back for nested fn* with an unsupported body and rolls back the template', () => {
-    // catch body contains (def ...) which is unsupported in the VM compiler
+    // catch body contains defmacro, which remains unsupported in the VM compiler.
     const chunk = compileFnBodyForTest(
       [],
-      ['(do (fn* [] (try 1 (catch :default e (def caught e)))) 42)']
+      ['(do (fn* [] (try 1 (catch :default e (defmacro m [] e)))) 42)']
     )
 
     expect(chunk).toBeNull()
