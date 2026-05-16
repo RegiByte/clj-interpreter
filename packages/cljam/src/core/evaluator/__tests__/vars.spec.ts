@@ -443,7 +443,7 @@ describe('set!', () => {
     const s = mkSession()
     s.evaluate('(def x 1)')
     expect(() => s.evaluate('(binding [] (set! x 2))')).toThrow(
-      /not dynamic|Cannot set!/
+      /not dynamic|non-dynamic|Cannot set!/
     )
   })
 

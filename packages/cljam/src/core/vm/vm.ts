@@ -677,7 +677,7 @@ function executeInstruction(state: VmState): void {
         template.arities.map((arityTemplate) => ({
           params: arityTemplate.params,
           restParam: arityTemplate.restParam,
-          body: [],
+          body: arityTemplate.body,
           bytecodeBody: arityTemplate.chunk,
           vmClosure,
         })),
@@ -1000,7 +1000,8 @@ function executeInstruction(state: VmState): void {
       if (
         localStart === undefined ||
         localStart < 0 ||
-        localStart >= locals.length
+        localStart > locals.length ||
+        (localStart === locals.length && localCount !== 0)
       ) {
         throw new EvaluationError(
           `Invalid local start index: ${localStart}`,
@@ -1911,13 +1912,18 @@ function callableDisplayName(callable: CljValue): string | null {
   return null
 }
 
-function captureVmFrames(error: unknown, state: VmState): void {
+function captureVmFrames(
+  error: unknown,
+  state: VmState,
+  innerFrames: StackFrame[] = []
+): void {
   if (!isEvaluationError(error)) return
   if (error.frames) return
 
   const outerFrames = [...state.ctx.frameStack].reverse()
   const includeRootVmFrame = shouldIncludeRootVmFrame(outerFrames, state.frames)
   error.frames = [
+    ...innerFrames,
     ...vmFramesToStackFrames(state.frames, includeRootVmFrame),
     ...outerFrames,
   ]
@@ -1939,9 +1945,10 @@ function shouldIncludeRootVmFrame(
   outerFrames: StackFrame[],
   vmFrames: VmCallFrame[]
 ): boolean {
-  if (outerFrames.length === 0) return true
   const rootFrame = vmFrames[0]
   if (rootFrame === undefined) return false
+  if (rootFrame.fnName === 'vm-expression') return false
+  if (outerFrames.length === 0) return true
   const outerFrame = outerFrames[0]
   return outerFrame.fnName !== rootFrame.fnName
 }
@@ -1955,7 +1962,7 @@ function vmFramesToStackFrames(
     .slice(startIndex)
     .reverse()
     .map((frame) => ({
-      fnName: frame.fnName,
+      fnName: frame.fnName === 'vm-fn-body' ? null : frame.fnName,
       line: null,
       col: null,
       source: null,
@@ -2017,7 +2024,15 @@ function executeIntrinsic(
     state.stack.push(delegateCall(state, visibleOp, args, frame.env, instructionPos))
   } catch (e) {
     hydrateVmErrorPos(e, instructionPos)
-    captureVmFrames(e, state)
+    captureVmFrames(e, state, [
+      {
+        fnName: name,
+        line: null,
+        col: null,
+        source: null,
+        pos: instructionPos ?? null,
+      },
+    ])
     throw e
   }
 }

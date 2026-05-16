@@ -786,6 +786,7 @@ function compileVmArityTemplates(
     templateArityChunks.push({
       params: arity.params,
       restParam: arity.restParam,
+      body: arity.body,
       chunk: arityResult.chunk,
     })
   }

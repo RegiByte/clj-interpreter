@@ -57,6 +57,7 @@ describe('VM call and frame opcodes', () => {
         {
           params: [v.symbol('x')],
           restParam: null,
+          body: [],
           chunk: innerChunk,
         },
       ],
@@ -91,6 +92,7 @@ describe('VM call and frame opcodes', () => {
         {
           params: [],
           restParam: null,
+          body: [],
           chunk: innerChunk,
         },
       ],
@@ -296,7 +298,7 @@ describe('VM call and frame opcodes', () => {
     const error = expectEvaluationError(() =>
       executeChunk({ chunk, env, ctx: createNoDelegateContext() })
     )
-    expect(frameNames(error)).toEqual(['boom', 'root-body'])
+    expect(frameNames(error)).toEqual(['/', 'boom', 'root-body'])
   })
 
   it('bridges delegated VM calls through ctx.frameStack', () => {
@@ -434,7 +436,7 @@ describe('VM call and frame opcodes', () => {
     const error = expectEvaluationError(() =>
       executeChunk({ chunk: rootChunk, env, ctx })
     )
-    expect(frameNames(error)).toEqual(['inner', 'bridge'])
+    expect(frameNames(error)).toEqual(['/', 'inner', 'bridge'])
     expect(ctx.frameStack).toEqual([])
   })
 
@@ -462,8 +464,8 @@ describe('VM call and frame opcodes', () => {
     const first = expectEvaluationError(() => executeChunk({ chunk, env, ctx }))
     const second = expectEvaluationError(() => executeChunk({ chunk, env, ctx }))
 
-    expect(frameNames(first)).toEqual(['repeat-boom', 'repeat-root'])
-    expect(frameNames(second)).toEqual(['repeat-boom', 'repeat-root'])
+    expect(frameNames(first)).toEqual(['/', 'repeat-boom', 'repeat-root'])
+    expect(frameNames(second)).toEqual(['/', 'repeat-boom', 'repeat-root'])
   })
 
   it.each([

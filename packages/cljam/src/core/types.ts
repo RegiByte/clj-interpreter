@@ -609,6 +609,7 @@ export type VmFunctionClosure = {
 export type VmArityTemplate = {
   params: CljSymbol[]
   restParam: CljSymbol | null
+  body: CljValue[]
   chunk: VmChunk
 }
 

@@ -35,7 +35,7 @@ function nowMs(): number {
 }
 
 function vmMode(ctx: EvaluationContext): VmExecutionMode {
-  return ctx.vmExecutionMode ?? 'function-body'
+  return ctx.vmExecutionMode ?? 'opportunistic'
 }
 
 function formKind(expr: CljValue): string {

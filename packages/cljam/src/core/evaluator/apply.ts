@@ -19,6 +19,7 @@ import {
   slotValuesForArity,
 } from './arity'
 import { cljToJs, jsToClj } from './js-interop'
+import { dispatchMultiMethod } from './multimethod-dispatch'
 
 export function applyFunctionWithContext(
   fn: CljFunction | CljNativeFunction,
@@ -261,6 +262,9 @@ export function applyCallableWithContext(
   // hot-swappable: the var is captured, not the value at capture time.
   if (is.var(fn)) {
     return applyCallableWithContext(fn.value, args, ctx, callEnv)
+  }
+  if (is.multiMethod(fn)) {
+    return dispatchMultiMethod(fn, args, ctx, callEnv)
   }
   throw new EvaluationError(`${printString(fn)} is not a callable value`, {
     fn,

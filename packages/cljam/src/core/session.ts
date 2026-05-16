@@ -550,7 +550,12 @@ export function createSession(options?: SessionOptions): Session {
     registeredSources: registeredSources.size > 0 ? registeredSources : undefined,
   })
 
-  const session = buildSessionFacade(runtime, 'user', options)
+  const usesDefaultVmMode = options?.vmExecutionMode === undefined
+  const bootstrapOptions: SessionOptions | undefined = usesDefaultVmMode
+    ? { ...options, vmExecutionMode: 'function-body' }
+    : options
+
+  let session = buildSessionFacade(runtime, 'user', bootstrapOptions)
 
   // Bootstrap: load clojure.core source (uses session's ctx via session.loadFile)
   const coreLoader = builtInNamespaceSources['clojure.core']
@@ -558,6 +563,10 @@ export function createSession(options?: SessionOptions): Session {
     throw new Error('Missing built-in clojure.core source in registry')
   }
   session.loadFile(coreLoader(), 'clojure.core')
+
+  if (usesDefaultVmMode) {
+    session = buildSessionFacade(runtime, session.currentNs, options)
+  }
 
   if (modules.length > 0) {
     session.runtime.installModules(modules)

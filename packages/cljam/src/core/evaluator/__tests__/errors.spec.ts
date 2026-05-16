@@ -4,7 +4,7 @@ import { EvaluationError } from '../../errors'
 import { expectError, freshSession } from './evaluator-test-utils'
 
 function catchError(code: string): EvaluationError {
-  const s = freshSession()
+  const s = freshSession({ vmExecutionMode: 'function-body' })
   let err: EvaluationError | undefined
   try {
     s.evaluate(code)

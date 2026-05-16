@@ -8,8 +8,10 @@ import { tokenize } from '../../tokenizer'
 import { type CljFunction, type CljValue } from '../../types'
 import { compile } from '..'
 import { toCljValue } from '../../evaluator/__tests__/evaluator-test-utils'
-import { freshSession as session } from '../../evaluator/__tests__/evaluator-test-utils'
+import { freshSession } from '../../evaluator/__tests__/evaluator-test-utils'
 import { applyFunctionWithContext } from '../../evaluator/apply'
+
+const session = () => freshSession({ vmExecutionMode: 'function-body' })
 
 const formToNode = (code: string) =>
   readForms(tokenize(code), 'user', new Map())[0] as CljValue

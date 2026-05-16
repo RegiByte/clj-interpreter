@@ -476,6 +476,16 @@ Handles rejection of a pending value by calling f with the thrown value or an er
 
 ---
 
+#### `make-promise`
+
+```clojure
+(make-promise executor)
+```
+
+Creates a pending value from an executor fn (fn [resolve reject] ...). Like JS new Promise(executor).
+
+---
+
 #### `pending?`
 
 ```clojure
@@ -970,7 +980,7 @@ Calls f with the elements of the last argument (a collection) as its arguments, 
 (comp f g & fns)
 ```
 
-Returns the composition of fns, applied right-to-left. (comp f g) is equivalent to (fn [x] (f (g x))). Accepts any callable: functions, keywords, and maps.
+Returns the composition of fns, applied right-to-left. (comp f g) is equivalent to (fn [x] (f (g x))). Accepts any callable: functions, keywords, and collections.
 
 ---
 
@@ -2308,6 +2318,16 @@ Creates a Delay that invokes thunk-fn (a zero-arg function) on first force.
 
 ---
 
+#### `make-lazy-seq`
+
+```clojure
+(make-lazy-seq thunk-fn)
+```
+
+Creates a LazySeq that invokes thunk-fn (a zero-arg function) on first realization.
+
+---
+
 #### `map`
 
 ```clojure
@@ -3623,6 +3643,18 @@ Like with-out-str but captures *err* output (warn, etc.).
 Evaluates body in a context in which *out* is bound to a fresh string
   accumulator. Returns the string of all output produced by println, print,
   pr, prn, pprint and newline during the evaluation.
+
+---
+
+### Sequences
+
+#### `lazy-seq`
+
+```clojure
+(lazy-seq & body)
+```
+
+Takes a body of expressions that returns a seq or nil, and yields a LazySeq that will invoke the body only the first time it is realized.
 
 ---
 

@@ -23,9 +23,11 @@ import { tokenize } from '../../tokenizer'
 import type { CljValue } from '../../types'
 import { compile } from '..'
 import {
-  freshSession as session,
+  freshSession,
   toCljValue,
 } from '../../evaluator/__tests__/evaluator-test-utils'
+
+const session = () => freshSession({ vmExecutionMode: 'function-body' })
 
 // ---------------------------------------------------------------------------
 // Test helpers

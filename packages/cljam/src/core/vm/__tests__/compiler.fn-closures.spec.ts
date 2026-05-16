@@ -124,7 +124,9 @@ describe('VM function closure and upvalue compilation', () => {
   })
 
   it('does not store bytecodeBody when the body closes over an outer local', () => {
-    const fn = createSession().evaluate('(let* [x 10] (fn [] x))')
+    const fn = createSession({ vmExecutionMode: 'function-body' }).evaluate(
+      '(let* [x 10] (fn [] x))'
+    )
 
     expect(fn.kind).toBe('function')
     if (fn.kind !== 'function') return

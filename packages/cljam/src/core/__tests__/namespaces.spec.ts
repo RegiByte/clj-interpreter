@@ -545,7 +545,7 @@ describe('namespaces', () => {
 
 describe('session — frameStack recovery after stack overflow', () => {
   it('small recursion still works after a stack-overflowing call', () => {
-    const s = createSession()
+    const s = createSession({ vmExecutionMode: 'function-body' })
     s.evaluate(`
       (ns test.deep)
       (defn deep [n]

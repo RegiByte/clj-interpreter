@@ -11,7 +11,12 @@ import {
 } from '../../factories'
 import { EvaluationError } from '../../errors'
 import type { CljMap, CljValue } from '../../types'
-import { createSession, createSessionFromSnapshot, snapshotSession } from '../../session'
+import {
+  createSession,
+  createSessionFromSnapshot,
+  snapshotSession,
+  type SessionOptions,
+} from '../../session'
 import { toSeq } from '../../transformations'
 
 /** Recursively convert lazy-seqs/cons to flat lists for test comparisons. */
@@ -31,8 +36,8 @@ export function materialize(value: CljValue): CljValue {
 
 const _snapshot = snapshotSession(createSession())
 
-export function freshSession() {
-  return createSessionFromSnapshot(_snapshot)
+export function freshSession(options?: SessionOptions) {
+  return createSessionFromSnapshot(_snapshot, options)
 }
 
 export type ErrorShape = {

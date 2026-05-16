@@ -173,6 +173,7 @@ describe('VM chunks', () => {
         {
           params: [],
           restParam: null,
+          body: [],
           chunk: innerChunk,
         },
       ],
