@@ -231,7 +231,7 @@ export type EvaluationContext = {
   /**
    * Controls VM participation in sync evaluation.
    *
-   * - function-body: current default; bytecode-backed function bodies may run.
+   * - function-body: top-level evaluation uses the interpreter, but bytecode-backed function bodies may run.
    * - opportunistic: outer evaluation forms try top-level VM first, then fall back.
    * - vm-required: outer evaluation forms must compile to VM or throw.
    * - off: bypass VM execution where the current dispatch can do so.

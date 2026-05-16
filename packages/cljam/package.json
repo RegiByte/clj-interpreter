@@ -44,6 +44,7 @@
       "default": "./dist-nrepl/index.mjs"
     },
     "./vite-plugin": {
+      "types": "./src/vite-plugin-cljam/index.ts",
       "bun": "./src/vite-plugin-cljam/index.ts",
       "default": "./dist-vite-plugin/index.mjs"
     },
