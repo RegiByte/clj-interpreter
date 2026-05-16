@@ -9,7 +9,7 @@ function reasonKey(reason: VmFallbackReason): string {
 }
 
 describe('VM clojure.core bytecode coverage reasons', () => {
-  it('reports remaining non-bytecode-backed core arities with precise structured reasons', () => {
+  it('bytecode-compiles every clojure.core function arity', () => {
     const session = createSession()
     const core = session.registry.get('clojure.core')
     const groups = new Map<string, number>()
@@ -38,15 +38,8 @@ describe('VM clojure.core bytecode coverage reasons', () => {
       }
     }
 
-    expect(rows).toHaveLength(2)
-    expect(groups).toEqual(
-      new Map([
-        [
-          'unsupported-special-form :: VM does not support special form letfn*',
-          2,
-        ],
-      ])
-    )
+    expect(rows).toHaveLength(0)
+    expect(groups).toEqual(new Map())
     expect(rows.every(({ reason }) => reason.category !== 'compile-error')).toBe(
       true
     )

@@ -21,7 +21,9 @@ import type {
   VmChunk,
   VmFallbackReason,
   VmFunctionTemplate,
+  VmLexicalVarCandidate,
   VmUpvalueDescriptor,
+  VmArityTemplate,
 } from '../types'
 import {
   addConstant,
@@ -52,8 +54,14 @@ type VmLocal = {
   loopLocal: boolean
 }
 
+type VmLexicalBinding = {
+  kind: 'local'
+  slot: number
+}
+
 type VmCompileEnv = {
   locals: Map<string, number>
+  lexicalBindings: Map<string, VmLexicalBinding[]>
   localInfo: VmLocal[]
   upvalueDescriptors: VmUpvalueDescriptor[]
   nextLocalSlot: number
@@ -102,13 +110,11 @@ type TryEmitState = {
 const unsupportedVmSpecialForms = new Set<string>([
   specialFormKeywords['def'],
   specialFormKeywords['quote'],
-  specialFormKeywords['var'],
   specialFormKeywords['async'],
   specialFormKeywords['.'],
   specialFormKeywords['js/new'],
   specialFormKeywords['ns'],
   specialFormKeywords['defmacro'],
-  specialFormKeywords['letfn*'],
 ])
 
 function isUnsupportedVmSpecialForm(name: string): boolean {
@@ -149,6 +155,7 @@ export function tryCompileVm(node: CljValue): VmCompileResult {
   const chunk = makeChunk('vm-expression')
   const compileEnv = {
     locals: new Map<string, number>(),
+    lexicalBindings: new Map<string, VmLexicalBinding[]>(),
     localInfo: [],
     upvalueDescriptors: [],
     nextLocalSlot: 0,
@@ -319,6 +326,9 @@ function emitExpression(
         if (name === specialFormKeywords['let*']) {
           return emitLetStar(chunk, node, compileEnv)
         }
+        if (name === specialFormKeywords['letfn*']) {
+          return emitLetfnStar(chunk, node, compileEnv)
+        }
         if (name === specialFormKeywords['loop*']) {
           return emitLoopStar(chunk, node, compileEnv)
         }
@@ -333,6 +343,9 @@ function emitExpression(
         }
         if (name === specialFormKeywords['quote']) {
           return emitQuote(chunk, node, compileEnv)
+        }
+        if (name === specialFormKeywords['var']) {
+          return emitVar(chunk, node, compileEnv)
         }
         if (name === specialFormKeywords['try']) {
           return emitTry(chunk, node, compileEnv)
@@ -693,7 +706,11 @@ function emitBodyForms(
 function emitFnStar(
   chunk: VmChunk,
   node: CljList,
-  compileEnv: VmCompileEnv
+  compileEnv: VmCompileEnv,
+  options: {
+    implicitSelfName?: string | null
+    runtimeName?: string | null
+  } = {}
 ): boolean {
   if (!compileEnv.allowNestedFn) return false
 
@@ -706,6 +723,7 @@ function emitFnStar(
       selfName = rest[0].name
       arityForms = rest.slice(1)
     }
+    selfName ??= options.implicitSelfName ?? null
 
     let arities: Arity[]
     try {
@@ -714,7 +732,7 @@ function emitFnStar(
       return false
     }
 
-    const templateArityChunks = []
+    const templateArityChunks: VmArityTemplate[] = []
     const upvalueDescriptors: VmUpvalueDescriptor[] = []
 
     for (const arity of arities) {
@@ -742,6 +760,8 @@ function emitFnStar(
       arities: templateArityChunks,
       upvalueDescriptors: [...upvalueDescriptors],
     }
+    const runtimeName = options.runtimeName ?? selfName
+    if (runtimeName !== null) template.name = runtimeName
     const templateIndex = chunk.innerFunctions.length
     chunk.innerFunctions.push(template)
     emit(chunk, Op.Closure, getPos(node) ?? null)
@@ -768,6 +788,43 @@ function emitQuote(
   emit(chunk, Op.Constant, pos)
   emitOperand(chunk, index, pos)
   return true
+}
+
+function emitVar(
+  chunk: VmChunk,
+  node: CljList,
+  compileEnv: VmCompileEnv
+): boolean {
+  if (node.value.length !== 2) {
+    return fail(compileEnv, {
+      category: 'compile-error',
+      detail: 'VM var expects exactly one argument',
+    })
+  }
+
+  const target = node.value[1]
+  const pos = getPos(node) ?? null
+  const targetPos = getPos(target) ?? pos
+  if (is.symbol(target) && !isQualifiedSymbol(target.name)) {
+    const candidates = lexicalVarCandidates(compileEnv, target.name)
+    if (candidates.length > 0) {
+      const lookupIndex = chunk.lexicalVarLookups.length
+      chunk.lexicalVarLookups.push({ symbol: target, candidates })
+      emit(chunk, Op.LoadLexicalVar, targetPos)
+      emitOperand(chunk, lookupIndex, targetPos)
+      return true
+    }
+  }
+
+  const index = addConstant(chunk, target)
+  emit(chunk, Op.LoadVar, targetPos)
+  emitOperand(chunk, index, targetPos)
+  return true
+}
+
+function isQualifiedSymbol(name: string): boolean {
+  const slashIdx = name.indexOf('/')
+  return slashIdx > 0 && slashIdx < name.length - 1
 }
 
 function emptyEnvForVmParsing(): Env {
@@ -1156,6 +1213,7 @@ function emitLetStar(
     if (!is.vector(bindings) || bindings.value.length % 2 !== 0) return false
     const body = node.value.slice(2)
     const previousSlots = new Map<string, number | undefined>()
+    const previousLexicalDepths = new Map<string, number>()
 
     for (let i = 0; i < bindings.value.length; i += 2) {
       const slot = compileEnv.nextLocalSlot++
@@ -1164,6 +1222,10 @@ function emitLetStar(
       if (!is.symbol(name)) return false
       if (!previousSlots.has(name.name)) {
         previousSlots.set(name.name, compileEnv.locals.get(name.name))
+        previousLexicalDepths.set(
+          name.name,
+          lexicalBindingDepth(compileEnv, name.name)
+        )
       }
       const expr = bindings.value[i + 1]
       if (
@@ -1197,6 +1259,11 @@ function emitLetStar(
     }
 
     for (const [name, previousSlot] of previousSlots) {
+      restoreLexicalBindingDepth(
+        compileEnv,
+        name,
+        previousLexicalDepths.get(name) ?? 0
+      )
       if (previousSlot === undefined) {
         compileEnv.locals.delete(name)
       } else {
@@ -1206,6 +1273,133 @@ function emitLetStar(
 
     return true
   })
+}
+
+function emitLetfnStar(
+  chunk: VmChunk,
+  node: CljList,
+  compileEnv: VmCompileEnv
+): boolean {
+  const originalLocalCount = chunk.localCount
+  const originalNextLocalSlot = compileEnv.nextLocalSlot
+  const originalLocalInfoLength = compileEnv.localInfo.length
+
+  const ok = emitTransaction(chunk, () => {
+    const bindings = node.value[1]
+    if (!bindings) return false
+    if (!is.vector(bindings) || bindings.value.length % 2 !== 0) {
+      return false
+    }
+
+    const names: CljSymbol[] = []
+    const fnForms: CljList[] = []
+    const seenNames = new Set<string>()
+
+    for (let i = 0; i < bindings.value.length; i += 2) {
+      const name = bindings.value[i]
+      const fnForm = bindings.value[i + 1]
+      if (!is.symbol(name)) return false
+      if (seenNames.has(name.name)) {
+        return fail(compileEnv, {
+          category: 'compile-error',
+          detail: `VM letfn* does not support duplicate binding name ${name.name}`,
+        })
+      }
+      if (
+        !is.list(fnForm) ||
+        fnForm.value.length === 0 ||
+        !is.symbol(fnForm.value[0]) ||
+        fnForm.value[0].name !== specialFormKeywords['fn*']
+      ) {
+        return fail(compileEnv, {
+          category: 'compile-error',
+          detail: 'VM letfn* only supports fn* binding values',
+        })
+      }
+
+      seenNames.add(name.name)
+      names.push(name)
+      fnForms.push(fnForm)
+    }
+
+    const body = node.value.slice(2)
+    const slots: number[] = []
+    const previousSlots = new Map<string, number | undefined>()
+    const previousLexicalDepths = new Map<string, number>()
+
+    for (const name of names) {
+      previousSlots.set(name.name, compileEnv.locals.get(name.name))
+      previousLexicalDepths.set(
+        name.name,
+        lexicalBindingDepth(compileEnv, name.name)
+      )
+      const slot = compileEnv.nextLocalSlot++
+      slots.push(slot)
+      declareLocal(compileEnv, name.name, slot, false)
+    }
+    chunk.localCount = Math.max(chunk.localCount, compileEnv.nextLocalSlot)
+
+    const restore = () => {
+      for (const name of names) {
+        restoreLexicalBindingDepth(
+          compileEnv,
+          name.name,
+          previousLexicalDepths.get(name.name) ?? 0
+        )
+        const previousSlot = previousSlots.get(name.name)
+        if (previousSlot === undefined) {
+          compileEnv.locals.delete(name.name)
+        } else {
+          compileEnv.locals.set(name.name, previousSlot)
+        }
+      }
+    }
+
+    for (let i = 0; i < fnForms.length; i++) {
+      if (
+        !withTailPosition(compileEnv, false, () =>
+          emitFnStar(chunk, fnForms[i], compileEnv, {
+            implicitSelfName: names[i].name,
+            runtimeName: names[i].name,
+          })
+        )
+      ) {
+        restore()
+        return false
+      }
+      emit(chunk, Op.StoreLocal, getPos(names[i]) ?? getPos(node) ?? null)
+      emitOperand(chunk, slots[i], getPos(names[i]) ?? getPos(node) ?? null)
+    }
+
+    for (let i = 0; i < body.length; i++) {
+      const form = body[i]
+      const isLast = i === body.length - 1
+      const isTailPosition = compileEnv.isTailPosition && isLast
+      if (
+        !withTailPosition(compileEnv, isTailPosition, () =>
+          emitExpression(chunk, form, compileEnv)
+        )
+      ) {
+        restore()
+        return false
+      }
+
+      if (i < body.length - 1) emit(chunk, Op.Pop)
+    }
+
+    if (body.length === 0) emit(chunk, Op.Nil, getPos(node) ?? null)
+
+    restore()
+    return true
+  })
+
+  if (!ok) {
+    chunk.localCount = originalLocalCount
+    compileEnv.nextLocalSlot = originalNextLocalSlot
+    compileEnv.localInfo.length = originalLocalInfoLength
+  }
+
+  return ok
 }
 
 function emitBinding(
@@ -1298,6 +1492,7 @@ function emitLoopStar(
     chunk.localCount = Math.max(chunk.localCount, compileEnv.nextLocalSlot)
 
     const previousSlots = new Map<string, number | undefined>()
+    const previousLexicalDepths = new Map<string, number>()
 
     // init loop bindings
     for (let i = 0; i < bindings.value.length; i += 2) {
@@ -1306,6 +1501,10 @@ function emitLoopStar(
       if (!is.symbol(name)) return false
       if (!previousSlots.has(name.name)) {
         previousSlots.set(name.name, compileEnv.locals.get(name.name))
+        previousLexicalDepths.set(
+          name.name,
+          lexicalBindingDepth(compileEnv, name.name)
+        )
       }
       const expr = bindings.value[i + 1]
       if (
@@ -1354,6 +1553,11 @@ function emitLoopStar(
     if (!bodyCompiled) return false
 
     for (const [name, previousSlot] of previousSlots) {
+      restoreLexicalBindingDepth(
+        compileEnv,
+        name,
+        previousLexicalDepths.get(name) ?? 0
+      )
       if (previousSlot === undefined) {
         compileEnv.locals.delete(name)
       } else {
@@ -1448,6 +1652,7 @@ function compileVmFnBodyInternal(
 ): VmCompileResult {
   const compileEnv = {
     locals: new Map<string, number>(),
+    lexicalBindings: new Map<string, VmLexicalBinding[]>(),
     localInfo: [],
     upvalueDescriptors: options.upvalueDescriptors ?? [],
     nextLocalSlot: 0,
@@ -1527,6 +1732,7 @@ function declareLocal(
   loopLocal: boolean
 ): void {
   compileEnv.locals.set(name, slot)
+  pushLexicalBinding(compileEnv, name, { kind: 'local', slot })
   compileEnv.localInfo[slot] = {
     name,
     slot,
@@ -1540,11 +1746,82 @@ function restoreLocal(
   name: string,
   previousSlot: number | undefined
 ): void {
+  popLexicalBinding(compileEnv, name)
   if (previousSlot === undefined) {
     compileEnv.locals.delete(name)
   } else {
     compileEnv.locals.set(name, previousSlot)
   }
+}
+
+function pushLexicalBinding(
+  compileEnv: VmCompileEnv,
+  name: string,
+  binding: VmLexicalBinding
+): void {
+  const bindings = compileEnv.lexicalBindings.get(name)
+  if (bindings === undefined) {
+    compileEnv.lexicalBindings.set(name, [binding])
+  } else {
+    bindings.push(binding)
+  }
+}
+
+function popLexicalBinding(compileEnv: VmCompileEnv, name: string): void {
+  const bindings = compileEnv.lexicalBindings.get(name)
+  if (bindings === undefined) return
+
+  bindings.pop()
+  if (bindings.length === 0) compileEnv.lexicalBindings.delete(name)
+}
+
+function lexicalBindingDepth(compileEnv: VmCompileEnv, name: string): number {
+  return compileEnv.lexicalBindings.get(name)?.length ?? 0
+}
+
+function restoreLexicalBindingDepth(
+  compileEnv: VmCompileEnv,
+  name: string,
+  depth: number
+): void {
+  const bindings = compileEnv.lexicalBindings.get(name)
+  if (bindings === undefined) return
+
+  bindings.length = depth
+  if (bindings.length === 0) compileEnv.lexicalBindings.delete(name)
+}
+
+function lexicalVarCandidates(
+  compileEnv: VmCompileEnv,
+  name: string
+): VmLexicalVarCandidate[] {
+  const candidates: VmLexicalVarCandidate[] = []
+  let current: VmCompileEnv | null = compileEnv
+
+  while (current !== null) {
+    const bindings = current.lexicalBindings.get(name)
+    if (bindings !== undefined) {
+      for (let i = bindings.length - 1; i >= 0; i--) {
+        const binding = bindings[i]
+        if (current === compileEnv) {
+          candidates.push({ kind: 'local', slot: binding.slot })
+          continue
+        }
+
+        const upvalueSlot = resolveUpvalueFromEnv(
+          compileEnv,
+          current,
+          binding.slot
+        )
+        if (upvalueSlot !== null) {
+          candidates.push({ kind: 'upvalue', slot: upvalueSlot })
+        }
+      }
+    }
+    current = current.enclosing
+  }
+
+  return candidates
 }
 
 function resolveUpvalue(
@@ -1562,6 +1839,32 @@ function resolveUpvalue(
   }
 
   const enclosingUpvalue = resolveUpvalue(enclosing, name)
+  if (enclosingUpvalue === null) return null
+
+  return addUpvalueDescriptor(compileEnv, {
+    isLocal: false,
+    index: enclosingUpvalue,
+  })
+}
+
+function resolveUpvalueFromEnv(
+  compileEnv: VmCompileEnv,
+  ownerEnv: VmCompileEnv,
+  localSlot: number
+): UpvalueResolution {
+  const enclosing = compileEnv.enclosing
+  if (enclosing === null) return null
+
+  if (enclosing === ownerEnv) {
+    const localInfo = ownerEnv.localInfo[localSlot]
+    if (localInfo !== undefined) localInfo.captured = true
+    return addUpvalueDescriptor(compileEnv, {
+      isLocal: true,
+      index: localSlot,
+    })
+  }
+
+  const enclosingUpvalue = resolveUpvalueFromEnv(enclosing, ownerEnv, localSlot)
   if (enclosingUpvalue === null) return null
 
   return addUpvalueDescriptor(compileEnv, {

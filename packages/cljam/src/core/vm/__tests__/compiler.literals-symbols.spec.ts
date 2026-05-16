@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { define, makeEnv } from '../../env'
 import { createEvaluationContext } from '../../evaluator'
 import { v } from '../../factories'
+import { createSession } from '../../session'
 import { compileVm, tryCompileVm } from '../compiler'
 import { disassembleChunk } from '../debug'
 import { executeChunk } from '../vm'
@@ -52,6 +53,17 @@ describe('VM compiler literals', () => {
     expectVmCompilesTo('(quote [a b])', v.vector([v.symbol('a'), v.symbol('b')]))
   })
 
+  it('compiles var as an explicit var load', () => {
+    const chunk = compileVm(formToNode('(var x)'))
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    expect(disassembleChunk(chunk)).toBe(
+      ['== vm-expression ==', '0000 LoadVar 0 ; x', '0002 Return'].join('\n')
+    )
+  })
+
   it('preserves nested structured fallback reasons from child emitters', () => {
     const result = tryCompileVm(formToNode('[foo/bar.baz]'))
 
@@ -88,6 +100,23 @@ describe('VM Symbols', () => {
     expect(
       executeChunk({ chunk, env, ctx: createEvaluationContext() })
     ).toEqual(v.number(42))
+  })
+
+  it('executes compiled var loads without derefing the namespace var', () => {
+    const node = formToNode('(var x)')
+    const chunk = compileVm(node)
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    const env = makeEnv()
+    env.ns = v.namespace('user')
+    const target = v.var('user', 'x', v.number(42))
+    env.ns.vars.set('x', target)
+
+    expect(executeChunk({ chunk, env, ctx: createEvaluationContext() })).toBe(
+      target
+    )
   })
 
   it.each([
@@ -180,4 +209,76 @@ describe('VM Symbols', () => {
       expect(compileVm(formToNode(code))).toBeNull()
     }
   )
+
+  it('compiles qualified var loads and preserves alias resolution at runtime', () => {
+    const chunk = compileVm(formToNode('(var src/answer)'))
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+
+    const sourceNs = v.namespace('source.ns')
+    const answer = v.var('source.ns', 'answer', v.number(42))
+    sourceNs.vars.set('answer', answer)
+
+    const env = makeEnv()
+    env.ns = v.namespace('consumer.ns')
+    env.ns.aliases.set('src', sourceNs)
+
+    expect(
+      executeChunk({ chunk, env, ctx: createEvaluationContext() })
+    ).toBe(answer)
+  })
+
+  it('executes lexical var loads for local var values', () => {
+    const result = createSession().evaluate('(let [f (var +)] (var f))')
+
+    expect(result.kind).toBe('var')
+    expect((result as any).ns).toBe('clojure.core')
+    expect((result as any).name).toBe('+')
+  })
+
+  it('executes lexical var loads for function params', () => {
+    const result = createSession().evaluate('((fn [f] (var f)) (var +))')
+
+    expect(result.kind).toBe('var')
+    expect((result as any).ns).toBe('clojure.core')
+    expect((result as any).name).toBe('+')
+  })
+
+  it('falls through local non-var values to namespace vars', () => {
+    const session = createSession()
+    session.evaluate('(def x 42)')
+
+    const result = session.evaluate('(let [x :not-var] (var x))')
+
+    expect(result.kind).toBe('var')
+    expect((result as any).ns).toBe('user')
+    expect((result as any).name).toBe('x')
+  })
+
+  it('errors when lexical non-var values do not resolve to any var', () => {
+    expect(() =>
+      createSession().evaluate('(let [x :not-var] (var x))')
+    ).toThrow('Unable to resolve var: x in this context')
+  })
+
+  it('falls through inner non-var shadowing to an outer var candidate', () => {
+    const result = createSession().evaluate(
+      '(let [x (var +)] (let [x :not-var] (var x)))'
+    )
+
+    expect(result.kind).toBe('var')
+    expect((result as any).ns).toBe('clojure.core')
+    expect((result as any).name).toBe('+')
+  })
+
+  it('executes lexical var loads through captured upvalues', () => {
+    const result = createSession().evaluate(
+      '(let [x (var +)] ((fn [] (var x))))'
+    )
+
+    expect(result.kind).toBe('var')
+    expect((result as any).ns).toBe('clojure.core')
+    expect((result as any).name).toBe('+')
+  })
 })

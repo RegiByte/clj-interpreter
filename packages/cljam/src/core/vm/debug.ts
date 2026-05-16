@@ -42,6 +42,7 @@ function disassembleInstruction(
     }
     case Op.LoadGlobal:
     case Op.LoadQualified:
+    case Op.LoadVar:
     case Op.PushDynamicBinding:
     case Op.SetDynamic: {
       const constantIndex = chunk.code[offset + 1]
@@ -51,6 +52,24 @@ function disassembleInstruction(
 
       lines.push(
         `${formatOffset(offset)} ${name} ${constantIndex} ; ${rendered}`
+      )
+
+      return offset + 2
+    }
+    case Op.LoadLexicalVar: {
+      const lookupIndex = chunk.code[offset + 1]
+      const lookup = chunk.lexicalVarLookups[lookupIndex]
+      const renderedSymbol =
+        lookup === undefined ? '<missing>' : printString(lookup.symbol)
+      const renderedCandidates =
+        lookup === undefined
+          ? '<missing>'
+          : lookup.candidates
+              .map((candidate) => `${candidate.kind} ${candidate.slot}`)
+              .join(', ')
+
+      lines.push(
+        `${formatOffset(offset)} ${name} ${lookupIndex} ; ${renderedSymbol} [${renderedCandidates}]`
       )
 
       return offset + 2

@@ -30,7 +30,9 @@ type RunOutcome =
   | { ok: true; value: CljValue; events: EvalEvent[] }
   | { ok: false; error: Error; events: EvalEvent[] }
 
-const baseline = snapshotSession(createSession({ hostBindings: { Math, Date } }))
+const baseline = snapshotSession(
+  createSession({ hostBindings: { Math, Date } })
+)
 
 const readyCases: ReadyCase[] = [
   { name: 'number literal', code: '42' },
@@ -47,13 +49,25 @@ const readyCases: ReadyCase[] = [
   { name: 'vector as function', code: '([10 20 30] 1)' },
   { name: 'conditional callee', code: '((if true + -) 4 3)' },
   { name: 'let macro expansion', code: '(let [x 1 y (+ x 2)] y)' },
-  { name: 'cond macro expansion', code: '(cond false :no (= 1 1) :yes :else :bad)' },
+  {
+    name: 'cond macro expansion',
+    code: '(cond false :no (= 1 1) :yes :else :bad)',
+  },
   { name: 'case macro expansion', code: '(case 2 1 :one 2 :two :other)' },
   { name: 'when macro expansion', code: '(when true (+ 2 3))' },
-  { name: 'if-let macro expansion', code: '(if-let [x (:a {:a 3})] (+ x 1) 0)' },
+  {
+    name: 'if-let macro expansion',
+    code: '(if-let [x (:a {:a 3})] (+ x 1) 0)',
+  },
   { name: 'thread-first macro expansion', code: '(-> {:a 1} (assoc :b 2) :b)' },
-  { name: 'thread-last macro expansion', code: '(->> [1 2 3] (map inc) (reduce +))' },
-  { name: 'some-thread macro expansion', code: '(some-> {:a {:b 7}} :a :b inc)' },
+  {
+    name: 'thread-last macro expansion',
+    code: '(->> [1 2 3] (map inc) (reduce +))',
+  },
+  {
+    name: 'some-thread macro expansion',
+    code: '(some-> {:a {:b 7}} :a :b inc)',
+  },
   {
     name: 'vector destructuring after macro expansion',
     code: '(let [[a b & more] [1 2 3 4]] [a b more])',
@@ -110,6 +124,24 @@ const readyCases: ReadyCase[] = [
     code: '(binding [*print-length* 5] (set! *print-length* 1) *print-length*)',
   },
   {
+    name: 'var special form',
+    code: '(var +)',
+  },
+  {
+    name: 'qualified var special form',
+    code: '(var clojure.core/+)',
+  },
+  {
+    name: 'lexical var special form',
+    code: '(let [f (var +)] (var f))',
+  },
+  {
+    name: 'letfn macro expansion',
+    code: `(letfn [(even? [n] (if (= n 0) true (odd? (- n 1)))) 
+                   (odd?  [n] (if (= n 0) false (even? (- n 1))))]
+               (even? 4))`,
+  },
+  {
     name: 'prepared direct function call',
     setup: ['(def add1 (fn [x] (+ x 1)))'],
     code: '(add1 4)',
@@ -148,18 +180,8 @@ const fallbackCases: FallbackCase[] = [
     category: 'unsupported-special-form',
   },
   {
-    name: 'var special form',
-    code: '(var +)',
-    category: 'unsupported-special-form',
-  },
-  {
     name: 'async special form',
     code: '(async 42)',
-    category: 'unsupported-special-form',
-  },
-  {
-    name: 'letfn macro expansion',
-    code: '(letfn [(even? [n] (if (= n 0) true (odd? (- n 1)))) (odd? [n] (if (= n 0) false (even? (- n 1))))] (even? 4))',
     category: 'unsupported-special-form',
   },
   {
@@ -190,8 +212,8 @@ const fallbackCases: FallbackCase[] = [
   },
   {
     name: 'top-level fn literal with unsupported body',
-    code: '(fn [] (letfn* [f (fn* [] nil)] (f)))',
-    category: 'unsupported-special-form',
+    code: '(fn [] (letfn* [f (fn* [] (def x 1))] (f)))',
+    category: 'unsupported-top-level-mutation',
   },
 ]
 
@@ -253,7 +275,11 @@ describe('VM top-level readiness harness', () => {
   it.each(readyCases)('runs VM-ready top-level form: $name', (testCase) => {
     const snapshot = prepareSnapshot(testCase.setup)
     const off = runFromSnapshot(snapshot, testCase.code, 'off')
-    const opportunistic = runFromSnapshot(snapshot, testCase.code, 'opportunistic')
+    const opportunistic = runFromSnapshot(
+      snapshot,
+      testCase.code,
+      'opportunistic'
+    )
     const required = runFromSnapshot(snapshot, testCase.code, 'vm-required')
 
     expect(off.ok).toBe(true)
@@ -293,7 +319,9 @@ describe('VM top-level readiness harness', () => {
       expect(required.ok).toBe(false)
       expectFallbackCategory(required.events, testCase.category)
       if (!required.ok) {
-        expect(required.error.message).toContain('VM required but cannot compile')
+        expect(required.error.message).toContain(
+          'VM required but cannot compile'
+        )
       }
     }
   )
@@ -304,7 +332,9 @@ describe('VM top-level readiness harness', () => {
     for (const testCase of fallbackCases) {
       const snapshot = prepareSnapshot(testCase.setup)
       const required = runFromSnapshot(snapshot, testCase.code, 'vm-required')
-      const fallback = required.events.find((event) => event.path === 'fallback')
+      const fallback = required.events.find(
+        (event) => event.path === 'fallback'
+      )
       const category = fallback?.reason?.category
 
       expect(required.ok).toBe(false)
@@ -314,8 +344,8 @@ describe('VM top-level readiness harness', () => {
 
     expect(histogram).toEqual(
       new Map([
-        ['unsupported-top-level-mutation', 3],
-        ['unsupported-special-form', 5],
+        ['unsupported-top-level-mutation', 4],
+        ['unsupported-special-form', 2],
         ['compile-error', 1],
         ['unsupported-js-interop', 3],
         ['unsupported-binding-form', 1],

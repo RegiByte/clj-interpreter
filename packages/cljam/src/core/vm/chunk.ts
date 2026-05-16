@@ -7,6 +7,7 @@ type ChunkSnapshot = {
   positionsLength: number
   innerFunctionsLength: number
   catchTablesLength: number
+  lexicalVarLookupsLength: number
   maxStack: number
   stackDepth: number
   pendingInstruction: PendingInstruction | null
@@ -30,6 +31,7 @@ export function makeChunk(name?: string): VmChunk {
     localCount: 0,
     innerFunctions: [],
     catchTables: [],
+    lexicalVarLookups: [],
     selfSlot: -1,
   }
   stackDepthByChunk.set(chunk, 0)
@@ -69,6 +71,7 @@ export function snapshotChunk(chunk: VmChunk): ChunkSnapshot {
     positionsLength: chunk.positions.length,
     innerFunctionsLength: chunk.innerFunctions.length,
     catchTablesLength: chunk.catchTables.length,
+    lexicalVarLookupsLength: chunk.lexicalVarLookups.length,
     maxStack: chunk.maxStack,
     stackDepth: getStackDepth(chunk),
     pendingInstruction:
@@ -84,6 +87,7 @@ export function rollbackChunk(chunk: VmChunk, snapshot: ChunkSnapshot): void {
   chunk.positions.length = snapshot.positionsLength
   chunk.innerFunctions.length = snapshot.innerFunctionsLength
   chunk.catchTables.length = snapshot.catchTablesLength
+  chunk.lexicalVarLookups.length = snapshot.lexicalVarLookupsLength
   chunk.maxStack = snapshot.maxStack
   stackDepthByChunk.set(chunk, snapshot.stackDepth)
   if (snapshot.pendingInstruction === null) {
@@ -138,8 +142,11 @@ function getOperandCount(opcode: number): number {
     case Op.StoreLocal:
     case Op.LoadGlobal:
     case Op.LoadQualified:
+    case Op.LoadVar:
+    case Op.LoadLexicalVar:
     case Op.LoadUpvalue:
     case Op.PushDynamicBinding:
+    case Op.SetDynamic:
     case Op.MakeVector:
     case Op.MakeMap:
     case Op.MakeSet:
@@ -181,6 +188,8 @@ function getStackDelta(opcode: number, operands: number[]): number {
     case Op.LoadLocal:
     case Op.LoadGlobal:
     case Op.LoadQualified:
+    case Op.LoadVar:
+    case Op.LoadLexicalVar:
     case Op.LoadUpvalue:
     case Op.Closure:
       return 1

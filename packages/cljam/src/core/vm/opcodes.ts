@@ -37,6 +37,8 @@ export const Op = {
   PushDynamicBinding: 52,
   PopBindingFrame: 53,
   SetDynamic: 54,
+  LoadVar: 55,
+  LoadLexicalVar: 56,
 
   Add: 70,
   Sub: 71,

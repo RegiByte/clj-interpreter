@@ -13,7 +13,7 @@ describe('VM function body integration', () => {
       null,
       [
         formToNode(
-          '(let* [cat (fn* cat [xy zs] (letfn* [f (fn* [] nil)] (f)))] cat)'
+          '(let* [cat (fn* cat [xy zs] (try 1 (catch :default e (def caught e))))] cat)'
         ),
       ]
     )
@@ -21,8 +21,8 @@ describe('VM function body integration', () => {
     expect(result).toEqual({
       ok: false,
       reason: {
-        category: 'unsupported-special-form',
-        detail: 'VM does not support special form letfn*',
+        category: 'unsupported-top-level-mutation',
+        detail: 'VM does not support top-level mutation form def',
       },
     })
   })

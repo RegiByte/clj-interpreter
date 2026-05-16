@@ -105,19 +105,41 @@ describe('VM function body locals and let* compilation', () => {
 
   it.each([
     ['def', '(def y x)'],
-    ['var', '(var x)'],
     ['async', '(async x)'],
     ['JS interop dot', '(. x foo)'],
     ['JS constructor interop', '(js/new Date)'],
     ['ns', '(ns demo.vm-test)'],
     ['defmacro', '(defmacro m [] x)'],
-    ['letfn*', '(letfn* [f (fn* [] x)] (f))'],
   ])(
     'falls back when a function body contains unsupported %s',
     (_label, code) => {
       expect(compileFnBodyForTest(['x'], [code])).toBeNull()
     }
   )
+
+  it('compiles var in function bodies', () => {
+    const chunk = compileFnBodyForTest([], ['(var x)'])
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+    expect(disassembleChunk(chunk)).toBe(
+      ['== vm-fn-body ==', '0000 LoadVar 0 ; x', '0002 Return'].join('\n')
+    )
+  })
+
+  it('compiles lexical var in function bodies as a candidate lookup', () => {
+    const chunk = compileFnBodyForTest(['x'], ['(var x)'])
+
+    expect(chunk).not.toBeNull()
+    if (chunk === null) return
+    expect(disassembleChunk(chunk)).toBe(
+      [
+        '== vm-fn-body ==',
+        '0000 LoadLexicalVar 0 ; x [local 0]',
+        '0002 Return',
+      ].join('\n')
+    )
+  })
 
   it('compiles quote in function bodies as a literal constant', () => {
     const chunk = compileFnBodyForTest(['x'], ['(quote x)'])

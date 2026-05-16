@@ -142,6 +142,124 @@ describe('VM global opcodes', () => {
     )
   })
 
+  it('executes LoadVar for unqualified namespace vars', () => {
+    const chunk = makeChunk('load-var-test')
+    const index = addConstant(chunk, v.symbol('x'))
+
+    emit(chunk, Op.LoadVar)
+    emitOperand(chunk, index)
+    emit(chunk, Op.Return)
+
+    const env = makeEnv()
+    env.ns = makeNamespace('user')
+    internVar('x', v.number(42), env)
+
+    const result = executeChunk({ chunk, env, ctx: createEvaluationContext() })
+
+    expect(result.kind).toBe('var')
+    expect((result as any).ns).toBe('user')
+    expect((result as any).name).toBe('x')
+    expect((result as any).value).toEqual(v.number(42))
+  })
+
+  it.each([
+    ['full namespace name', 'source.ns/answer'],
+    ['alias from current namespace', 'src/answer'],
+  ])('executes LoadVar for qualified vars using %s', (_label, symbolName) => {
+    const chunk = makeChunk('load-qualified-var-test')
+    const index = addConstant(chunk, v.symbol(symbolName))
+
+    emit(chunk, Op.LoadVar)
+    emitOperand(chunk, index)
+    emit(chunk, Op.Return)
+
+    const sourceNs = makeNamespace('source.ns')
+    const answer = v.var('source.ns', 'answer', v.number(42))
+    sourceNs.vars.set('answer', answer)
+
+    const env = makeEnv()
+    env.ns = makeNamespace('consumer.ns')
+    env.ns.aliases.set('src', sourceNs)
+
+    const ctx = createEvaluationContext()
+    ctx.resolveNs = (name) => (name === 'source.ns' ? sourceNs : null)
+
+    expect(executeChunk({ chunk, env, ctx })).toBe(answer)
+  })
+
+  it('executes LoadLexicalVar from a local var candidate', () => {
+    const chunk = makeChunk('load-lexical-var-test')
+    const target = v.var('user', 'x', v.number(42))
+    chunk.lexicalVarLookups.push({
+      symbol: v.symbol('x'),
+      candidates: [{ kind: 'local', slot: 0 }],
+    })
+
+    emit(chunk, Op.LoadLexicalVar)
+    emitOperand(chunk, 0)
+    emit(chunk, Op.Return)
+
+    expect(
+      executeChunk({
+        chunk,
+        env: makeEnv(),
+        ctx: createEvaluationContext(),
+        locals: [target],
+      })
+    ).toBe(target)
+  })
+
+  it('executes LoadLexicalVar using nearest-to-outermost candidates', () => {
+    const chunk = makeChunk('load-lexical-var-chain-test')
+    const target = v.var('user', 'x', v.number(42))
+    chunk.lexicalVarLookups.push({
+      symbol: v.symbol('x'),
+      candidates: [
+        { kind: 'local', slot: 1 },
+        { kind: 'local', slot: 0 },
+      ],
+    })
+
+    emit(chunk, Op.LoadLexicalVar)
+    emitOperand(chunk, 0)
+    emit(chunk, Op.Return)
+
+    expect(
+      executeChunk({
+        chunk,
+        env: makeEnv(),
+        ctx: createEvaluationContext(),
+        locals: [target, v.keyword(':not-var')],
+      })
+    ).toBe(target)
+  })
+
+  it('executes LoadLexicalVar fallback through namespace vars', () => {
+    const chunk = makeChunk('load-lexical-var-fallback-test')
+    chunk.lexicalVarLookups.push({
+      symbol: v.symbol('x'),
+      candidates: [{ kind: 'local', slot: 0 }],
+    })
+
+    emit(chunk, Op.LoadLexicalVar)
+    emitOperand(chunk, 0)
+    emit(chunk, Op.Return)
+
+    const env = makeEnv()
+    env.ns = makeNamespace('user')
+    const target = v.var('user', 'x', v.number(42))
+    env.ns.vars.set('x', target)
+
+    expect(
+      executeChunk({
+        chunk,
+        env,
+        ctx: createEvaluationContext(),
+        locals: [v.keyword(':not-var')],
+      })
+    ).toBe(target)
+  })
+
   it.each([
     [
       'invalid constant index',
@@ -186,6 +304,38 @@ describe('VM global opcodes', () => {
     expect(() => executeChunk({ chunk, env: makeEnv(), ctx })).toThrow(
       EvaluationError
     )
+  })
+
+  it.each([
+    [
+      'missing namespace',
+      v.symbol('missing.ns/answer'),
+      'No such namespace: missing.ns',
+    ],
+    [
+      'missing qualified var',
+      v.symbol('source.ns/missing'),
+      'Var source.ns/missing not found',
+    ],
+    [
+      'missing unqualified var',
+      v.symbol('missing'),
+      'Unable to resolve var: missing in this context',
+    ],
+    ['non-symbol target', v.number(1), 'var expects a symbol'],
+  ])('throws when LoadVar has %s', (_label, target, message) => {
+    const chunk = makeChunk('bad-load-var-test')
+    const index = addConstant(chunk, target)
+
+    emit(chunk, Op.LoadVar)
+    emitOperand(chunk, index)
+    emit(chunk, Op.Return)
+
+    const sourceNs = makeNamespace('source.ns')
+    const ctx = createEvaluationContext()
+    ctx.resolveNs = (name) => (name === 'source.ns' ? sourceNs : null)
+
+    expect(() => executeChunk({ chunk, env: makeEnv(), ctx })).toThrow(message)
   })
 
   it('attaches instruction position to LoadQualified errors', () => {

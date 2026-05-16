@@ -538,6 +538,16 @@ export type VmUpvalueDescriptor = {
   index: number
 }
 
+export type VmLexicalVarCandidate = {
+  kind: 'local' | 'upvalue'
+  slot: number
+}
+
+export type VmLexicalVarLookup = {
+  symbol: CljSymbol
+  candidates: VmLexicalVarCandidate[]
+}
+
 export type VmCallFrame = {
   chunk: VmChunk
   env: Env
@@ -630,6 +640,7 @@ export type VmChunk = {
   localCount: number
   innerFunctions: VmFunctionTemplate[]
   catchTables: VmCatchTable[]
+  lexicalVarLookups: VmLexicalVarLookup[]
   selfSlot: number
 }
 

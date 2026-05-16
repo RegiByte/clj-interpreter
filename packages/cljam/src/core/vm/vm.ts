@@ -297,6 +297,68 @@ function executeInstruction(state: VmState): void {
       stack.push(derefValue(theVar))
       break
     }
+    case Op.LoadVar: {
+      const constantIndex = chunk.code[frame.ip++]
+      const value = chunk.constants[constantIndex]
+      if (value === undefined) {
+        throw new EvaluationError(
+          `Invalid constant index: ${constantIndex}`,
+          {
+            instruction,
+            constantIndex,
+            ip: frame.ip,
+            stack,
+            chunk,
+          },
+          instructionPos
+        )
+      }
+      if (!is.symbol(value)) {
+        throw new EvaluationError(
+          'var expects a symbol',
+          {
+            instruction,
+            constantIndex,
+            value,
+            ip: frame.ip,
+            stack,
+            chunk,
+          },
+          instructionPos
+        )
+      }
+      stack.push(resolveVarOperand(value, env, ctx, instructionPos))
+      break
+    }
+    case Op.LoadLexicalVar: {
+      const lookupIndex = chunk.code[frame.ip++]
+      const lookup = chunk.lexicalVarLookups[lookupIndex]
+      if (lookup === undefined) {
+        throw new EvaluationError(
+          `Invalid lexical var lookup index: ${lookupIndex}`,
+          {
+            instruction,
+            lookupIndex,
+            ip: frame.ip,
+            stack,
+            chunk,
+          },
+          instructionPos
+        )
+      }
+
+      const lexicalVar = resolveLexicalVarCandidate(
+        lookup.candidates,
+        frame,
+        stack,
+        instruction,
+        instructionPos
+      )
+      stack.push(
+        lexicalVar ?? resolveVarOperand(lookup.symbol, env, ctx, instructionPos)
+      )
+      break
+    }
     case Op.Nil: {
       stack.push(v.nil())
       break
@@ -1136,6 +1198,78 @@ function readSymbolConstantOperand(
     )
   }
   return value
+}
+
+function resolveVarOperand(
+  symbol: CljSymbol,
+  env: Env,
+  ctx: EvaluationContext,
+  instructionPos: Pos | undefined
+): CljVar {
+  const pos = getPos(symbol) ?? instructionPos
+  const slashIdx = symbol.name.indexOf('/')
+  if (slashIdx > 0 && slashIdx < symbol.name.length - 1) {
+    const alias = symbol.name.slice(0, slashIdx)
+    const localName = symbol.name.slice(slashIdx + 1)
+    const nsEnv = getNamespaceEnv(env)
+    const targetNs =
+      nsEnv.ns?.aliases.get(alias) ?? ctx.resolveNs(alias) ?? null
+    if (!targetNs) {
+      throw new EvaluationError(`No such namespace: ${alias}`, { sym: symbol }, pos)
+    }
+    const targetVar = targetNs.vars.get(localName)
+    if (!targetVar) {
+      throw new EvaluationError(`Var ${symbol.name} not found`, { sym: symbol }, pos)
+    }
+    return targetVar
+  }
+
+  const targetVar = lookupVar(symbol.name, env)
+  if (!targetVar) {
+    throw new EvaluationError(
+      `Unable to resolve var: ${symbol.name} in this context`,
+      { sym: symbol },
+      pos
+    )
+  }
+  return targetVar
+}
+
+function resolveLexicalVarCandidate(
+  candidates: VmChunk['lexicalVarLookups'][number]['candidates'],
+  frame: VmCallFrame,
+  stack: CljValue[],
+  instruction: number | undefined,
+  instructionPos: Pos | undefined
+): CljVar | null {
+  for (const candidate of candidates) {
+    let value: CljValue
+    if (candidate.kind === 'local') {
+      const localValue = frame.locals[candidate.slot]
+      if (localValue === undefined) {
+        throw new EvaluationError(
+          `Invalid lexical var local slot: ${candidate.slot}`,
+          { instruction, slot: candidate.slot, ip: frame.ip, stack, chunk: frame.chunk },
+          instructionPos
+        )
+      }
+      value = localValue
+    } else {
+      const upvalue = frame.closure?.upvalues[candidate.slot]
+      if (upvalue === undefined) {
+        throw new EvaluationError(
+          `Invalid lexical var upvalue slot: ${candidate.slot}`,
+          { instruction, slot: candidate.slot, ip: frame.ip, stack, chunk: frame.chunk },
+          instructionPos
+        )
+      }
+      value = readUpvalue(upvalue)
+    }
+
+    if (is.var(value)) return value
+  }
+
+  return null
 }
 
 function pushTryRecord(
