@@ -1,5 +1,5 @@
 import { is } from '../assertions'
-import { extend, getNamespaceEnv, internVar, lookupVar, makeEnv } from '../env'
+import { extend, getNamespaceEnv, lookupVar, makeEnv } from '../env'
 import { CljThrownSignal, EvaluationError, isEvaluationError } from '../errors'
 import { v } from '../factories'
 // --- ASYNC (experimental) ---
@@ -20,7 +20,7 @@ import {
   parseTryStructure,
   validateBindingVector,
 } from './form-parsers'
-import { buildVarMeta, defineVar, mergeDocIntoMeta } from './defs'
+import { defineMacro, defineVar, mergeDocIntoMeta } from './defs'
 import { evaluateDot, evaluateNew } from './js-interop'
 
 import { assertRecurInTailPosition } from './recur-check'
@@ -413,7 +413,6 @@ function evaluateDefmacro(
   const arityForms = docstring ? rest.slice(1) : rest
   const arities = parseArities(arityForms, env)
   const macro = v.multiArityMacro(arities, env)
-  macro.name = name.name
 
   // Extract :arglists from the raw param vectors (before destructuring runs).
   // Single-arity: arityForms[0] is the param vector [x y & rest].
@@ -425,9 +424,7 @@ function evaluateDefmacro(
         .map((f) => f.value[0])
         .filter(is.vector)
 
-  // Build full var meta: position info + :doc + :arglists.
-  const varMeta = buildVarMeta(name.meta, ctx, name)
-  let finalMeta = docstring ? mergeDocIntoMeta(varMeta, docstring) : varMeta
+  let finalMeta = docstring ? mergeDocIntoMeta(name.meta, docstring) : name.meta
   if (arglistVecs.length > 0) {
     const arglistsKv: [CljValue, CljValue] = [
       v.keyword(':arglists'),
@@ -439,21 +436,9 @@ function evaluateDefmacro(
     finalMeta = v.map([...base, arglistsKv])
   }
 
-  // Propagate :doc and :arglists to the macro value itself so describe can
-  // read them without needing the var (mirrors how evaluateDef handles functions).
-  const macroMetaEntries: [CljValue, CljValue][] = []
-  for (const key of [':doc', ':arglists']) {
-    const entry = finalMeta?.entries.find(
-      ([k]) => is.keyword(k) && k.name === key
-    )
-    if (entry) macroMetaEntries.push(entry)
-  }
-  if (macroMetaEntries.length > 0) {
-    macro.meta = v.map(macroMetaEntries)
-  }
-
-  internVar(name.name, macro, getNamespaceEnv(env), finalMeta)
-  return v.nil()
+  const nameWithMeta =
+    finalMeta === name.meta ? name : { ...name, meta: finalMeta }
+  return defineMacro({ name: nameWithMeta, macro, env, ctx })
 }
 
 function evaluateRecur(

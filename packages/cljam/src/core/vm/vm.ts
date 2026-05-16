@@ -1,7 +1,7 @@
 import { is } from '../assertions'
 import { derefValue, getNamespaceEnv, lookup, lookupVar } from '../env'
 import { CljThrownSignal, EvaluationError, isEvaluationError } from '../errors'
-import { defineVar } from '../evaluator/defs'
+import { defineMacro, defineVar } from '../evaluator/defs'
 import { matchesDiscriminator } from '../evaluator/form-parsers'
 import { v } from '../factories'
 import { framesToClj, getPos } from '../positions'
@@ -370,6 +370,65 @@ function executeInstruction(state: VmState): void {
         )
       }
       stack.push(defineVar({ name, value, env, ctx }))
+      break
+    }
+    case Op.DefMacro: {
+      const constantIndex = chunk.code[frame.ip++]
+      const name = chunk.constants[constantIndex]
+      if (name === undefined) {
+        throw new EvaluationError(
+          `Invalid constant index: ${constantIndex}`,
+          {
+            instruction,
+            constantIndex,
+            ip: frame.ip,
+            stack,
+            chunk,
+          },
+          instructionPos
+        )
+      }
+      if (!is.symbol(name)) {
+        throw new EvaluationError(
+          'defmacro expects a symbol constant',
+          {
+            instruction,
+            constantIndex,
+            value: name,
+            ip: frame.ip,
+            stack,
+            chunk,
+          },
+          instructionPos
+        )
+      }
+      const fn = stack.pop()
+      if (fn === undefined) {
+        throw new EvaluationError(
+          'VM stack underflow on DefMacro',
+          { instruction, constantIndex, ip: frame.ip, stack, chunk },
+          getPos(name) ?? instructionPos
+        )
+      }
+      if (!is.function(fn)) {
+        throw new EvaluationError(
+          'defmacro expects a function value',
+          {
+            instruction,
+            constantIndex,
+            value: fn,
+            ip: frame.ip,
+            stack,
+            chunk,
+          },
+          getPos(name) ?? instructionPos
+        )
+      }
+
+      const macro = v.multiArityMacro(fn.arities, fn.env)
+      macro.name = name.name
+      if (fn.meta) macro.meta = fn.meta
+      stack.push(defineMacro({ name, macro, env, ctx }))
       break
     }
     case Op.LoadLexicalVar: {

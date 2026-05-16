@@ -121,6 +121,31 @@ export function applyMacroWithContext(
   ctx: EvaluationContext
 ): CljValue {
   const arity = resolveArity(macro.arities, rawArgs.length)
+
+  if (arity.bytecodeBody && ctx.vmExecutionMode !== 'off') {
+    const chunk = arity.bytecodeBody
+    let locals = slotValuesForArity(arity, rawArgs)
+    while (locals.length < chunk.localCount) {
+      locals.push(cljNil())
+    }
+    if (chunk.selfSlot >= 0) {
+      locals[chunk.selfSlot] = macro
+    }
+    ctx.instrumentation?.onEvent({
+      path: 'vm:macro-body',
+      mode: ctx.vmExecutionMode ?? 'function-body',
+      formKind: 'defmacro',
+    })
+    return executeChunk({
+      chunk,
+      env: macro.env,
+      ctx,
+      locals,
+      rootFnName: macro.name ?? null,
+      closure: arity.vmClosure ?? null,
+    })
+  }
+
   const localEnv = bindParams(
     arity.params,
     arity.restParam,

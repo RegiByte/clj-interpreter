@@ -5,7 +5,7 @@ import { parseTryStructure } from '../evaluator/form-parsers'
 import { assertRecurInTailPosition } from '../evaluator/recur-check'
 import { v } from '../factories'
 import { specialFormKeywords, valueKeywords } from '../keywords'
-import { getPos } from '../positions'
+import { getPos, setPos } from '../positions'
 import type {
   Arity,
   CljList,
@@ -114,7 +114,6 @@ const unsupportedVmSpecialForms = new Set<string>([
   specialFormKeywords['.'],
   specialFormKeywords['js/new'],
   specialFormKeywords['ns'],
-  specialFormKeywords['defmacro'],
 ])
 
 function isUnsupportedVmSpecialForm(name: string): boolean {
@@ -349,6 +348,9 @@ function emitExpression(
         }
         if (name === specialFormKeywords['def']) {
           return emitDef(chunk, node, compileEnv)
+        }
+        if (name === specialFormKeywords['defmacro']) {
+          return emitDefMacro(chunk, node, compileEnv)
         }
         if (name === specialFormKeywords['try']) {
           return emitTry(chunk, node, compileEnv)
@@ -735,33 +737,12 @@ function emitFnStar(
       return false
     }
 
-    const templateArityChunks: VmArityTemplate[] = []
-    const upvalueDescriptors: VmUpvalueDescriptor[] = []
-
-    for (const arity of arities) {
-      assertRecurInTailPosition(arity.body)
-      const arityResult = compileVmFnBodyInternal(
-        arity.params,
-        arity.restParam,
-        arity.body,
-        {
-          allowNestedFn: true,
-          enclosing: compileEnv,
-          upvalueDescriptors,
-          selfName,
-        }
-      )
-      if (!arityResult.ok) return fail(compileEnv, arityResult.reason)
-      templateArityChunks.push({
-        params: arity.params,
-        restParam: arity.restParam,
-        chunk: arityResult.chunk,
-      })
-    }
+    const compiled = compileVmArityTemplates(arities, compileEnv, selfName)
+    if (compiled === null) return false
 
     const template: VmFunctionTemplate = {
-      arities: templateArityChunks,
-      upvalueDescriptors: [...upvalueDescriptors],
+      arities: compiled.templateArityChunks,
+      upvalueDescriptors: compiled.upvalueDescriptors,
     }
     const runtimeName = options.runtimeName ?? selfName
     if (runtimeName !== null) template.name = runtimeName
@@ -772,6 +753,44 @@ function emitFnStar(
 
     return true
   })
+}
+
+function compileVmArityTemplates(
+  arities: Arity[],
+  compileEnv: VmCompileEnv,
+  selfName: string | null
+): {
+  templateArityChunks: VmArityTemplate[]
+  upvalueDescriptors: VmUpvalueDescriptor[]
+} | null {
+  const templateArityChunks: VmArityTemplate[] = []
+  const upvalueDescriptors: VmUpvalueDescriptor[] = []
+
+  for (const arity of arities) {
+    assertRecurInTailPosition(arity.body)
+    const arityResult = compileVmFnBodyInternal(
+      arity.params,
+      arity.restParam,
+      arity.body,
+      {
+        allowNestedFn: true,
+        enclosing: compileEnv,
+        upvalueDescriptors,
+        selfName,
+      }
+    )
+    if (!arityResult.ok) {
+      fail(compileEnv, arityResult.reason)
+      return null
+    }
+    templateArityChunks.push({
+      params: arity.params,
+      restParam: arity.restParam,
+      chunk: arityResult.chunk,
+    })
+  }
+
+  return { templateArityChunks, upvalueDescriptors: [...upvalueDescriptors] }
 }
 
 function emitQuote(
@@ -863,10 +882,7 @@ function emitDef(
     }
 
     const symbolConstant = hasDocstring
-      ? {
-          ...name,
-          meta: mergeDocIntoMeta(name.meta, maybeDocstring.value),
-        }
+      ? symbolWithMeta(name, mergeDocIntoMeta(name.meta, maybeDocstring.value))
       : name
     const pos = getPos(name) ?? getPos(node) ?? null
     const index = addConstant(chunk, symbolConstant)
@@ -874,6 +890,105 @@ function emitDef(
     emitOperand(chunk, index, pos)
     return true
   })
+}
+
+function emitDefMacro(
+  chunk: VmChunk,
+  node: CljList,
+  compileEnv: VmCompileEnv
+): boolean {
+  if (!compileEnv.allowNestedFn) return false
+
+  return emitTransaction(chunk, () => {
+    const name = node.value[1]
+    if (!is.symbol(name)) {
+      return fail(compileEnv, {
+        category: 'compile-error',
+        detail: 'VM defmacro expects a symbol name',
+      })
+    }
+
+    const rest = node.value.slice(2)
+    const maybeDocstring = rest[0]
+    const hasDocstring = maybeDocstring !== undefined && is.string(maybeDocstring)
+    const arityForms = hasDocstring ? rest.slice(1) : rest
+
+    let arities: Arity[]
+    try {
+      arities = parseArities(arityForms, emptyEnvForVmParsing())
+    } catch (error) {
+      return fail(compileEnv, {
+        category: 'compile-error',
+        detail: error instanceof Error ? error.message : String(error),
+      })
+    }
+
+    const compiled = compileVmArityTemplates(arities, compileEnv, null)
+    if (compiled === null) return false
+
+    const symbolConstant = symbolWithMeta(
+      name,
+      withDefmacroMeta(
+        name.meta,
+        hasDocstring ? maybeDocstring.value : undefined,
+        arityForms
+      )
+    )
+    const template: VmFunctionTemplate = {
+      arities: compiled.templateArityChunks,
+      upvalueDescriptors: compiled.upvalueDescriptors,
+      name: name.name,
+    }
+    const templateIndex = chunk.innerFunctions.length
+    chunk.innerFunctions.push(template)
+
+    const pos = getPos(name) ?? getPos(node) ?? null
+    emit(chunk, Op.Closure, getPos(node) ?? null)
+    emitOperand(chunk, templateIndex, getPos(node) ?? null)
+    const index = addConstant(chunk, symbolConstant)
+    emit(chunk, Op.DefMacro, pos)
+    emitOperand(chunk, index, pos)
+    return true
+  })
+}
+
+function symbolWithMeta(
+  symbol: CljSymbol,
+  meta: CljMap | undefined
+): CljSymbol {
+  if (meta === symbol.meta) return symbol
+
+  const copy: CljSymbol = { ...symbol, meta }
+  const pos = getPos(symbol)
+  if (pos) setPos(copy, pos)
+  return copy
+}
+
+function withDefmacroMeta(
+  baseMeta: CljMap | undefined,
+  docstring: string | undefined,
+  arityForms: CljValue[]
+): CljMap | undefined {
+  let finalMeta = docstring ? mergeDocIntoMeta(baseMeta, docstring) : baseMeta
+  const arglistVecs: CljValue[] = is.vector(arityForms[0])
+    ? [arityForms[0]]
+    : arityForms
+        .filter(is.list)
+        .map((form) => form.value[0])
+        .filter(is.vector)
+
+  if (arglistVecs.length > 0) {
+    const base = (finalMeta?.entries ?? []).filter(
+      ([k]) => !(is.keyword(k) && k.name === ':arglists')
+    )
+    const entries: [CljValue, CljValue][] = [
+      ...base,
+      [v.keyword(':arglists'), v.vector(arglistVecs)],
+    ]
+    finalMeta = v.map(entries)
+  }
+
+  return finalMeta
 }
 
 function isQualifiedSymbol(name: string): boolean {

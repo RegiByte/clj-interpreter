@@ -524,6 +524,7 @@ export type EvalEvent = {
     | 'closure-compiler'
     | 'vm:function-body-compiled'
     | 'vm:function-body'
+    | 'vm:macro-body'
     | 'vm:top-level'
     | 'fallback'
   mode: VmExecutionMode

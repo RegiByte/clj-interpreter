@@ -225,6 +225,13 @@ describe('Dynamic vars and binding form', () => {
 })
 
 describe('defmacro and defmulti as Vars', () => {
+  it('defmacro returns the interned Var', () => {
+    const s = mkSession()
+    const result = s.evaluate('(defmacro returned-macro [] 1)')
+    expect(result.kind).toBe('var')
+    expect(printString(result)).toBe("#'user/returned-macro")
+  })
+
   it('defmacro interns macro into ns.vars', () => {
     const s = mkSession()
     s.evaluate('(defmacro my-macro [x] `(inc ~x))')
@@ -240,6 +247,26 @@ describe('defmacro and defmulti as Vars', () => {
     const v = s.evaluate("#'add1")
     expect(v.kind).toBe('var')
     expect((v as any).value.kind).toBe('macro')
+  })
+
+  it('var-get can consume the Var returned by defmacro', () => {
+    const s = mkSession()
+    const macro = s.evaluate(
+      '(var-get (defmacro returned-add1 [x] `(+ ~x 1)))'
+    )
+    expect(macro.kind).toBe('macro')
+  })
+
+  it('redefining a macro preserves Var identity', () => {
+    const s = mkSession()
+    const original = s.evaluate('(defmacro redefined-macro [] 1)')
+    const redefined = s.evaluate('(defmacro redefined-macro [] 2)')
+    expect(redefined).toBe(original)
+    expect(s.evaluate("#'redefined-macro")).toBe(original)
+    expect(s.evaluate('(redefined-macro)')).toMatchObject({
+      kind: 'number',
+      value: 2,
+    })
   })
 
   it('defmulti interns multimethod into ns.vars', () => {

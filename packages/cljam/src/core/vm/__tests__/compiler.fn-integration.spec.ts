@@ -13,7 +13,7 @@ describe('VM function body integration', () => {
       null,
       [
         formToNode(
-          '(let* [cat (fn* cat [xy zs] (try 1 (catch :default e (defmacro m [] e))))] cat)'
+          '(let* [cat (fn* cat [xy zs] (try 1 (catch :default e (async e))))] cat)'
         ),
       ]
     )
@@ -22,7 +22,7 @@ describe('VM function body integration', () => {
       ok: false,
       reason: {
         category: 'unsupported-special-form',
-        detail: 'VM does not support special form defmacro',
+        detail: 'VM does not support special form async',
       },
     })
   })

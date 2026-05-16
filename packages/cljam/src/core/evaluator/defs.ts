@@ -3,6 +3,7 @@ import { getNamespaceEnv } from '../env'
 import { v } from '../factories'
 import { getLineCol, getPos } from '../positions'
 import type {
+  CljMacro,
   CljMap,
   CljSymbol,
   CljValue,
@@ -95,6 +96,24 @@ function propagateDocToFunction(value: CljValue, meta: CljMap | undefined) {
   value.meta = v.map([...filtered, docEntry])
 }
 
+function propagateMacroMeta(macro: CljMacro, meta: CljMap | undefined) {
+  if (!meta) return
+
+  const propagatedEntries = meta.entries.filter(
+    ([k]) =>
+      is.keyword(k) && (k.name === ':doc' || k.name === ':arglists')
+  )
+  if (propagatedEntries.length === 0) return
+
+  const propagatedKeys = new Set(
+    propagatedEntries.map(([k]) => (is.keyword(k) ? k.name : ''))
+  )
+  const prevEntries = (macro.meta?.entries ?? []).filter(
+    ([k]) => !(is.keyword(k) && propagatedKeys.has(k.name))
+  )
+  macro.meta = v.map([...prevEntries, ...propagatedEntries])
+}
+
 export type DefineVarInput = {
   name: CljSymbol
   value: CljValue
@@ -131,4 +150,23 @@ export function defineVar({
   if (hasDynamicMeta(finalMeta)) newVar.dynamic = true
   cljNs.vars.set(name.name, newVar)
   return newVar
+}
+
+export type DefineMacroInput = {
+  name: CljSymbol
+  macro: CljMacro
+  env: Env
+  ctx: EvaluationContext
+}
+
+export function defineMacro({
+  name,
+  macro,
+  env,
+  ctx,
+}: DefineMacroInput): CljVar {
+  macro.name = name.name
+  const theVar = defineVar({ name, value: macro, env, ctx })
+  propagateMacroMeta(macro, theVar.meta)
+  return theVar
 }

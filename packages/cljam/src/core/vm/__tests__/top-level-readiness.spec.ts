@@ -166,6 +166,30 @@ const readyCases: ReadyCase[] = [
     code: '(do (defn triple [x] (* x 3)) (triple 7))',
   },
   {
+    name: 'defmacro same-source expansion',
+    code: '(defmacro readiness-m [] 42) (readiness-m)',
+  },
+  {
+    name: 'defmacro quasiquote body',
+    code: '(defmacro readiness-twice [x] `(+ ~x ~x)) (readiness-twice 21)',
+  },
+  {
+    name: 'defmacro variadic body',
+    code: "(defmacro readiness-list [& xs] (cons 'list xs)) (readiness-list 1 2 3)",
+  },
+  {
+    name: 'defmacro multi-arity body',
+    code: '(defmacro readiness-choose ([] 1) ([x] x)) [(readiness-choose) (readiness-choose 9)]',
+  },
+  {
+    name: 'macro-generated def',
+    code: "(defmacro define-readiness-answer [] '(def readiness-answer 42)) (define-readiness-answer) readiness-answer",
+  },
+  {
+    name: 'macro-defined macro',
+    code: "(defmacro define-readiness-macro [] '(defmacro readiness-made [] 5)) (define-readiness-macro) (readiness-made)",
+  },
+  {
     name: 'function-body def interns globally',
     code: '(do ((fn [] (def inside-fn 42))) inside-fn)',
   },
@@ -191,11 +215,6 @@ const fallbackCases: FallbackCase[] = [
     name: 'namespace declaration',
     code: '(ns readiness.foo)',
     category: 'unsupported-top-level-mutation',
-  },
-  {
-    name: 'defmacro special form',
-    code: '(defmacro m [] 1)',
-    category: 'unsupported-special-form',
   },
   {
     name: 'async special form',
@@ -230,7 +249,7 @@ const fallbackCases: FallbackCase[] = [
   },
   {
     name: 'top-level fn literal with unsupported body',
-    code: '(fn [] (letfn* [f (fn* [] (defmacro m [] 1))] (f)))',
+    code: '(fn [] (letfn* [f (fn* [] (async 1))] (f)))',
     category: 'unsupported-special-form',
   },
 ]
@@ -363,7 +382,7 @@ describe('VM top-level readiness harness', () => {
     expect(histogram).toEqual(
       new Map([
         ['unsupported-top-level-mutation', 1],
-        ['unsupported-special-form', 3],
+        ['unsupported-special-form', 2],
         ['compile-error', 1],
         ['unsupported-js-interop', 3],
         ['unsupported-binding-form', 1],

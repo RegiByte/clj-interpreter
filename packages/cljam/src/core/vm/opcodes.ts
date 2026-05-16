@@ -40,6 +40,7 @@ export const Op = {
   LoadVar: 55,
   LoadLexicalVar: 56,
   Def: 57,
+  DefMacro: 58,
 
   Add: 70,
   Sub: 71,
