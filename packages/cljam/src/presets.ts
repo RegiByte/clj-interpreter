@@ -121,7 +121,7 @@ export function nodePreset(): SessionOptions {
   return {
     output: (text) => process.stdout.write(text + '\n'),
     stderr: (text) => process.stderr.write(text + '\n'),
-    importModule: (specifier) => import(specifier),
+    importModule: (specifier) => import(/** @vite-ignore */ specifier),
     hostBindings: {
       Math,
       console,
@@ -147,7 +147,7 @@ export function browserPreset(): SessionOptions {
   return {
     output: (text) => console.log(text),
     stderr: (text) => console.error(text),
-    importModule: (specifier) => import(specifier),
+    importModule: (specifier) => import(/** @vite-ignore */ specifier),
     hostBindings: {
       Math,
       console,
