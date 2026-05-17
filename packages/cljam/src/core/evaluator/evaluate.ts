@@ -12,6 +12,7 @@ import { EvaluationError } from '../errors'
 import { v } from '../factories'
 import { valueKeywords } from '../keywords.ts'
 import { getPos } from '../positions'
+import { measureSync } from '../timing'
 import type {
   CljValue,
   Env,
@@ -27,11 +28,6 @@ import { evaluateList } from './dispatch'
 export type EvaluationMeasurement = {
   result: CljValue
   durationMs: number
-}
-
-function nowMs(): number {
-  if (typeof performance !== 'undefined') return performance.now()
-  return Date.now()
 }
 
 function vmMode(ctx: EvaluationContext): VmExecutionMode {
@@ -53,6 +49,18 @@ function emitEvalEvent(ctx: EvaluationContext, event: Omit<EvalEvent, 'mode'>): 
   })
 }
 
+function recordMeasurementStage(
+  ctx: EvaluationContext,
+  stage: string,
+  elapsedMs: number,
+  extra?: {
+    path?: EvalEvent['path']
+    reason?: EvalEvent['reason']
+  }
+): void {
+  ctx.measurement?.recordStage({ stage, elapsedMs, ...extra })
+}
+
 function evaluateTopLevelWithVm(
   expr: CljValue,
   env: Env,
@@ -61,14 +69,31 @@ function evaluateTopLevelWithVm(
 ): CljValue | null {
   if (mode !== 'opportunistic' && mode !== 'vm-required') return null
 
-  const result = tryCompileVm(expr)
+  const compileMeasurement =
+    ctx.measurement === undefined
+      ? null
+      : measureSync(() => tryCompileVm(expr))
+  const result = compileMeasurement?.value ?? tryCompileVm(expr)
+  if (compileMeasurement !== null) {
+    recordMeasurementStage(ctx, ':vm/compile', compileMeasurement.elapsedMs)
+  }
   if (result.ok) {
     emitEvalEvent(ctx, {
       path: 'vm:top-level',
       formKind: formKind(expr),
       ast: expr,
     })
-    return executeChunk({ chunk: result.chunk, env, ctx })
+    if (ctx.measurement === undefined) {
+      return executeChunk({ chunk: result.chunk, env, ctx })
+    }
+    ctx.measurement.setPath('vm:top-level')
+    const { value, elapsedMs } = measureSync(() =>
+      executeChunk({ chunk: result.chunk, env, ctx })
+    )
+    recordMeasurementStage(ctx, ':vm/execute', elapsedMs, {
+      path: 'vm:top-level',
+    })
+    return value
   }
 
   if (mode === 'vm-required') {
@@ -90,6 +115,10 @@ function evaluateTopLevelWithVm(
     reason: result.reason,
     formKind: formKind(expr),
     ast: expr,
+  })
+  recordMeasurementStage(ctx, ':fallback', 0, {
+    path: 'fallback',
+    reason: result.reason,
   })
   return null
 }
@@ -128,8 +157,14 @@ function evaluateWithContextInner(
         formKind: formKind(expr),
         ast: expr,
       })
+      ctx.measurement?.setPath('closure-compiler')
     }
-    return compiled(env, ctx)
+    if (!shouldEmitPathEvent || !ctx.measurement) return compiled(env, ctx)
+    const { value, elapsedMs } = measureSync(() => compiled(env, ctx))
+    recordMeasurementStage(ctx, ':closure-compiler', elapsedMs, {
+      path: 'closure-compiler',
+    })
+    return value
   }
   if (shouldEmitPathEvent) {
     emitEvalEvent(ctx, {
@@ -137,7 +172,9 @@ function evaluateWithContextInner(
       formKind: formKind(expr),
       ast: expr,
     })
+    ctx.measurement?.setPath('interpreter')
   }
+  const evaluateInterpreted = (): CljValue => {
   switch (expr.kind) {
     // self-evaluating forms
     case valueKeywords.number:
@@ -199,6 +236,13 @@ function evaluateWithContextInner(
     default:
       throw new EvaluationError('Unexpected value', { expr, env }, getPos(expr))
   }
+  }
+  if (!shouldEmitPathEvent || !ctx.measurement) return evaluateInterpreted()
+  const { value, elapsedMs } = measureSync(evaluateInterpreted)
+  recordMeasurementStage(ctx, ':interpreter', elapsedMs, {
+    path: 'interpreter',
+  })
+  return value
 }
 
 export function evaluateFormsWithContext(
@@ -218,11 +262,9 @@ export function evaluateWithMeasurementsWithContext(
   env: Env,
   ctx: EvaluationContext
 ): EvaluationMeasurement {
-  const start = nowMs()
-  const result = ctx.evaluate(expr, env)
-  const end = nowMs()
+  const { value: result, elapsedMs } = measureSync(() => ctx.evaluate(expr, env))
   return {
     result,
-    durationMs: end - start,
+    durationMs: elapsedMs,
   }
 }

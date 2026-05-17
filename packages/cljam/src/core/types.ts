@@ -244,6 +244,7 @@ export type EvaluationContext = {
   instrumentation?: {
     onEvent: (event: EvalEvent) => void
   }
+  measurement?: EvaluationMeasurementRecorder
   /**
    * Internal recursion guard used to keep first top-level VM integration at the
    * whole-form boundary instead of opportunistically compiling interpreter
@@ -532,6 +533,18 @@ export type EvalEvent = {
   formKind?: string
   ast?: CljValue
   details?: Record<string, unknown>
+}
+
+export type EvaluationMeasurementStage = {
+  stage: string
+  elapsedMs: number
+  path?: EvalEvent['path']
+  reason?: VmFallbackReason
+}
+
+export type EvaluationMeasurementRecorder = {
+  recordStage: (stage: EvaluationMeasurementStage) => void
+  setPath: (path: EvalEvent['path']) => void
 }
 
 export type VmUpvalueDescriptor = {

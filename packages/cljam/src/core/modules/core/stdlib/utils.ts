@@ -13,9 +13,17 @@ import {
   withPrintContext,
 } from '../../../printer'
 import { readForms } from '../../../reader'
+import { measureSync, nowMs } from '../../../timing'
 import { tokenize } from '../../../tokenizer'
-import { valueToString } from '../../../transformations'
-import type { CljValue, Env, EvaluationContext } from '../../../types'
+import { toSeq, valueToString } from '../../../transformations'
+import type {
+  CljValue,
+  Env,
+  EvaluationContext,
+  EvaluationMeasurementStage,
+  VmFallbackReason,
+} from '../../../types'
+import { emitToOut } from './print'
 
 /**
  * Resolves a symbol (qualified or unqualified) to a macro value, or undefined
@@ -39,6 +47,107 @@ function lookupMacroValue(
     return varEntry !== undefined ? derefValue(varEntry) : undefined
   }
   return tryLookup(name, callEnv)
+}
+
+function keywordPath(path: string | undefined): CljValue {
+  if (path === undefined) return v.nil()
+  return v.keyword(`:${path.replace(':', '/')}`)
+}
+
+function reasonToMap(reason: VmFallbackReason): CljValue {
+  return v.map([
+    [v.keyword(':category'), v.keyword(`:${reason.category}`)],
+    [v.keyword(':detail'), v.string(reason.detail)],
+  ])
+}
+
+function stageToMap(stage: EvaluationMeasurementStage): CljValue {
+  const entries: [CljValue, CljValue][] = [
+    [v.keyword(':stage'), v.keyword(stage.stage)],
+    [v.keyword(':elapsed-ms'), v.number(stage.elapsedMs)],
+  ]
+  if (stage.path !== undefined) {
+    entries.push([v.keyword(':path'), keywordPath(stage.path)])
+  }
+  if (stage.reason !== undefined) {
+    entries.push([v.keyword(':reason'), reasonToMap(stage.reason)])
+  }
+  return v.map(entries)
+}
+
+function bodyFormsFromArg(body: CljValue | undefined): CljValue[] {
+  if (body === undefined || is.nil(body)) return []
+  if (is.list(body) || is.vector(body)) return body.value
+  if (is.cons(body) || is.lazySeq(body)) return toSeq(body)
+  throw EvaluationError.atArg(
+    `measure* internal body must be a sequence, got ${printString(body)}`,
+    { body },
+    0
+  )
+}
+
+function measureBody(
+  ctx: EvaluationContext,
+  callEnv: Env,
+  body: CljValue | undefined
+): CljValue {
+  const forms = bodyFormsFromArg(body)
+  const stages: EvaluationMeasurementStage[] = []
+  let path: string | undefined
+  let result: CljValue = v.nil()
+  const previousMeasurement = ctx.measurement
+  const previousDepth = ctx.evaluationDepth
+  const start = nowMs()
+
+  ctx.measurement = {
+    recordStage(stage) {
+      stages.push(stage)
+    },
+    setPath(nextPath) {
+      path = nextPath
+    },
+  }
+  ctx.evaluationDepth = 0
+
+  try {
+    for (const form of forms) {
+      const { value: expanded, elapsedMs } = measureSync(() => {
+        ctx.measurement = undefined
+        try {
+          return ctx.expandAll(form, callEnv)
+        } finally {
+          ctx.measurement = {
+            recordStage(stage) {
+              stages.push(stage)
+            },
+            setPath(nextPath) {
+              path = nextPath
+            },
+          }
+        }
+      })
+      stages.push({ stage: ':macroexpand', elapsedMs })
+      result = ctx.evaluate(expanded, callEnv)
+    }
+  } finally {
+    ctx.measurement = previousMeasurement
+    ctx.evaluationDepth = previousDepth
+  }
+
+  return v.map([
+    [v.keyword(':value'), result],
+    [v.keyword(':elapsed-ms'), v.number(nowMs() - start)],
+    [v.keyword(':path'), keywordPath(path)],
+    [v.keyword(':stages'), v.vector(stages.map(stageToMap))],
+  ])
+}
+
+function mapLookup(map: CljValue, keyName: string): CljValue {
+  if (!is.map(map)) return v.nil()
+  return (
+    map.entries.find(([key]) => is.keyword(key) && key.name === keyName)?.[1] ??
+    v.nil()
+  )
 }
 
 export const utilFunctions: Record<string, CljValue> = {
@@ -175,6 +284,45 @@ export const utilFunctions: Record<string, CljValue> = {
       ...docMeta({
         doc: 'Returns a unique symbol with the given prefix. Defaults to "G" if no prefix is provided.',
         arglists: [[], ['prefix']],
+        docGroup: DocGroups.runtime,
+      }),
+    ]),
+  'measure*-impl': v
+    .nativeFnCtx(
+      'measure*-impl',
+      function measureImpl(
+        ctx: EvaluationContext,
+        callEnv: Env,
+        body: CljValue | undefined
+      ) {
+        return measureBody(ctx, callEnv, body)
+      }
+    )
+    .withMeta([
+      ...docMeta({
+        doc: 'Implementation detail for measure*. Evaluates quoted body forms and returns structured timing data.',
+        arglists: [['body']],
+        docGroup: DocGroups.runtime,
+      }),
+    ]),
+  'time*-impl': v
+    .nativeFnCtx(
+      'time*-impl',
+      function timeImpl(
+        ctx: EvaluationContext,
+        callEnv: Env,
+        body: CljValue | undefined
+      ) {
+        const measured = measureBody(ctx, callEnv, body)
+        const elapsed = mapLookup(measured, ':elapsed-ms')
+        emitToOut(ctx, callEnv, `Elapsed time: ${valueToString(elapsed)} msecs\n`)
+        return mapLookup(measured, ':value')
+      }
+    )
+    .withMeta([
+      ...docMeta({
+        doc: 'Implementation detail for time. Evaluates quoted body forms, prints elapsed time, and returns the value.',
+        arglists: [['body']],
         docGroup: DocGroups.runtime,
       }),
     ]),

@@ -80,6 +80,20 @@ export const clojure_coreSource = `\
 (declare describe*)
 
 (defmacro
+  ^{:doc-group "Runtime"}
+  measure*
+  "Evaluates body and returns a map with the final :value, total :elapsed-ms, selected :path, and ordered timing :stages."
+  [& body]
+  \`(measure*-impl '~body))
+
+(defmacro
+  ^{:doc-group "Runtime"}
+  time
+  "Evaluates body, prints elapsed time, and returns the final value."
+  [& body]
+  \`(time*-impl '~body))
+
+(defmacro
   ^{:doc-group "Functions"}
   defn
   "Same as (def name (fn [params*] exprs*)). Optionally accepts a docstring and attribute-map before params. Attaches :doc and :arglists metadata to the var."
