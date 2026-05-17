@@ -5,6 +5,7 @@ import { getLineCol, getPos } from '../positions'
 import type {
   CljMacro,
   CljMap,
+  NamespaceMutationReason,
   CljSymbol,
   CljValue,
   CljVar,
@@ -120,6 +121,7 @@ export type DefineVarInput = {
   env: Env
   ctx: EvaluationContext
   docstring?: string
+  mutationReason?: NamespaceMutationReason
 }
 
 export function defineVar({
@@ -128,6 +130,7 @@ export function defineVar({
   env,
   ctx,
   docstring,
+  mutationReason = 'def',
 }: DefineVarInput): CljVar {
   const nsEnv = getNamespaceEnv(env)
   const cljNs = nsEnv.ns!
@@ -135,6 +138,9 @@ export function defineVar({
   const finalMeta = docstring ? mergeDocIntoMeta(varMeta, docstring) : varMeta
 
   propagateDocToFunction(value, finalMeta)
+  if (is.function(value) || is.macro(value)) {
+    value.displayName = `${cljNs.name}/${name.name}`
+  }
 
   const existing = cljNs.vars.get(name.name)
   if (existing) {
@@ -143,12 +149,14 @@ export function defineVar({
       existing.meta = finalMeta
       if (hasDynamicMeta(finalMeta)) existing.dynamic = true
     }
+    ctx.touchNamespace?.(cljNs, mutationReason)
     return existing
   }
 
   const newVar = v.var(cljNs.name, name.name, value, finalMeta)
   if (hasDynamicMeta(finalMeta)) newVar.dynamic = true
   cljNs.vars.set(name.name, newVar)
+  ctx.touchNamespace?.(cljNs, mutationReason)
   return newVar
 }
 
@@ -166,7 +174,13 @@ export function defineMacro({
   ctx,
 }: DefineMacroInput): CljVar {
   macro.name = name.name
-  const theVar = defineVar({ name, value: macro, env, ctx })
+  const theVar = defineVar({
+    name,
+    value: macro,
+    env,
+    ctx,
+    mutationReason: 'defmacro',
+  })
   propagateMacroMeta(macro, theVar.meta)
   return theVar
 }

@@ -26,6 +26,7 @@ import { evaluateDot, evaluateNew } from './js-interop'
 import { assertRecurInTailPosition } from './recur-check'
 
 import { compile, compileFnBody } from '../compiler/index.ts'
+import { assignChunkIds } from '../vm/chunk.ts'
 import { tryCompileVmFnBody } from '../vm/compiler.ts'
 
 function evaluateTry(
@@ -209,6 +210,7 @@ function evaluateFnStar(
         fnName
       )
       if (vmResult.ok) {
+        assignChunkIds(vmResult.chunk, ctx)
         arity.bytecodeBody = vmResult.chunk
         ctx.instrumentation?.onEvent({
           path: 'vm:function-body-compiled',
@@ -216,6 +218,8 @@ function evaluateFnStar(
           formKind: 'fn*',
           ast: list,
           details: {
+            evalId: ctx.currentEvalIdentity?.id,
+            chunkId: vmResult.chunk.id,
             functionName: fnName ?? null,
             fixedParamCount: arity.params.length,
             hasRestParam: arity.restParam !== null,
@@ -259,6 +263,13 @@ function evaluateFnStar(
     }
   }
   const fn = v.multiArityFunction(arities, env)
+  const nsName = getNamespaceEnv(env).ns?.name ?? 'user'
+  const identity = ctx.allocateFunctionIdentity?.({ nsName, name: fnName })
+  if (identity) {
+    fn.id = identity.id
+    fn.evalId = identity.evalId
+    fn.displayName = identity.displayName
+  }
   if (fnName) {
     fn.name = fnName
     const selfEnv = makeEnv(env)

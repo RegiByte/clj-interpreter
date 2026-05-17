@@ -15,11 +15,39 @@ export type CljMap = {
 export type CljNamespace = {
   kind: 'namespace'
   name: string
+  id?: number
+  version: number
   vars: Map<string, CljVar> // user defs from (def ...)
   aliases: Map<string, CljNamespace> // :as namespace aliases
   readerAliases: Map<string, string> // :as-alias reader aliases
   doc?: string
 }
+
+export type RuntimeEvalIdentity = {
+  id: number
+  nsName: string
+}
+
+export type RuntimeFunctionIdentity = {
+  id: number
+  evalId?: number
+  displayName: string
+}
+
+export type FunctionIdentityInput = {
+  nsName: string
+  name?: string
+  evalIdentity?: RuntimeEvalIdentity
+}
+
+export type NamespaceMutationReason =
+  | 'def'
+  | 'defmacro'
+  | 'alter-var-root'
+  | 'defmulti'
+  | 'defmethod'
+  | 'require'
+  | 'host-require'
 
 export type Env = {
   bindings: Map<string, CljValue> // native fns, macros, multimethods, local values
@@ -42,6 +70,9 @@ export type CljFunction = {
   arities: Arity[]
   env: Env
   name?: string // set for named fn: (fn my-name [x] x)
+  id?: number
+  evalId?: number
+  displayName?: string
   meta?: CljMap
 }
 
@@ -50,6 +81,9 @@ export type CljMacro = {
   arities: Arity[]
   env: Env
   name?: string // set for named defmacro
+  id?: number
+  evalId?: number
+  displayName?: string
   meta?: CljMap
 }
 
@@ -245,6 +279,18 @@ export type EvaluationContext = {
     onEvent: (event: EvalEvent) => void
   }
   measurement?: EvaluationMeasurementRecorder
+  allocateEvalIdentity?: (nsName: string) => RuntimeEvalIdentity
+  allocateFunctionIdentity?: (
+    input: FunctionIdentityInput
+  ) => RuntimeFunctionIdentity
+  allocateChunkIdentity?: (chunk: VmChunk) => number
+  getCachedTopLevelVmChunk?: (key: string) => VmChunk | undefined
+  setCachedTopLevelVmChunk?: (key: string, chunk: VmChunk) => void
+  touchNamespace?: (
+    ns: CljNamespace,
+    reason: NamespaceMutationReason
+  ) => void
+  currentEvalIdentity?: RuntimeEvalIdentity
   /**
    * Internal recursion guard used to keep first top-level VM integration at the
    * whole-form boundary instead of opportunistically compiling interpreter
@@ -536,7 +582,7 @@ export type EvalEvent = {
 }
 
 export type EvaluationMeasurementStage = {
-  stage: string
+  stage: ':macroexpand' | ':vm/compile' | ':vm/execute' | ':vm/cache-hit' | ':fallback' | ':closure-compiler' | ':interpreter' | string
   elapsedMs: number
   path?: EvalEvent['path']
   reason?: VmFallbackReason
@@ -647,6 +693,7 @@ export type VmCatchTable = {
 }
 
 export type VmChunk = {
+  id?: number
   code: number[]
   constants: CljValue[]
   positions: Array<Pos | null>

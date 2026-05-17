@@ -55,6 +55,8 @@ export const varFunctions: Record<string, CljValue> = {
         }
         const newVal = ctx.applyFunction(f, [varVal.value, ...args], callEnv)
         varVal.value = newVal
+        const ns = ctx.resolveNs(varVal.ns)
+        if (ns) ctx.touchNamespace?.(ns, 'alter-var-root')
         return newVal
       }
     )

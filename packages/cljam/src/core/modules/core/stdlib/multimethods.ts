@@ -44,7 +44,7 @@ export const multimethodFunctions: Record<string, CljValue> = {
     .nativeFnCtx(
       'make-multimethod!',
       function makeMultimethodImpl(
-        _ctx,
+        ctx,
         callEnv,
         nameVal: CljValue,
         dispatchFnVal: CljValue,
@@ -93,6 +93,7 @@ export const multimethodFunctions: Record<string, CljValue> = {
           defaultDispatchVal
         )
         internVar(name, mm, nsEnv)
+        if (nsEnv.ns) ctx.touchNamespace?.(nsEnv.ns, 'defmulti')
         return v.nil()
       }
     )
@@ -114,7 +115,7 @@ export const multimethodFunctions: Record<string, CljValue> = {
     .nativeFnCtx(
       'add-method!',
       function addMethodImpl(
-        _ctx,
+        ctx,
         _callEnv,
         varVal: CljValue,
         dispatchVal: CljValue,
@@ -165,6 +166,8 @@ export const multimethodFunctions: Record<string, CljValue> = {
           )
         }
         varVal.value = updated
+        const ns = ctx.resolveNs(varVal.ns)
+        if (ns) ctx.touchNamespace?.(ns, 'defmethod')
         return v.nil()
       }
     )

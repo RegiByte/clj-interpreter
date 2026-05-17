@@ -215,6 +215,17 @@ function buildSessionFacade(
   ctx.allowedHostModules = options?.allowedHostModules ?? 'all'
   ctx.vmExecutionMode = options?.vmExecutionMode
   ctx.instrumentation = options?.instrumentation
+  ctx.allocateEvalIdentity = (nsName) => runtime.allocateEvalIdentity(nsName)
+  ctx.allocateFunctionIdentity = (input) =>
+    runtime.allocateFunctionIdentity({
+      ...input,
+      evalIdentity: ctx.currentEvalIdentity,
+    })
+  ctx.allocateChunkIdentity = (chunk) => runtime.allocateChunkIdentity(chunk)
+  ctx.getCachedTopLevelVmChunk = (key) => runtime.getCachedTopLevelVmChunk(key)
+  ctx.setCachedTopLevelVmChunk = (key, chunk) =>
+    runtime.setCachedTopLevelVmChunk(key, chunk)
+  ctx.touchNamespace = (ns) => runtime.touchNamespace(ns)
   ctx.setCurrentNs = (name: string) => {
     runtime.ensureNamespace(name)
     currentNs = name
@@ -333,8 +344,14 @@ function buildSessionFacade(
         runtime.processNsRequires(forms, env, ctx)
         let result: CljValue = v.nil()
         for (const form of forms) {
-          const expanded = ctx.expandAll(form, env)
-          result = ctx.evaluate(expanded, env)
+          const evalIdentity = ctx.allocateEvalIdentity?.(currentNs)
+          ctx.currentEvalIdentity = evalIdentity
+          try {
+            const expanded = ctx.expandAll(form, env)
+            result = ctx.evaluate(expanded, env)
+          } finally {
+            ctx.currentEvalIdentity = undefined
+          }
         }
         return result
       } catch (e) {
@@ -413,8 +430,14 @@ function buildSessionFacade(
         await runtime.processNsRequiresAsync(forms, env, ctx)
         let result: CljValue = v.nil()
         for (const form of forms) {
-          const expanded = ctx.expandAll(form, env)
-          result = ctx.evaluate(expanded, env)
+          const evalIdentity = ctx.allocateEvalIdentity?.(currentNs)
+          ctx.currentEvalIdentity = evalIdentity
+          try {
+            const expanded = ctx.expandAll(form, env)
+            result = ctx.evaluate(expanded, env)
+          } finally {
+            ctx.currentEvalIdentity = undefined
+          }
         }
         if (!is.pending(result)) return result
         try {
@@ -481,8 +504,14 @@ function buildSessionFacade(
         const env = runtime.getNamespaceEnv(currentNs)!
         let result: CljValue = v.nil()
         for (const form of forms) {
-          const expanded = ctx.expandAll(form, env)
-          result = ctx.evaluate(expanded, env)
+          const evalIdentity = ctx.allocateEvalIdentity?.(currentNs)
+          ctx.currentEvalIdentity = evalIdentity
+          try {
+            const expanded = ctx.expandAll(form, env)
+            result = ctx.evaluate(expanded, env)
+          } finally {
+            ctx.currentEvalIdentity = undefined
+          }
         }
         return result
       } catch (e) {

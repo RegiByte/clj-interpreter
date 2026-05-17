@@ -3,6 +3,8 @@ import type { RuntimeModule, VarMap } from '../../module'
 import type { CljValue, Env, EvaluationContext } from '../../types'
 import {
   bytecodeInfoForTarget,
+  bytecodeSummaryForValue,
+  bytecodeSummaryToMap,
   resolveBytecodeTarget,
 } from '../../vm/introspection'
 
@@ -23,6 +25,19 @@ const vmNativeFunctions: Record<string, CljValue> = {
       ...docMeta({
         doc: 'Implementation detail for cljam.vm/bytecode-info*. Returns structured VM bytecode information for a quoted target form.',
         arglists: [['form']],
+        docGroup: DocGroups.runtime,
+      }),
+    ]),
+  'value-summary*-impl': v
+    .nativeFn('cljam.vm/value-summary*-impl', function valueSummaryImpl(
+      value: CljValue
+    ) {
+      return bytecodeSummaryToMap(bytecodeSummaryForValue(value))
+    })
+    .withMeta([
+      ...docMeta({
+        doc: 'Implementation detail for cljam.vm census helpers. Returns bytecode summary information for an already-resolved value.',
+        arglists: [['value']],
         docGroup: DocGroups.runtime,
       }),
     ]),

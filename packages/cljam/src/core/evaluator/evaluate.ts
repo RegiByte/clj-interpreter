@@ -21,7 +21,9 @@ import type {
   VmExecutionMode,
 } from '../types'
 import { tryCompileVm } from '../vm/compiler'
+import { assignChunkIds } from '../vm/chunk'
 import { executeChunk } from '../vm/vm'
+import { makeTopLevelVmCacheKey } from '../vm/cache'
 import { evaluateMap, evaluateSet, evaluateVector } from './collections'
 import { evaluateList } from './dispatch'
 
@@ -69,6 +71,44 @@ function evaluateTopLevelWithVm(
 ): CljValue | null {
   if (mode !== 'opportunistic' && mode !== 'vm-required') return null
 
+  const cacheKey =
+    env.ns?.id === undefined
+      ? null
+      : makeTopLevelVmCacheKey({
+          namespaceId: env.ns.id,
+          namespaceVersion: env.ns.version,
+          mode,
+          form: expr,
+        })
+  const cachedChunk =
+    cacheKey === null ? undefined : ctx.getCachedTopLevelVmChunk?.(cacheKey)
+  if (cachedChunk !== undefined) {
+    recordMeasurementStage(ctx, ':vm/cache-hit', 0, {
+      path: 'vm:top-level',
+    })
+    emitEvalEvent(ctx, {
+      path: 'vm:top-level',
+      formKind: formKind(expr),
+      ast: expr,
+      details: {
+        cache: 'hit',
+        evalId: ctx.currentEvalIdentity?.id,
+        chunkId: cachedChunk.id,
+      },
+    })
+    if (ctx.measurement === undefined) {
+      return executeChunk({ chunk: cachedChunk, env, ctx })
+    }
+    ctx.measurement.setPath('vm:top-level')
+    const { value, elapsedMs } = measureSync(() =>
+      executeChunk({ chunk: cachedChunk, env, ctx })
+    )
+    recordMeasurementStage(ctx, ':vm/execute', elapsedMs, {
+      path: 'vm:top-level',
+    })
+    return value
+  }
+
   const compileMeasurement =
     ctx.measurement === undefined
       ? null
@@ -78,10 +118,17 @@ function evaluateTopLevelWithVm(
     recordMeasurementStage(ctx, ':vm/compile', compileMeasurement.elapsedMs)
   }
   if (result.ok) {
+    assignChunkIds(result.chunk, ctx)
+    if (cacheKey !== null) ctx.setCachedTopLevelVmChunk?.(cacheKey, result.chunk)
     emitEvalEvent(ctx, {
       path: 'vm:top-level',
       formKind: formKind(expr),
       ast: expr,
+      details: {
+        cache: cacheKey === null ? 'uncacheable' : 'miss',
+        evalId: ctx.currentEvalIdentity?.id,
+        chunkId: result.chunk.id,
+      },
     })
     if (ctx.measurement === undefined) {
       return executeChunk({ chunk: result.chunk, env, ctx })

@@ -26,6 +26,7 @@ import {
 } from './registry'
 import { tokenize } from './tokenizer'
 import type { CljNamespace, CljValue, Env, EvaluationContext } from './types'
+import type { VmChunk } from './types'
 
 // ---------------------------------------------------------------------------
 // Core types
@@ -35,6 +36,14 @@ export type { NamespaceRegistry }
 
 export type RuntimeSnapshot = {
   registry: NamespaceRegistry
+  identity: RuntimeIdentityState
+}
+
+export type RuntimeIdentityState = {
+  nextEvalId: number
+  nextFunctionId: number
+  nextChunkId: number
+  nextNamespaceId: number
 }
 
 export type RuntimeOptions = {
@@ -50,8 +59,19 @@ export type RuntimeOptions = {
 
 export type Runtime = {
   readonly registry: NamespaceRegistry
+  readonly identity: RuntimeIdentityState
 
   // Namespace management
+  allocateEvalIdentity(nsName: string): { id: number; nsName: string }
+  allocateFunctionIdentity(input: {
+    nsName: string
+    name?: string
+    evalIdentity?: { id: number; nsName: string }
+  }): { id: number; evalId?: number; displayName: string }
+  allocateChunkIdentity(chunk: { id?: number }): number
+  getCachedTopLevelVmChunk(key: string): VmChunk | undefined
+  setCachedTopLevelVmChunk(key: string, chunk: VmChunk): void
+  touchNamespace(ns: CljNamespace): void
   ensureNamespace(name: string): Env
   getNamespaceEnv(name: string): Env | null
   getNs(name: string): CljNamespace | null
@@ -101,9 +121,11 @@ export type Runtime = {
 function buildRuntime(
   registry: NamespaceRegistry,
   coreEnv: Env,
+  identity: RuntimeIdentityState,
   options: RuntimeOptions | undefined
 ): Runtime {
   const sourceRoots = new Set<string>(options?.sourceRoots ?? [])
+  const topLevelVmCache = new Map<string, VmChunk>()
 
   // varOwners tracks which module installed each var, keyed by "ns/varName".
   // Prevents two modules from declaring the same var in the same namespace.
@@ -176,13 +198,72 @@ function buildRuntime(
   wireNsCore(registry, coreEnv, () => currentNsRef, resolveNamespace)
   wireIdeStubs(registry, coreEnv)
 
+  function assignNamespaceIdentity(ns: CljNamespace): void {
+    if (ns.id === undefined) ns.id = identity.nextNamespaceId++
+    if (ns.version === undefined) ns.version = 0
+  }
+
+  for (const env of registry.values()) {
+    if (env.ns) assignNamespaceIdentity(env.ns)
+  }
+
+  function ensureRuntimeNamespace(name: string): Env {
+    const env = ensureNamespaceInRegistry(registry, coreEnv, name)
+    if (env.ns) assignNamespaceIdentity(env.ns)
+    return env
+  }
+
   const runtime: Runtime = {
     get registry() {
       return registry
     },
 
+    get identity() {
+      return identity
+    },
+
+    allocateEvalIdentity(nsName: string) {
+      return { id: identity.nextEvalId++, nsName }
+    },
+
+    allocateFunctionIdentity(input: {
+      nsName: string
+      name?: string
+      evalIdentity?: { id: number; nsName: string }
+    }) {
+      const id = identity.nextFunctionId++
+      const displayName =
+        input.name !== undefined
+          ? `${input.nsName}/${input.name}--${id}`
+          : input.evalIdentity !== undefined
+            ? `${input.nsName}/eval${input.evalIdentity.id}/fn--${id}`
+            : `${input.nsName}/fn--${id}`
+      return {
+        id,
+        ...(input.evalIdentity !== undefined ? { evalId: input.evalIdentity.id } : {}),
+        displayName,
+      }
+    },
+
+    allocateChunkIdentity(chunk: { id?: number }) {
+      if (chunk.id === undefined) chunk.id = identity.nextChunkId++
+      return chunk.id
+    },
+
+    getCachedTopLevelVmChunk(key: string): VmChunk | undefined {
+      return topLevelVmCache.get(key)
+    },
+
+    setCachedTopLevelVmChunk(key: string, chunk: VmChunk): void {
+      topLevelVmCache.set(key, chunk)
+    },
+
+    touchNamespace(ns: CljNamespace): void {
+      ns.version += 1
+    },
+
     ensureNamespace(name: string): Env {
-      return ensureNamespaceInRegistry(registry, coreEnv, name)
+      return ensureRuntimeNamespace(name)
     },
 
     getNamespaceEnv(name: string): Env | null {
@@ -211,7 +292,7 @@ function buildRuntime(
       fromEnv: Env,
       ctx: EvaluationContext
     ): void {
-      processRequireSpec(
+      const changed = processRequireSpec(
         spec,
         fromEnv,
         registry,
@@ -219,6 +300,7 @@ function buildRuntime(
         ctx.allowedPackages,
         isLibraryNamespace
       )
+      if (changed && fromEnv.ns) runtime.touchNamespace(fromEnv.ns)
     },
 
     processNsRequires(
@@ -240,7 +322,7 @@ function buildRuntime(
               { specifier }
             )
           }
-          processRequireSpec(
+          const changed = processRequireSpec(
             spec,
             fromEnv,
             registry,
@@ -248,6 +330,7 @@ function buildRuntime(
             ctx.allowedPackages,
             isLibraryNamespace
           )
+          if (changed && fromEnv.ns) runtime.touchNamespace(fromEnv.ns)
         }
       }
     },
@@ -313,10 +396,16 @@ function buildRuntime(
               )
             }
             const rawModule = await ctx.importModule(specifier)
+            const existing = fromEnv.ns?.vars.get(aliasName)
             internVar(aliasName, v.jsValue(rawModule), fromEnv)
+            if (fromEnv.ns && existing !== fromEnv.ns.vars.get(aliasName)) {
+              runtime.touchNamespace(fromEnv.ns)
+            } else if (fromEnv.ns && existing !== undefined) {
+              runtime.touchNamespace(fromEnv.ns)
+            }
           } else {
             // Symbol require spec — sync path
-            processRequireSpec(
+            const changed = processRequireSpec(
               spec,
               fromEnv,
               registry,
@@ -324,6 +413,7 @@ function buildRuntime(
               ctx.allowedPackages,
               isLibraryNamespace
             )
+            if (changed && fromEnv.ns) runtime.touchNamespace(fromEnv.ns)
           }
         }
       }
@@ -348,8 +438,14 @@ function buildRuntime(
       this.processNsRequires(forms, env, ctx)
       try {
         for (const form of forms) {
-          const expanded = ctx.expandAll(form, env)
-          ctx.evaluate(expanded, env)
+          const evalIdentity = ctx.allocateEvalIdentity?.(targetNs)
+          ctx.currentEvalIdentity = evalIdentity
+          try {
+            const expanded = ctx.expandAll(form, env)
+            ctx.evaluate(expanded, env)
+          } finally {
+            ctx.currentEvalIdentity = undefined
+          }
         }
       } finally {
         ctx.currentSource = undefined
@@ -363,7 +459,7 @@ function buildRuntime(
 
       for (const mod of ordered) {
         for (const decl of mod.declareNs) {
-          const nsEnv = ensureNamespaceInRegistry(registry, coreEnv, decl.name)
+          const nsEnv = ensureRuntimeNamespace(decl.name)
 
           const ctx: ModuleContext = {
             getVar(ns, name) {
@@ -398,7 +494,7 @@ function buildRuntime(
     },
 
     snapshot(): RuntimeSnapshot {
-      return { registry: cloneRegistry(registry) }
+      return { registry: cloneRegistry(registry), identity: { ...identity } }
     },
   }
 
@@ -412,6 +508,12 @@ function buildRuntime(
 
 export function createRuntime(options?: RuntimeOptions): Runtime {
   const registry: NamespaceRegistry = new Map()
+  const identity: RuntimeIdentityState = {
+    nextEvalId: 1,
+    nextFunctionId: 1,
+    nextChunkId: 1,
+    nextNamespaceId: 1,
+  }
 
   // Bootstrap: clojure.core env
   const coreEnv = makeEnv()
@@ -423,7 +525,7 @@ export function createRuntime(options?: RuntimeOptions): Runtime {
   userEnv.ns = makeNamespace('user')
   registry.set('user', userEnv)
 
-  const runtime = buildRuntime(registry, coreEnv, options)
+  const runtime = buildRuntime(registry, coreEnv, identity, options)
   runtime.installModules([makeCoreModule(), makeJsModule(), makeVmModule()])
   return runtime
 }
@@ -440,7 +542,7 @@ export function restoreRuntime(
 ): Runtime {
   const registry = cloneRegistry(snapshot.registry)
   const coreEnv = registry.get('clojure.core')!
-  const runtime = buildRuntime(registry, coreEnv, options)
+  const runtime = buildRuntime(registry, coreEnv, { ...snapshot.identity }, options)
   // No module reinstallation needed — IO functions (println, print, etc.) read
   // ctx.io.stdout at call time, so the snapshot's native functions automatically
   // use the session's output channel without any rewiring.

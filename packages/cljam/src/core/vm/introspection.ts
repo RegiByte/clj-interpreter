@@ -29,6 +29,15 @@ export type VmBytecodeTarget = {
   entries: VmDisassemblyEntry[]
 }
 
+type BytecodeValueKind = 'function' | 'macro' | 'native' | 'other'
+
+export type VmBytecodeValueSummary = {
+  kind: BytecodeValueKind
+  arityCount: number
+  bytecodeArityCount: number
+  entries: VmDisassemblyEntry[]
+}
+
 type StackProvenance = {
   callee: string
 } | null
@@ -108,6 +117,48 @@ export function bytecodeInfoForTarget(target: VmBytecodeTarget): CljValue {
         target.entries.map((entry) => chunkInfoToMap(entry.label, entry.chunk))
       ),
     ],
+  ])
+}
+
+export function bytecodeSummaryForValue(value: CljValue): VmBytecodeValueSummary {
+  const resolved = is.var(value) ? derefValue(value) : value
+  const label = is.var(value)
+    ? `${value.ns}/${value.name}`
+    : valueLabelForSummary(resolved)
+
+  if (is.function(resolved) || is.macro(resolved)) {
+    return {
+      kind: is.macro(resolved) ? 'macro' : 'function',
+      arityCount: resolved.arities.length,
+      bytecodeArityCount: resolved.arities.filter(
+        (arity) => arity.bytecodeBody !== undefined
+      ).length,
+      entries: bytecodeEntriesForValue(resolved, label),
+    }
+  }
+
+  return {
+    kind: is.nativeFunction(resolved) ? 'native' : 'other',
+    arityCount: 0,
+    bytecodeArityCount: 0,
+    entries: [],
+  }
+}
+
+export function bytecodeSummaryToMap(summary: VmBytecodeValueSummary): CljValue {
+  const info =
+    summary.entries.length === 0
+      ? v.nil()
+      : bytecodeInfoForTarget({
+          target: summary.kind === 'macro' ? 'macro' : 'function',
+          entries: summary.entries,
+        })
+
+  return v.map([
+    [v.keyword(':kind'), v.keyword(`:${summary.kind}`)],
+    [v.keyword(':arity-count'), v.number(summary.arityCount)],
+    [v.keyword(':bytecode-arity-count'), v.number(summary.bytecodeArityCount)],
+    [v.keyword(':bytecode-info'), info],
   ])
 }
 
@@ -489,6 +540,11 @@ function bytecodeEntriesForValue(
   }
 
   return []
+}
+
+function valueLabelForSummary(value: CljValue): string {
+  if ((is.function(value) || is.macro(value)) && value.name) return value.name
+  return value.kind
 }
 
 function isVarForm(form: CljValue): form is { kind: 'list'; value: CljValue[] } {

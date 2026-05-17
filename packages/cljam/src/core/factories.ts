@@ -171,6 +171,7 @@ export const cljCons = (head: CljValue, tail: CljValue): CljCons => ({
 export const cljNamespace = (name: string): CljNamespace => ({
   kind: 'namespace',
   name,
+  version: 0,
   vars: new Map(),
   aliases: new Map(),
   readerAliases: new Map(),

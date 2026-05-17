@@ -801,6 +801,16 @@ function executeInstruction(state: VmState): void {
         })),
         env
       )
+      const nsName = getNamespaceEnv(env).ns?.name ?? 'user'
+      const identity = ctx.allocateFunctionIdentity?.({
+        nsName,
+        name: template.name,
+      })
+      if (identity) {
+        fn.id = identity.id
+        fn.evalId = identity.evalId
+        fn.displayName = identity.displayName
+      }
       if (template.name) fn.name = template.name
       if (template.meta) fn.meta = template.meta
 

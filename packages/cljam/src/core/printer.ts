@@ -251,20 +251,7 @@ function printStringImpl(value: CljValue, depth: number): string {
       return `{${entries.map(([key, v]) => `${printString(key, depth + 1)} ${printString(v, depth + 1)}`).join(' ')}${suffix}}`
     }
     case valueKeywords.function: {
-      if (value.arities.length === 1) {
-        const a = value.arities[0]
-        const params = a.restParam
-          ? [...a.params, v.symbol('&'), a.restParam]
-          : a.params
-        return `(fn [${params.map(printString).join(' ')}] ${a.body.map(printString).join(' ')})`
-      }
-      const clauses = value.arities.map((a) => {
-        const params = a.restParam
-          ? [...a.params, v.symbol('&'), a.restParam]
-          : a.params
-        return `([${params.map(printString).join(' ')}] ${a.body.map(printString).join(' ')})`
-      })
-      return `(fn ${clauses.join(' ')})`
+      return `#function[${value.displayName ?? value.name ?? 'anonymous'}]`
     }
     case valueKeywords.nativeFunction:
       return `(native-fn ${value.name})`

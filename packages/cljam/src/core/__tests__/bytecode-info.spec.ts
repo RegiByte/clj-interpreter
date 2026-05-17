@@ -45,6 +45,11 @@ function expectNumber(value: CljValue): number {
   return value.value
 }
 
+function expectSymbolName(value: CljValue): string {
+  if (!is.symbol(value)) throw new Error(`expected symbol, got ${value.kind}`)
+  return value.name
+}
+
 function info(code: string): CljMap {
   const session = createSession()
   session.evaluate("(require '[cljam.vm :as vm])")
@@ -65,6 +70,22 @@ function opNames(info: CljMap): string[] {
       expectKeywordName(entry(instruction, ':op'))
     )
   )
+}
+
+function numberKeyEntry(map: CljMap, keyValue: number): CljValue {
+  const found = map.entries.find(
+    ([key]) => is.number(key) && key.value === keyValue
+  )
+  if (!found) throw new Error(`missing number key ${keyValue}`)
+  return found[1]
+}
+
+function findItem(items: CljVector, name: string): CljMap {
+  const found = items.value.map(expectMap).find((item) => {
+    return expectSymbolName(entry(item, ':name')) === name
+  })
+  if (!found) throw new Error(`missing item ${name}`)
+  return found
 }
 
 describe('cljam.vm bytecode info', () => {
@@ -203,5 +224,157 @@ describe('cljam.vm bytecode stats', () => {
 
     expect(stringEntry(calls, 'f')).toEqual(v.number(1))
     expect(stringEntry(calls, 'cons')).toEqual(v.number(1))
+  })
+})
+
+describe('cljam.vm bytecode census', () => {
+  it('summarizes already-resolved vars and values for dynamic namespace walks', () => {
+    const session = createSession()
+    session.evaluate("(require '[cljam.vm :as vm])")
+    session.evaluate('(defn f ([x] x) ([x y] (+ x y)))')
+    session.evaluate('(defmacro m [x] x)')
+    session.evaluate('(def not-bytecode 1)')
+
+    const fnSummary = expectMap(session.evaluate("(vm/value-summary*-impl #'f)"))
+    const macroSummary = expectMap(session.evaluate("(vm/value-summary*-impl #'m)"))
+    const nativeSummary = expectMap(session.evaluate("(vm/value-summary*-impl #'+)"))
+    const otherSummary = expectMap(
+      session.evaluate("(vm/value-summary*-impl #'not-bytecode)")
+    )
+
+    expect(expectKeywordName(entry(fnSummary, ':kind'))).toBe(':function')
+    expect(expectNumber(entry(fnSummary, ':arity-count'))).toBe(2)
+    expect(expectNumber(entry(fnSummary, ':bytecode-arity-count'))).toBe(2)
+    expectMap(entry(fnSummary, ':bytecode-info'))
+
+    expect(expectKeywordName(entry(macroSummary, ':kind'))).toBe(':macro')
+    expectMap(entry(macroSummary, ':bytecode-info'))
+
+    expect(expectKeywordName(entry(nativeSummary, ':kind'))).toBe(':native')
+    expect(entry(nativeSummary, ':bytecode-info')).toEqual(v.nil())
+
+    expect(expectKeywordName(entry(otherSummary, ':kind'))).toBe(':other')
+    expect(entry(otherSummary, ':bytecode-info')).toEqual(v.nil())
+  })
+
+  it('keeps bytecode-info* quoted form inspection unchanged', () => {
+    const result = info('(vm/bytecode-info* (+ 1 (* 2 3)))')
+
+    expect(expectKeywordName(entry(result, ':target'))).toBe(':expression')
+    expect(opNames(result)).toEqual(
+      expect.arrayContaining([':constant', ':mul', ':add', ':return'])
+    )
+  })
+
+  it('returns public-only namespace census data by default', () => {
+    const session = createSession()
+    session.evaluate("(require '[cljam.vm :as vm])")
+    session.evaluate(
+      [
+        '(ns census.demo)',
+        '(defn public-fn [x] (list (inc x)))',
+        '(defn- private-fn [x] (dec x))',
+        '(def public-value 42)',
+      ].join('\n')
+    )
+
+    const census = expectMap(session.evaluate("(cljam.vm/namespace-census 'census.demo)"))
+    const totals = expectMap(entry(census, ':totals'))
+    const items = expectVector(entry(census, ':items'))
+
+    expect(expectSymbolName(entry(census, ':namespace'))).toBe('census.demo')
+    expect(expectKeywordName(entry(census, ':scope'))).toBe(':publics')
+    expect(expectNumber(entry(totals, ':vars'))).toBe(2)
+    expect(expectNumber(entry(totals, ':bytecode-vars'))).toBe(1)
+    expect(expectNumber(entry(totals, ':other-vars'))).toBe(1)
+    expect(findItem(items, 'public-fn')).toBeDefined()
+    expect(findItem(items, 'public-value')).toBeDefined()
+    expect(() => findItem(items, 'private-fn')).toThrow(/missing item/)
+  })
+
+  it('can include private interned vars on request', () => {
+    const session = createSession()
+    session.evaluate("(require '[cljam.vm :as vm])")
+    session.evaluate(
+      [
+        '(ns census.private)',
+        '(defn public-fn [x] x)',
+        '(defn- private-fn [x] x)',
+      ].join('\n')
+    )
+
+    const census = expectMap(
+      session.evaluate("(cljam.vm/namespace-census 'census.private {:include-private? true})")
+    )
+    const items = expectVector(entry(census, ':items'))
+
+    expect(expectKeywordName(entry(census, ':scope'))).toBe(':interns')
+    expect(findItem(items, 'public-fn')).toBeDefined()
+    expect(findItem(items, 'private-fn')).toBeDefined()
+  })
+
+  it('aggregates namespace totals and ngrams without embedding full instruction listings', () => {
+    const session = createSession()
+    session.evaluate("(require '[cljam.vm :as vm])")
+    session.evaluate(
+      [
+        '(ns census.aggregate)',
+        '(defn f [x] (+ x 1))',
+        '(defn g [x] (list (f x)))',
+      ].join('\n')
+    )
+
+    const census = expectMap(
+      session.evaluate("(cljam.vm/namespace-census 'census.aggregate {:ngrams [2]})")
+    )
+    const totals = expectMap(entry(census, ':totals'))
+    const items = expectVector(entry(census, ':items'))
+    const firstItem = findItem(items, 'f')
+    const firstItemNgrams = expectMap(entry(firstItem, ':opcode-ngrams'))
+    const namespaceNgrams = expectMap(entry(census, ':opcode-ngrams'))
+
+    expect(expectNumber(entry(totals, ':vars'))).toBe(2)
+    expect(expectNumber(entry(totals, ':bytecode-vars'))).toBe(2)
+    expect(expectNumber(entry(totals, ':chunks'))).toBeGreaterThanOrEqual(2)
+    expect(expectNumber(entry(totals, ':instructions'))).toBeGreaterThan(0)
+    expect(numberKeyEntry(firstItemNgrams, 2)).toBeDefined()
+    expect(numberKeyEntry(namespaceNgrams, 2)).toBeDefined()
+    expect(() => entry(firstItem, ':chunks')).toThrow(/missing key/)
+  })
+
+  it('builds corpus census data, requiring unloaded sync namespaces first', () => {
+    const session = createSession()
+    session.evaluate("(require '[cljam.vm :as vm])")
+    session.evaluate('(ns census.local) (defn local-fn [x] (str x))')
+
+    const corpus = expectMap(
+      session.evaluate("(cljam.vm/corpus-census ['census.local 'clojure.string] {:ngrams [2 3]})")
+    )
+    const namespaces = expectVector(entry(corpus, ':namespaces'))
+    const totals = expectMap(entry(corpus, ':totals'))
+    const ngrams = expectMap(entry(corpus, ':opcode-ngrams'))
+
+    expect(namespaces.value).toHaveLength(2)
+    expect(expectNumber(entry(totals, ':vars'))).toBeGreaterThan(0)
+    expect(numberKeyEntry(ngrams, 2)).toBeDefined()
+    expect(numberKeyEntry(ngrams, 3)).toBeDefined()
+  })
+
+  it('returns top frequency helpers for namespace or corpus census maps', () => {
+    const session = createSession()
+    session.evaluate("(require '[cljam.vm :as vm])")
+    session.evaluate('(ns census.top) (defn f [x] (list (inc x)))')
+    session.evaluate("(def census (cljam.vm/namespace-census 'census.top {:ngrams [2]}))")
+
+    const opcodes = expectVector(session.evaluate('(cljam.vm/top-opcodes census 3)'))
+    const invocations = expectVector(session.evaluate('(cljam.vm/top-invocations census 3)'))
+    const ngrams = expectVector(session.evaluate('(cljam.vm/top-ngrams census 2 3)'))
+
+    expect(opcodes.value.length).toBeGreaterThan(0)
+    expect(invocations.value.length).toBeGreaterThan(0)
+    expect(ngrams.value.length).toBeGreaterThan(0)
+    expectVector(opcodes.value[0])
+    expectVector(invocations.value[0])
+    expectVector(ngrams.value[0])
   })
 })

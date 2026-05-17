@@ -55,6 +55,8 @@ function cloneEnv(env: Env, memo: Map<Env, Env>): Env {
   }
   if (env.ns) {
     cloned.ns = v.namespace(env.ns.name)
+    cloned.ns.id = env.ns.id
+    cloned.ns.version = env.ns.version
     cloned.ns.vars = new Map([...env.ns.vars].map(([k, v]) => [k, { ...v }]))
     cloned.ns.aliases = new Map() // wired in cloneRegistry pass 2
     cloned.ns.readerAliases = new Map(env.ns.readerAliases)
@@ -113,7 +115,7 @@ export function processRequireSpec(
   resolveNs?: (nsName: string) => boolean,
   allowedPackages?: string[] | 'all',
   isLibraryNamespace?: (nsName: string) => boolean
-): void {
+): boolean {
   if (!is.vector(spec)) {
     throw new EvaluationError(
       'require spec must be a vector, e.g. [my.ns :as alias]',
@@ -149,6 +151,7 @@ export function processRequireSpec(
     throw err
   }
 
+  let changed = false
   const hasAsAlias = elements.some(
     (el) => is.keyword(el) && el.name === ':as-alias'
   )
@@ -171,7 +174,10 @@ export function processRequireSpec(
             position: i,
           })
         }
-        currentEnv.ns!.readerAliases.set(alias.name, nsName)
+        if (currentEnv.ns!.readerAliases.get(alias.name) !== nsName) {
+          currentEnv.ns!.readerAliases.set(alias.name, nsName)
+          changed = true
+        }
         i++
       } else {
         throw new EvaluationError(
@@ -180,7 +186,7 @@ export function processRequireSpec(
         )
       }
     }
-    return
+    return changed
   }
 
   // Always attempt to load the source — resolveNs is idempotent (no-ops if
@@ -216,7 +222,10 @@ export function processRequireSpec(
           position: i,
         })
       }
-      currentEnv.ns!.aliases.set(alias.name, targetEnv.ns!)
+      if (currentEnv.ns!.aliases.get(alias.name) !== targetEnv.ns!) {
+        currentEnv.ns!.aliases.set(alias.name, targetEnv.ns!)
+        changed = true
+      }
       i++
     } else if (kw.name === ':refer') {
       i++
@@ -241,7 +250,10 @@ export function processRequireSpec(
             { nsName, symbol: sym.name }
           )
         }
-        currentEnv.ns!.vars.set(sym.name, v)
+        if (currentEnv.ns!.vars.get(sym.name) !== v) {
+          currentEnv.ns!.vars.set(sym.name, v)
+          changed = true
+        }
       }
       i++
     } else {
@@ -251,4 +263,5 @@ export function processRequireSpec(
       )
     }
   }
+  return changed
 }

@@ -154,7 +154,7 @@ describe('printer', () => {
           makeEnv()
         )
       )
-    ).toBe('(fn [x y] (+ x y))')
+    ).toBe('#function[anonymous]')
   })
 
   it('should print atoms', () => {

@@ -1,4 +1,4 @@
-import type { CljValue, Pos, VmChunk } from '../types'
+import type { CljValue, EvaluationContext, Pos, VmChunk } from '../types'
 import { Op } from './opcodes'
 
 type ChunkSnapshot = {
@@ -38,6 +38,18 @@ export function makeChunk(name?: string): VmChunk {
   }
   stackDepthByChunk.set(chunk, 0)
   return chunk
+}
+
+export function assignChunkIds(
+  chunk: VmChunk,
+  ctx: Pick<EvaluationContext, 'allocateChunkIdentity'>
+): void {
+  ctx.allocateChunkIdentity?.(chunk)
+  for (const template of chunk.innerFunctions) {
+    for (const arity of template.arities) {
+      assignChunkIds(arity.chunk, ctx)
+    }
+  }
 }
 
 export function addConstant(chunk: VmChunk, value: CljValue): number {
