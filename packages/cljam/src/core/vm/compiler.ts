@@ -32,6 +32,7 @@ import {
   emitOperand,
   emitTransaction,
   makeChunk,
+  recordCallArgPositions,
 } from './chunk'
 import { Op } from './opcodes'
 
@@ -109,10 +110,7 @@ type TryEmitState = {
 }
 
 const unsupportedVmSpecialForms = new Set<string>([
-  specialFormKeywords['quote'],
   specialFormKeywords['async'],
-  specialFormKeywords['.'],
-  specialFormKeywords['js/new'],
   specialFormKeywords['ns'],
 ])
 
@@ -189,20 +187,6 @@ export function tryCompileVm(node: CljValue): VmCompileResult {
 }
 
 function fallbackReasonForNode(node: CljValue): VmFallbackReason {
-  if (is.symbol(node)) {
-    const slashIdx = node.name.indexOf('/')
-    if (
-      slashIdx > 0 &&
-      slashIdx < node.name.length - 1 &&
-      node.name.slice(slashIdx + 1).includes('.')
-    ) {
-      return {
-        category: 'unsupported-js-interop',
-        detail: `VM does not support JS interop symbol ${node.name}`,
-      }
-    }
-  }
-
   if (is.list(node) && node.value.length > 0) {
     const head = node.value[0]
     if (is.symbol(head)) {
@@ -211,12 +195,6 @@ function fallbackReasonForNode(node: CljValue): VmFallbackReason {
         return {
           category: 'unsupported-top-level-mutation',
           detail: `VM does not support top-level mutation form ${name}`,
-        }
-      }
-      if (name === specialFormKeywords['.'] || name === specialFormKeywords['js/new']) {
-        return {
-          category: 'unsupported-js-interop',
-          detail: `VM does not support JS interop form ${name}`,
         }
       }
       if (name === specialFormKeywords['let*'] || name === specialFormKeywords['loop*']) {
@@ -295,12 +273,7 @@ function emitExpression(
       // qualified symbol not supported yet
       if (slashIdx > 0 && slashIdx < symbolName.length - 1) {
         const localName = symbolName.slice(slashIdx + 1)
-        if (localName.includes('.')) {
-          return fail(compileEnv, {
-            category: 'unsupported-js-interop',
-            detail: `VM does not support JS interop symbol ${symbolName}`,
-          })
-        }
+        if (localName.includes('.')) return emitDotChainSymbol(chunk, node)
         const index = addConstant(chunk, node)
         const pos = getPos(node) ?? null
         emit(chunk, Op.LoadQualified, pos)
@@ -346,6 +319,12 @@ function emitExpression(
         if (name === specialFormKeywords['var']) {
           return emitVar(chunk, node, compileEnv)
         }
+        if (name === specialFormKeywords['.']) {
+          return emitDot(chunk, node, compileEnv)
+        }
+        if (name === specialFormKeywords['js/new']) {
+          return emitJsNew(chunk, node, compileEnv)
+        }
         if (name === specialFormKeywords['def']) {
           return emitDef(chunk, node, compileEnv)
         }
@@ -366,12 +345,6 @@ function emitExpression(
             return fail(compileEnv, {
               category: 'unsupported-top-level-mutation',
               detail: `VM does not support top-level mutation form ${name}`,
-            })
-          }
-          if (name === specialFormKeywords['.'] || name === specialFormKeywords['js/new']) {
-            return fail(compileEnv, {
-              category: 'unsupported-js-interop',
-              detail: `VM does not support JS interop form ${name}`,
             })
           }
           return fail(compileEnv, {
@@ -794,6 +767,134 @@ function compileVmArityTemplates(
   return { templateArityChunks, upvalueDescriptors: [...upvalueDescriptors] }
 }
 
+function emitDotChainSymbol(chunk: VmChunk, symbol: CljSymbol): boolean {
+  const slashIdx = symbol.name.indexOf('/')
+  const alias = symbol.name.slice(0, slashIdx)
+  const localName = symbol.name.slice(slashIdx + 1)
+  const segments = localName.split('.')
+  const pos = getPos(symbol) ?? null
+  const rootSymbol = symbolWithPos(v.symbol(`${alias}/${segments[0]}`), pos)
+
+  const rootIndex = addConstant(chunk, rootSymbol)
+  emit(chunk, Op.LoadQualified, pos)
+  emitOperand(chunk, rootIndex, pos)
+
+  for (const propName of segments.slice(1)) {
+    emitJsGetProp(chunk, propName, pos)
+  }
+
+  return true
+}
+
+function emitDot(
+  chunk: VmChunk,
+  node: CljList,
+  compileEnv: VmCompileEnv
+): boolean {
+  return emitTransaction(chunk, () => {
+    if (node.value.length < 3) {
+      return fail(compileEnv, {
+        category: 'compile-error',
+        detail: 'VM . requires at least 2 arguments: (. obj prop)',
+      })
+    }
+
+    const target = node.value[1]
+    const prop = node.value[2]
+    if (!is.symbol(prop)) {
+      return fail(compileEnv, {
+        category: 'compile-error',
+        detail: `VM . expects a symbol for property name, got: ${prop.kind}`,
+      })
+    }
+
+    if (
+      !withTailPosition(compileEnv, false, () =>
+        emitExpression(chunk, target, compileEnv)
+      )
+    ) {
+      return false
+    }
+
+    const pos = getPos(prop) ?? getPos(node) ?? null
+    if (node.value.length === 3) {
+      emitJsGetProp(chunk, prop.name, pos)
+      return true
+    }
+
+    const args = node.value.slice(3)
+    for (let i = 0; i < args.length; i++) {
+      if (
+        !withTailPosition(compileEnv, false, () =>
+          emitExpression(chunk, args[i], compileEnv)
+        )
+      ) {
+        return false
+      }
+    }
+
+    const propIndex = addConstant(chunk, v.string(prop.name))
+    emit(chunk, Op.JsInvoke, pos)
+    emitOperand(chunk, propIndex, pos)
+    emitOperand(chunk, args.length, pos)
+    return true
+  })
+}
+
+function emitJsNew(
+  chunk: VmChunk,
+  node: CljList,
+  compileEnv: VmCompileEnv
+): boolean {
+  return emitTransaction(chunk, () => {
+    if (node.value.length < 2) {
+      return fail(compileEnv, {
+        category: 'compile-error',
+        detail: 'VM js/new requires a constructor argument',
+      })
+    }
+
+    if (
+      !withTailPosition(compileEnv, false, () =>
+        emitExpression(chunk, node.value[1], compileEnv)
+      )
+    ) {
+      return false
+    }
+
+    const args = node.value.slice(2)
+    for (let i = 0; i < args.length; i++) {
+      if (
+        !withTailPosition(compileEnv, false, () =>
+          emitExpression(chunk, args[i], compileEnv)
+        )
+      ) {
+        return false
+      }
+    }
+
+    const pos = getPos(node) ?? null
+    emit(chunk, Op.JsNew, pos)
+    emitOperand(chunk, args.length, pos)
+    return true
+  })
+}
+
+function emitJsGetProp(
+  chunk: VmChunk,
+  propName: string,
+  pos: Pos | null
+): void {
+  const propIndex = addConstant(chunk, v.string(propName))
+  emit(chunk, Op.JsGetProp, pos)
+  emitOperand(chunk, propIndex, pos)
+}
+
+function symbolWithPos(symbol: CljSymbol, pos: Pos | null): CljSymbol {
+  if (pos) setPos(symbol, pos)
+  return symbol
+}
+
 function emitQuote(
   chunk: VmChunk,
   node: CljList,
@@ -1141,9 +1242,15 @@ function emitCall(
           }
         }
 
+        const instructionOffset = chunk.code.length
         const pos = getPos(node) ?? null
         emit(chunk, intrinsicOpcode, pos)
         emitOperand(chunk, args.length, pos)
+        recordCallArgPositions(
+          chunk,
+          instructionOffset,
+          args.map((arg) => getPos(arg) ?? null)
+        )
 
         return true
       }
@@ -1167,9 +1274,15 @@ function emitCall(
       }
     }
 
+    const instructionOffset = chunk.code.length
     const pos = getPos(node) ?? null
     emit(chunk, Op.Call, pos)
     emitOperand(chunk, args.length, pos)
+    recordCallArgPositions(
+      chunk,
+      instructionOffset,
+      args.map((arg) => getPos(arg) ?? null)
+    )
 
     return true
   })

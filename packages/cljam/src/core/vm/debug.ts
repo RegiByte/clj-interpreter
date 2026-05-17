@@ -45,6 +45,7 @@ function disassembleInstruction(
     case Op.LoadVar:
     case Op.Def:
     case Op.DefMacro:
+    case Op.JsGetProp:
     case Op.PushDynamicBinding:
     case Op.SetDynamic: {
       const constantIndex = chunk.code[offset + 1]
@@ -90,6 +91,22 @@ function disassembleInstruction(
       const operandOffset = chunk.code[offset + 1]
       lines.push(`${formatOffset(offset)} ${name} ${operandOffset}`)
       return offset + 2
+    }
+    case Op.JsNew: {
+      const argc = chunk.code[offset + 1]
+      lines.push(`${formatOffset(offset)} ${name} ${argc}`)
+      return offset + 2
+    }
+    case Op.JsInvoke: {
+      const constantIndex = chunk.code[offset + 1]
+      const argc = chunk.code[offset + 2]
+      const constant = chunk.constants[constantIndex]
+      const rendered =
+        constant === undefined ? '<missing>' : printString(constant)
+      lines.push(
+        `${formatOffset(offset)} ${name} ${constantIndex} ; ${rendered} ${argc}`
+      )
+      return offset + 3
     }
     case Op.WithMeta: {
       const constantIndex = chunk.code[offset + 1]

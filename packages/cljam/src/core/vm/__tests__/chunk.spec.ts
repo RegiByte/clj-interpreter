@@ -4,6 +4,7 @@ import {
   emit,
   emitOperand,
   makeChunk,
+  recordCallArgPositions,
   rollbackChunk,
   snapshotChunk,
 } from '../chunk'
@@ -137,6 +138,21 @@ describe('VM chunks', () => {
     expect(chunk.code).toEqual([])
     expect(chunk.constants).toEqual([])
     expect(chunk.positions).toEqual([])
+    expect(chunk.callArgPositions).toEqual([])
+  })
+
+  it('restores call argument position metadata when rolling back chunks', () => {
+    const chunk = makeChunk('call-arg-position-rollback-test')
+    const snapshot = snapshotChunk(chunk)
+    const pos = { start: 3, end: 4 } as Pos
+
+    emit(chunk, Op.Call)
+    emitOperand(chunk, 1)
+    recordCallArgPositions(chunk, 0, [pos])
+
+    rollbackChunk(chunk, snapshot)
+
+    expect(chunk.callArgPositions).toEqual([])
   })
 
   it('restores catch tables when rolling back chunks', () => {

@@ -3,6 +3,11 @@ import { derefValue, getNamespaceEnv, lookup, lookupVar } from '../env'
 import { CljThrownSignal, EvaluationError, isEvaluationError } from '../errors'
 import { defineMacro, defineVar } from '../evaluator/defs'
 import { matchesDiscriminator } from '../evaluator/form-parsers'
+import {
+  callJsMethod,
+  constructJsValue,
+  readJsProperty,
+} from '../evaluator/js-interop'
 import { v } from '../factories'
 import { framesToClj, getPos } from '../positions'
 import { printString } from '../printer'
@@ -460,6 +465,119 @@ function executeInstruction(state: VmState): void {
       )
       break
     }
+    case Op.JsGetProp: {
+      const propName = readStringConstantOperand(
+        frame,
+        stack,
+        instruction,
+        'JsGetProp',
+        instructionPos
+      )
+      const target = stack.pop()
+      if (target === undefined) {
+        throw new EvaluationError(
+          'VM stack underflow on JsGetProp',
+          { instruction, ip: frame.ip, stack, chunk },
+          instructionPos
+        )
+      }
+
+      const propForm = v.string(propName)
+      try {
+        stack.push(readJsProperty(target, propForm, propName))
+      } catch (e) {
+        hydrateVmErrorPos(e, instructionPos)
+        captureVmFrames(e, state)
+        throw e
+      }
+      break
+    }
+    case Op.JsInvoke: {
+      const propName = readStringConstantOperand(
+        frame,
+        stack,
+        instruction,
+        'JsInvoke',
+        instructionPos
+      )
+      const argCount = chunk.code[frame.ip++]
+      assertCountOperand(
+        argCount,
+        'JsInvoke',
+        instruction,
+        frame.ip,
+        stack,
+        chunk,
+        instructionPos
+      )
+      if (stack.length < argCount + 1) {
+        throw new EvaluationError(
+          'VM stack underflow on JsInvoke, not enough target/arguments',
+          { instruction, ip: frame.ip, stack, chunk },
+          instructionPos
+        )
+      }
+
+      const args = stack.splice(stack.length - argCount, argCount)
+      const target = stack.pop()
+      if (target === undefined) {
+        throw new EvaluationError(
+          'VM stack underflow on JsInvoke, target missing',
+          { instruction, ip: frame.ip, stack, chunk },
+          instructionPos
+        )
+      }
+
+      const propForm = v.string(propName)
+      try {
+        stack.push(
+          callJsMethod(target, propForm, propName, propForm, args, ctx, env)
+        )
+      } catch (e) {
+        hydrateVmErrorPos(e, instructionPos)
+        captureVmFrames(e, state)
+        throw e
+      }
+      break
+    }
+    case Op.JsNew: {
+      const argCount = chunk.code[frame.ip++]
+      assertCountOperand(
+        argCount,
+        'JsNew',
+        instruction,
+        frame.ip,
+        stack,
+        chunk,
+        instructionPos
+      )
+      if (stack.length < argCount + 1) {
+        throw new EvaluationError(
+          'VM stack underflow on JsNew, not enough constructor/arguments',
+          { instruction, ip: frame.ip, stack, chunk },
+          instructionPos
+        )
+      }
+
+      const args = stack.splice(stack.length - argCount, argCount)
+      const ctor = stack.pop()
+      if (ctor === undefined) {
+        throw new EvaluationError(
+          'VM stack underflow on JsNew, constructor missing',
+          { instruction, ip: frame.ip, stack, chunk },
+          instructionPos
+        )
+      }
+
+      try {
+        stack.push(constructJsValue(ctor, v.symbol('js/new'), args, ctx, env))
+      } catch (e) {
+        hydrateVmErrorPos(e, instructionPos)
+        captureVmFrames(e, state)
+        throw e
+      }
+      break
+    }
     case Op.Nil: {
       stack.push(v.nil())
       break
@@ -690,6 +808,7 @@ function executeInstruction(state: VmState): void {
       break
     }
     case Op.Call: {
+      const instructionOffset = frame.ip - 1
       const argCount = chunk.code[frame.ip++]
       assertCountOperand(
         argCount,
@@ -770,7 +889,7 @@ function executeInstruction(state: VmState): void {
         const result = delegateCall(state, callable, args, env, instructionPos)
         stack.push(result)
       } catch (e) {
-        hydrateVmErrorPos(e, instructionPos)
+        hydrateVmErrorPos(e, instructionPos, chunk, instructionOffset)
         captureVmFrames(e, state)
         throw e
       }
@@ -1188,6 +1307,34 @@ function currentFrame(state: VmState): VmCallFrame {
 
 function currentFrameOrNull(state: VmState): VmCallFrame | null {
   return state.frames[state.frames.length - 1] ?? null
+}
+
+function readStringConstantOperand(
+  frame: VmCallFrame,
+  stack: CljValue[],
+  instruction: number | undefined,
+  opName: string,
+  instructionPos: Pos | undefined
+): string {
+  const { chunk } = frame
+  const constantIndex = chunk.code[frame.ip++]
+  const value =
+    constantIndex === undefined ? undefined : chunk.constants[constantIndex]
+  if (value === undefined || !is.string(value)) {
+    throw new EvaluationError(
+      `${opName} expected string constant`,
+      {
+        instruction,
+        constantIndex,
+        value,
+        ip: frame.ip,
+        stack,
+        chunk,
+      },
+      instructionPos
+    )
+  }
+  return value.value
 }
 
 function readCatchTableIndexOperand(
@@ -1977,6 +2124,7 @@ function executeIntrinsic(
   instructionPos: Pos | undefined
 ): void {
   const frame = currentFrame(state)
+  const instructionOffset = frame.ip - 1
   const argCount = frame.chunk.code[frame.ip++]
   assertCountOperand(
     argCount,
@@ -2023,7 +2171,7 @@ function executeIntrinsic(
     }
     state.stack.push(delegateCall(state, visibleOp, args, frame.env, instructionPos))
   } catch (e) {
-    hydrateVmErrorPos(e, instructionPos)
+    hydrateVmErrorPos(e, instructionPos, frame.chunk, instructionOffset)
     captureVmFrames(e, state, [
       {
         fnName: name,
@@ -2157,8 +2305,28 @@ function getInstructionPos(chunk: VmChunk, offset: number): Pos | undefined {
   return chunk.positions[offset] ?? undefined
 }
 
-function hydrateVmErrorPos(error: unknown, pos: Pos | undefined): void {
-  if (pos && isEvaluationError(error) && !error.pos) {
+function hydrateVmErrorPos(
+  error: unknown,
+  pos: Pos | undefined,
+  chunk?: VmChunk,
+  instructionOffset?: number
+): void {
+  if (!isEvaluationError(error) || error.pos) return
+
+  const argIndex = error.data?.argIndex
+  if (
+    chunk &&
+    instructionOffset !== undefined &&
+    typeof argIndex === 'number'
+  ) {
+    const argPos = chunk.callArgPositions[instructionOffset]?.[argIndex]
+    if (argPos) {
+      error.pos = argPos
+      return
+    }
+  }
+
+  if (pos) {
     error.pos = pos
   }
 }

@@ -637,6 +637,7 @@ export type VmChunk = {
   code: number[]
   constants: CljValue[]
   positions: Array<Pos | null>
+  callArgPositions: Array<Array<Pos | null> | undefined>
   name?: string
   maxStack: number
   localCount: number

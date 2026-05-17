@@ -166,7 +166,7 @@ describe('VM call compilation', () => {
   })
 
   it.each([
-    ['(+ 1 foo/bar.baz)', 'unsupported dotted qualified argument symbol'],
+    ['(+ 1 (async 2))', 'unsupported async argument form'],
   ])('falls back for %s: %s', (code) => {
     expect(compileVm(formToNode(code))).toBeNull()
   })

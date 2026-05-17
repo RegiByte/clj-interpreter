@@ -28,6 +28,7 @@ type ProbeDomain =
   | 'multi-arity'
   | 'threading'
   | 'namespace-introspection'
+  | 'interop'
   | 'known-unsupported'
 
 type ReadyProbe = {
@@ -58,9 +59,7 @@ type RunOutcome =
   | { ok: true; value: CljValue; events: EvalEvent[] }
   | { ok: false; error: Error; events: EvalEvent[] }
 
-const baseline = snapshotSession(
-  createSession({ hostBindings: { Math, Date } })
-)
+const baseline = snapshotSession(createSession({ hostBindings: { Math, Date } }))
 
 const readyProbes: ReadyProbe[] = [
   { domain: 'arithmetic', name: 'addition arity zero', code: '(+)' },
@@ -153,6 +152,10 @@ const readyProbes: ReadyProbe[] = [
   { domain: 'namespace-introspection', name: 'current namespace symbols', code: '[(symbol? (ns-name *ns*)) (contains? (ns-publics (quote clojure.core)) (quote +)) (contains? (ns-interns (quote clojure.core)) (quote +))]' },
   { domain: 'namespace-introspection', name: 'namespace values and lookup', code: '[(namespace? *ns*) (= (find-ns (quote user)) *ns*) (symbol? (ns-name (find-ns (quote clojure.core)))) (every? namespace? (all-ns))]' },
   { domain: 'namespace-introspection', name: 'private vars excluded from publics', code: '(do (defn- private-fn [x] x) (defn public-fn [x] x) [(contains? (ns-publics (quote user)) (quote private-fn)) (contains? (ns-interns (quote user)) (quote private-fn)) (contains? (ns-publics (quote user)) (quote public-fn))])' },
+
+  { domain: 'interop', name: 'JS property symbol', code: 'js/Math.PI' },
+  { domain: 'interop', name: 'JS dot call', code: '(. js/Math pow 2 3)' },
+  { domain: 'interop', name: 'JS constructor', code: '(js/instanceof? (js/new js/Date "2026-01-01") js/Date)' },
 ]
 
 const throwProbes: ThrowProbe[] = [
@@ -176,8 +179,6 @@ const throwProbes: ThrowProbe[] = [
 const fallbackProbes: FallbackProbe[] = [
   { domain: 'known-unsupported', name: 'namespace declaration boundary', code: '(ns probe.boundary)', category: 'unsupported-top-level-mutation' },
   { domain: 'known-unsupported', name: 'async special form', code: '(async 42)', category: 'unsupported-special-form' },
-  { domain: 'known-unsupported', name: 'JS property symbol', code: 'js/Math.pow', category: 'unsupported-js-interop' },
-  { domain: 'known-unsupported', name: 'JS dot call', code: '(. js/Math pow 2 3)', category: 'unsupported-js-interop' },
   {
     domain: 'known-unsupported',
     name: 'raw let* destructuring',
@@ -343,6 +344,7 @@ describe('VM semantic probe harness', () => {
         'multi-arity',
         'threading',
         'namespace-introspection',
+        'interop',
         'known-unsupported',
       ])
     )

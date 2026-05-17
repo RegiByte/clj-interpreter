@@ -41,6 +41,9 @@ export const Op = {
   LoadLexicalVar: 56,
   Def: 57,
   DefMacro: 58,
+  JsGetProp: 59,
+  JsInvoke: 60,
+  JsNew: 61,
 
   Add: 70,
   Sub: 71,

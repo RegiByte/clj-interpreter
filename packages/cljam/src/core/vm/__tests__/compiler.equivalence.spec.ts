@@ -26,7 +26,7 @@ describe('VM compiler equivalence helpers', () => {
     expectVmEqualsInterpreter(code)
   })
 
-  it.each(['js/Math.pow', '(if true 1 2 3)'])(
+  it.each(['(if true 1 2 3)'])(
     'expects VM fallback for %s',
     (code) => {
       expectVmFallsBack(code)

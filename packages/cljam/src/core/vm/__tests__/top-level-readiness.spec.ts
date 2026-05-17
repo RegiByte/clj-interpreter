@@ -31,7 +31,7 @@ type RunOutcome =
   | { ok: false; error: Error; events: EvalEvent[] }
 
 const baseline = snapshotSession(
-  createSession({ hostBindings: { Math, Date } })
+  createSession({ hostBindings: { Math, Date, config: { db: { port: 5432 } } } })
 )
 
 const readyCases: ReadyCase[] = [
@@ -208,6 +208,26 @@ const readyCases: ReadyCase[] = [
     setup: ['(def fact (fn fact [n] (if (= n 0) 1 (* n (fact (- n 1))))))'],
     code: '(fact 5)',
   },
+  {
+    name: 'JS dot-chain property symbol',
+    code: 'js/Math.PI',
+  },
+  {
+    name: 'JS dot-chain nested value',
+    code: 'js/config.db.port',
+  },
+  {
+    name: 'JS dot-chain call',
+    code: '(js/Math.pow 2 3)',
+  },
+  {
+    name: 'JS interop dot call',
+    code: '(. js/Math pow 2 3)',
+  },
+  {
+    name: 'JS constructor interop',
+    code: '(js/instanceof? (js/new js/Date "2026-01-01") js/Date)',
+  },
 ]
 
 const fallbackCases: FallbackCase[] = [
@@ -220,21 +240,6 @@ const fallbackCases: FallbackCase[] = [
     name: 'async special form',
     code: '(async 42)',
     category: 'unsupported-special-form',
-  },
-  {
-    name: 'JS interop call',
-    code: '(. js/Math pow 2 3)',
-    category: 'unsupported-js-interop',
-  },
-  {
-    name: 'JS constructor interop',
-    code: '(js/new js/Date)',
-    category: 'unsupported-js-interop',
-  },
-  {
-    name: 'JS property symbol',
-    code: 'js/Math.pow',
-    category: 'unsupported-js-interop',
   },
   {
     name: 'direct destructuring let*',
@@ -384,7 +389,6 @@ describe('VM top-level readiness harness', () => {
         ['unsupported-top-level-mutation', 1],
         ['unsupported-special-form', 2],
         ['compile-error', 1],
-        ['unsupported-js-interop', 3],
         ['unsupported-binding-form', 1],
       ])
     )

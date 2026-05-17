@@ -127,20 +127,19 @@ describe('VM evaluation dispatch instrumentation', () => {
   it('falls back cleanly for unsupported public session forms by default', () => {
     const events: EvalEvent[] = []
     const session = createSession({
-      hostBindings: { Math },
       instrumentation: { onEvent: (event) => events.push(event) },
     })
 
     events.length = 0
 
-    expect(session.evaluate('(. js/Math pow 2 3)')).toEqual(v.number(8))
+    expect(session.evaluate('(ns fallback.test)')).toEqual(v.nil())
     expect(events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           path: 'fallback',
           mode: 'opportunistic',
           reason: expect.objectContaining({
-            category: 'unsupported-js-interop',
+            category: 'unsupported-top-level-mutation',
           }),
         }),
       ])

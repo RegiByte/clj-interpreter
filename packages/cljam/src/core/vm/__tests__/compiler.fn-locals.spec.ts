@@ -105,8 +105,6 @@ describe('VM function body locals and let* compilation', () => {
 
   it.each([
     ['async', '(async x)'],
-    ['JS interop dot', '(. x foo)'],
-    ['JS constructor interop', '(js/new Date)'],
     ['ns', '(ns demo.vm-test)'],
   ])(
     'falls back when a function body contains unsupported %s',

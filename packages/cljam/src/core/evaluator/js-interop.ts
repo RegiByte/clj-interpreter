@@ -103,7 +103,7 @@ export function cljToJs(
  * Strings, numbers, and booleans are auto-boxed (JS auto-promotes them for
  * property/method access). Nil and all other Clojure types are rejected.
  */
-function extractRawTarget(target: CljValue, targetForm: CljValue): unknown {
+export function extractRawTarget(target: CljValue, targetForm: CljValue): unknown {
   switch (target.kind) {
     case 'js-value':
       return target.value
@@ -114,6 +114,84 @@ function extractRawTarget(target: CljValue, targetForm: CljValue): unknown {
     default:
       throw new EvaluationError(`cannot use . on ${target.kind}`, { target }, getPos(targetForm))
   }
+}
+
+export function readJsProperty(
+  target: CljValue,
+  targetForm: CljValue,
+  propName: string
+): CljValue {
+  const rawTarget = extractRawTarget(target, targetForm)
+
+  if (rawTarget === null || rawTarget === undefined) {
+    const label = rawTarget === null ? 'null' : 'undefined'
+    throw new EvaluationError(
+      `cannot use . on ${label} js value — check for nil/undefined before accessing properties`,
+      { target },
+      getPos(targetForm)
+    )
+  }
+
+  const rawObj = rawTarget as Record<string, unknown>
+  const rawProp = rawObj[propName]
+  if (typeof rawProp === 'function') {
+    return v.jsValue((rawProp as (...a: unknown[]) => unknown).bind(rawObj))
+  }
+  return jsToClj(rawProp)
+}
+
+export function callJsMethod(
+  target: CljValue,
+  targetForm: CljValue,
+  propName: string,
+  propForm: CljValue,
+  args: CljValue[],
+  ctx: EvaluationContext,
+  env: Env
+): CljValue {
+  const rawTarget = extractRawTarget(target, targetForm)
+
+  if (rawTarget === null || rawTarget === undefined) {
+    const label = rawTarget === null ? 'null' : 'undefined'
+    throw new EvaluationError(
+      `cannot use . on ${label} js value — check for nil/undefined before accessing properties`,
+      { target },
+      getPos(targetForm)
+    )
+  }
+
+  const rawObj = rawTarget as Record<string, unknown>
+  const method = rawObj[propName]
+  if (typeof method !== 'function') {
+    throw new EvaluationError(
+      `method '${propName}' is not callable on ${String(rawObj)}`,
+      { propName, rawObj },
+      getPos(propForm)
+    )
+  }
+
+  const jsArgs = args.map((a) => cljToJs(a, ctx, env))
+  return jsToClj((method as (...args: unknown[]) => unknown).apply(rawObj, jsArgs))
+}
+
+export function constructJsValue(
+  cls: CljValue,
+  clsForm: CljValue,
+  args: CljValue[],
+  ctx: EvaluationContext,
+  env: Env
+): CljValue {
+  if (!is.jsValue(cls) || typeof cls.value !== 'function') {
+    throw new EvaluationError(
+      `js/new: expected js-value constructor, got ${cls.kind}`,
+      { cls },
+      getPos(clsForm)
+    )
+  }
+
+  const jsArgs = args.map((a) => cljToJs(a, ctx, env))
+  const ctor = cls.value as new (...args: unknown[]) => unknown
+  return jsToClj(new ctor(...jsArgs))
 }
 
 export function evaluateDot(
@@ -129,16 +207,6 @@ export function evaluateDot(
 
   const targetForm = list.value[1]
   const target = ctx.evaluate(targetForm, env)
-  const rawTarget = extractRawTarget(target, targetForm)
-
-  if (rawTarget === null || rawTarget === undefined) {
-    const label = rawTarget === null ? 'null' : 'undefined'
-    throw new EvaluationError(
-      `cannot use . on ${label} js value — check for nil/undefined before accessing properties`,
-      { target },
-      getPos(targetForm)
-    )
-  }
 
   const propForm = list.value[2]
   if (!is.symbol(propForm)) {
@@ -150,35 +218,13 @@ export function evaluateDot(
   }
 
   const propName = propForm.name
-  const rawObj = rawTarget as Record<string, unknown>
 
   if (list.value.length === 3) {
-    // Property access — zero extra args.
-    // Functions are bound to their object so that ((. obj method)) works correctly.
-    const rawProp = rawObj[propName]
-    if (typeof rawProp === 'function') {
-      return v.jsValue((rawProp as (...a: unknown[]) => unknown).bind(rawObj))
-    }
-    return jsToClj(rawProp)
-  }
-
-  // Method call — one or more extra args
-  const method = rawObj[propName]
-  if (typeof method !== 'function') {
-    throw new EvaluationError(
-      `method '${propName}' is not callable on ${String(rawObj)}`,
-      { propName, rawObj },
-      getPos(propForm)
-    )
+    return readJsProperty(target, targetForm, propName)
   }
 
   const cljArgs = list.value.slice(3).map((a) => ctx.evaluate(a, env))
-  const jsArgs = cljArgs.map((a) => cljToJs(a, ctx, env))
-  const rawResult = (method as (...args: unknown[]) => unknown).apply(
-    rawObj,
-    jsArgs
-  )
-  return jsToClj(rawResult)
+  return callJsMethod(target, targetForm, propName, propForm, cljArgs, ctx, env)
 }
 
 // ---------------------------------------------------------------------------
@@ -197,16 +243,6 @@ export function evaluateNew(
   }
 
   const cls = ctx.evaluate(list.value[1], env)
-  if (!is.jsValue(cls) || typeof cls.value !== 'function') {
-    throw new EvaluationError(
-      `js/new: expected js-value constructor, got ${cls.kind}`,
-      { cls },
-      getPos(list.value[1]) ?? getPos(list)
-    )
-  }
-
   const cljArgs = list.value.slice(2).map((a) => ctx.evaluate(a, env))
-  const jsArgs = cljArgs.map((a) => cljToJs(a, ctx, env))
-  const ctor = cls.value as new (...args: unknown[]) => unknown
-  return jsToClj(new ctor(...jsArgs))
+  return constructJsValue(cls, list.value[1], cljArgs, ctx, env)
 }

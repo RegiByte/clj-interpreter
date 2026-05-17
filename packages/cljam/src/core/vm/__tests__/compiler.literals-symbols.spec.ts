@@ -75,13 +75,13 @@ describe('VM compiler literals', () => {
   })
 
   it('preserves nested structured fallback reasons from child emitters', () => {
-    const result = tryCompileVm(formToNode('[foo/bar.baz]'))
+    const result = tryCompileVm(formToNode('[(async 1)]'))
 
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.reason).toEqual({
-      category: 'unsupported-js-interop',
-      detail: 'VM does not support JS interop symbol foo/bar.baz',
+      category: 'unsupported-special-form',
+      detail: 'VM does not support special form async',
     })
   })
 })
@@ -297,9 +297,9 @@ describe('VM Symbols', () => {
   })
 
   it.each(['js/Math.pow', 'js/console.log', 'foo/bar.baz'])(
-    'still falls back for dotted qualified symbol %s',
+    'compiles dotted qualified symbol %s',
     (code) => {
-      expect(compileVm(formToNode(code))).toBeNull()
+      expect(compileVm(formToNode(code))).not.toBeNull()
     }
   )
 

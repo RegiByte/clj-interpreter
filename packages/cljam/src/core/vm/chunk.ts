@@ -5,6 +5,7 @@ type ChunkSnapshot = {
   codeLength: number
   constantsLength: number
   positionsLength: number
+  callArgPositionsLength: number
   innerFunctionsLength: number
   catchTablesLength: number
   lexicalVarLookupsLength: number
@@ -26,6 +27,7 @@ export function makeChunk(name?: string): VmChunk {
     code: [],
     constants: [],
     positions: [],
+    callArgPositions: [],
     name,
     maxStack: 0,
     localCount: 0,
@@ -63,12 +65,21 @@ export function emitOperand(
   recordOperand(chunk, operand)
 }
 
+export function recordCallArgPositions(
+  chunk: VmChunk,
+  instructionOffset: number,
+  argPositions: Array<Pos | null>
+): void {
+  chunk.callArgPositions[instructionOffset] = argPositions
+}
+
 export function snapshotChunk(chunk: VmChunk): ChunkSnapshot {
   const pending = pendingInstructionByChunk.get(chunk)
   return {
     codeLength: chunk.code.length,
     constantsLength: chunk.constants.length,
     positionsLength: chunk.positions.length,
+    callArgPositionsLength: chunk.callArgPositions.length,
     innerFunctionsLength: chunk.innerFunctions.length,
     catchTablesLength: chunk.catchTables.length,
     lexicalVarLookupsLength: chunk.lexicalVarLookups.length,
@@ -85,6 +96,7 @@ export function rollbackChunk(chunk: VmChunk, snapshot: ChunkSnapshot): void {
   chunk.code.length = snapshot.codeLength
   chunk.constants.length = snapshot.constantsLength
   chunk.positions.length = snapshot.positionsLength
+  chunk.callArgPositions.length = snapshot.callArgPositionsLength
   chunk.innerFunctions.length = snapshot.innerFunctionsLength
   chunk.catchTables.length = snapshot.catchTablesLength
   chunk.lexicalVarLookups.length = snapshot.lexicalVarLookupsLength
@@ -146,6 +158,7 @@ function getOperandCount(opcode: number): number {
     case Op.LoadLexicalVar:
     case Op.Def:
     case Op.DefMacro:
+    case Op.JsGetProp:
     case Op.LoadUpvalue:
     case Op.PushDynamicBinding:
     case Op.SetDynamic:
@@ -155,6 +168,7 @@ function getOperandCount(opcode: number): number {
     case Op.WithMeta:
     case Op.Call:
     case Op.Closure:
+    case Op.JsNew:
     case Op.Jump:
     case Op.JumpIfFalsy:
     case Op.EnterFinally:
@@ -173,6 +187,7 @@ function getOperandCount(opcode: number): number {
     case Op.FnRecur:
       return 1
     case Op.FnRecurRest:
+    case Op.JsInvoke:
       return 2
     case Op.PushTry:
       return 3
@@ -218,9 +233,13 @@ function getStackDelta(opcode: number, operands: number[]): number {
     case Op.WithMeta:
     case Op.Def:
     case Op.DefMacro:
+    case Op.JsGetProp:
       return 0
     case Op.Call:
+    case Op.JsNew:
       return -countOperand(operands[0])
+    case Op.JsInvoke:
+      return -countOperand(operands[1])
     case Op.Add:
     case Op.Sub:
     case Op.Mul:

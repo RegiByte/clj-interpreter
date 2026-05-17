@@ -52,7 +52,7 @@ describe('VM do compilation', () => {
   })
 
   it('falls back when any do child cannot compile', () => {
-    expect(compileVm(formToNode('(do 1 [2 3 foo/bar.baz])'))).toBeNull()
+    expect(compileVm(formToNode('(do 1 [2 3 (async 4)])'))).toBeNull()
   })
 })
 
