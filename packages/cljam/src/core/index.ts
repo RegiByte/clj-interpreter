@@ -30,6 +30,7 @@ export type { Runtime, RuntimeSnapshot, RuntimeOptions } from './runtime'
 // Module system
 export { resolveModuleOrder } from './module'
 export { makeCoreModule } from './modules/core'
+export { makeVmModule } from './modules/vm'
 export type {
   RuntimeModule,
   NamespaceDeclaration,

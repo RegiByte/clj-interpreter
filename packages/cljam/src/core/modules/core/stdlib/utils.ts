@@ -1,7 +1,11 @@
 // Miscellaneous utilities: str, type, gensym, eval, macroexpand-1, macroexpand,
 // namespace, name, keyword
 import { is } from '../../../assertions'
-import { derefValue, getNamespaceEnv, tryLookup } from '../../../env'
+import {
+  derefValue,
+  getNamespaceEnv,
+  tryLookup,
+} from '../../../env'
 import { EvaluationError } from '../../../errors'
 import { DocGroups, docMeta, v } from '../../../factories'
 import { makeGensym } from '../../../gensym'
@@ -16,6 +20,10 @@ import { readForms } from '../../../reader'
 import { measureSync, nowMs } from '../../../timing'
 import { tokenize } from '../../../tokenizer'
 import { toSeq, valueToString } from '../../../transformations'
+import {
+  disassembleChunkBundleLines,
+} from '../../../vm/debug'
+import { resolveBytecodeTarget } from '../../../vm/introspection'
 import type {
   CljValue,
   Env,
@@ -140,6 +148,17 @@ function measureBody(
     [v.keyword(':path'), keywordPath(path)],
     [v.keyword(':stages'), v.vector(stages.map(stageToMap))],
   ])
+}
+
+function disassembleForm(
+  ctx: EvaluationContext,
+  callEnv: Env,
+  form: CljValue | undefined
+): CljValue {
+  const target = resolveBytecodeTarget(ctx, callEnv, form)
+  return target === null
+    ? v.nil()
+    : v.vector(disassembleChunkBundleLines(target.entries).map(v.string))
 }
 
 function mapLookup(map: CljValue, keyName: string): CljValue {
@@ -323,6 +342,24 @@ export const utilFunctions: Record<string, CljValue> = {
       ...docMeta({
         doc: 'Implementation detail for time. Evaluates quoted body forms, prints elapsed time, and returns the value.',
         arglists: [['body']],
+        docGroup: DocGroups.runtime,
+      }),
+    ]),
+  'disassemble*-impl': v
+    .nativeFnCtx(
+      'disassemble*-impl',
+      function disassembleImpl(
+        ctx: EvaluationContext,
+        callEnv: Env,
+        form: CljValue | undefined
+      ) {
+        return disassembleForm(ctx, callEnv, form)
+      }
+    )
+    .withMeta([
+      ...docMeta({
+        doc: 'Implementation detail for disassemble*. Returns formatted VM bytecode lines for quoted forms and bytecode-backed values.',
+        arglists: [['form']],
         docGroup: DocGroups.runtime,
       }),
     ]),

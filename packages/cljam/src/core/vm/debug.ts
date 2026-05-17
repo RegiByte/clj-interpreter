@@ -1,10 +1,65 @@
 import { printString } from '../printer'
-import type { VmChunk } from '../types'
+import type { Arity, VmArityTemplate, VmChunk } from '../types'
 import { Op, opcodeName } from './opcodes'
 
+export type VmDisassemblyEntry = {
+  label: string
+  chunk: VmChunk
+}
+
 export function disassembleChunk(chunk: VmChunk): string {
+  return disassembleChunkWithLabel(chunk, chunk.name ?? 'chunk')
+}
+
+export function disassembleChunkBundle(entries: VmDisassemblyEntry[]): string {
+  return disassembleChunkBundleLines(entries).join('\n')
+}
+
+export function disassembleChunkBundleLines(
+  entries: VmDisassemblyEntry[]
+): string[] {
+  return entries
+    .flatMap((entry, index) => [
+      ...(index === 0 ? [] : ['']),
+      ...disassembleChunkWithLabel(entry.chunk, entry.label).split('\n'),
+    ])
+}
+
+export function collectChunkDisassemblyEntries(
+  chunk: VmChunk,
+  label: string
+): VmDisassemblyEntry[] {
+  const entries: VmDisassemblyEntry[] = [{ label, chunk }]
+
+  chunk.innerFunctions.forEach((fnTemplate, fnIndex) => {
+    fnTemplate.arities.forEach((arity, arityIndex) => {
+      entries.push(
+        ...collectChunkDisassemblyEntries(
+          arity.chunk,
+          `${label}/fn[${fnIndex}]/arity[${arityIndex}] ${formatTemplateArglist(arity)}`
+        )
+      )
+    })
+  })
+
+  return entries
+}
+
+export function collectArityDisassemblyEntries(
+  arity: Arity,
+  label: string
+): VmDisassemblyEntry[] {
+  if (arity.bytecodeBody === undefined) return []
+
+  return collectChunkDisassemblyEntries(
+    arity.bytecodeBody,
+    `${label} ${formatArityArglist(arity)}`
+  )
+}
+
+function disassembleChunkWithLabel(chunk: VmChunk, label: string): string {
   const lines: string[] = []
-  lines.push(`== ${chunk.name ?? 'chunk'} ==`)
+  lines.push(`== ${label} ==`)
 
   let offset = 0
   while (offset < chunk.code.length) {
@@ -209,4 +264,20 @@ function disassembleInstruction(
 
 function formatOffset(offset: number): string {
   return offset.toString().padStart(4, '0')
+}
+
+function formatTemplateArglist(arity: VmArityTemplate): string {
+  const params = arity.params.map((param) => param.name)
+  if (arity.restParam !== null) {
+    params.push('&', arity.restParam.name)
+  }
+  return `[${params.join(' ')}]`
+}
+
+function formatArityArglist(arity: Arity): string {
+  const params = arity.params.map((param) => param.name)
+  if (arity.restParam !== null) {
+    params.push('&', arity.restParam.name)
+  }
+  return `[${params.join(' ')}]`
 }

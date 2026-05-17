@@ -11,6 +11,7 @@ import {
 } from './module'
 import { makeCoreModule } from './modules/core'
 import { makeJsModule } from './modules/js'
+import { makeVmModule } from './modules/vm'
 import {
   extractAliasMapFromTokens,
   extractNsNameFromTokens,
@@ -423,7 +424,7 @@ export function createRuntime(options?: RuntimeOptions): Runtime {
   registry.set('user', userEnv)
 
   const runtime = buildRuntime(registry, coreEnv, options)
-  runtime.installModules([makeCoreModule(), makeJsModule()])
+  runtime.installModules([makeCoreModule(), makeJsModule(), makeVmModule()])
   return runtime
 }
 

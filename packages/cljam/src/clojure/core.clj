@@ -75,6 +75,7 @@
 (declare hierarchy-parents-global)
 (declare hierarchy-ancestors-global)
 (declare describe*)
+(declare disassemble*-impl)
 
 (defmacro
   ^{:doc-group "Runtime"}
@@ -89,6 +90,13 @@
   "Evaluates body, prints elapsed time, and returns the final value."
   [& body]
   `(time*-impl '~body))
+
+(defmacro
+  ^{:doc-group "Runtime"}
+  disassemble*
+  "Returns formatted VM bytecode disassembly lines for form or a bytecode-backed function, var, or macro target. Does not evaluate the target form."
+  [form]
+  `(disassemble*-impl '~form))
 
 (defmacro
   ^{:doc-group "Functions"}
