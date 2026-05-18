@@ -1,0 +1,9 @@
+{
+  "name": "cljam-v8-diagnostics",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "run": "node scripts/run.mjs",
+    "report": "node scripts/report.mjs"
+  }
+}

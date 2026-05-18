@@ -15,6 +15,7 @@ import type {
   CompileFn,
   SlotRef,
 } from '../types.ts'
+import { namedCompiledExpr } from './profile-name.ts'
 
 const IF_TEST_POS = 1
 const IF_THEN_POS = 2
@@ -47,13 +48,13 @@ export function compileIf(
     return null
   }
 
-  return (env, ctx) => {
+  return namedCompiledExpr('if', (env, ctx) => {
     if (is.truthy(compiledTest(env, ctx))) {
       return compiledThen(env, ctx)
     } else {
       return compiledElse ? compiledElse(env, ctx) : v.nil()
     }
-  }
+  })
 }
 
 /**
@@ -102,7 +103,7 @@ export function compileTry(
     if (compiledFinally === null) return null
   }
 
-  return (env, ctx) => {
+  return namedCompiledExpr('try', (env, ctx) => {
     let result: CljValue = v.nil()
     let pendingThrow: unknown = null
 
@@ -150,7 +151,7 @@ export function compileTry(
 
     if (pendingThrow !== null) throw pendingThrow
     return result
-  }
+  })
 }
 
 /**
@@ -179,11 +180,11 @@ export function compileDo(
   // for deep recursion where every saved native frame extends the stack budget.
   if (compiledForms.length === 1) return compiledForms[0]
 
-  return (env, ctx) => {
+  return namedCompiledExpr('do_seq', (env, ctx) => {
     let result: CljValue = v.nil()
     for (const compiled of compiledForms) {
       result = compiled(env, ctx)
     }
     return result
-  }
+  })
 }

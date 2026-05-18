@@ -6,6 +6,7 @@ import { resolveArity, slotValuesForArity } from '../evaluator/arity.ts'
 import { v } from '../factories.ts'
 import { getPos, maybeHydrateErrorPos } from '../positions.ts'
 import { printString } from '../printer.ts'
+import { namedCompiledExpr } from './profile-name.ts'
 import type {
   CljList,
   CljValue,
@@ -218,7 +219,8 @@ export function compileCall(
   // Capture arg count at compile time to avoid a runtime .length lookup
   const argCount = compiledArgs.length
   const intrinsicName = intrinsicNameFor(head)
-  return (env, ctx) => {
+  const callLabel = is.symbol(head) ? `call_${head.name}` : 'call'
+  return namedCompiledExpr(callLabel, (env, ctx) => {
     const op = compiledOp(env, ctx)
     if (is.multiMethod(op)) {
       const args = evalCompiledArgs(compiledArgs, env, ctx)
@@ -267,5 +269,5 @@ export function compileCall(
     } finally {
       ctx.frameStack.pop()
     }
-  }
+  })
 }

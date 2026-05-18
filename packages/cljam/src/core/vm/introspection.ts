@@ -555,3 +555,231 @@ function isVarForm(form: CljValue): form is { kind: 'list'; value: CljValue[] } 
     form.value[0].name === specialFormKeywords.var
   )
 }
+
+type JsCounts = {
+  opFreqs: Map<string, number>
+  invFreqs: Map<string, number>
+  ngramFreqMaps: Map<number, Map<string, number>>
+  chunkCount: number
+  instructionCount: number
+}
+
+function makeJsCounts(ngramSizes: number[]): JsCounts {
+  const ngramFreqMaps = new Map<number, Map<string, number>>()
+  for (const n of ngramSizes) ngramFreqMaps.set(n, new Map())
+  return { opFreqs: new Map(), invFreqs: new Map(), ngramFreqMaps, chunkCount: 0, instructionCount: 0 }
+}
+
+function accumulateEntryCounts(entries: VmDisassemblyEntry[], ngramSizes: number[], counts: JsCounts): void {
+  for (const entry of entries) {
+    counts.chunkCount++
+    const ops: string[] = []
+    const calleeStack: StackProvenance[] = []
+    let offset = 0
+
+    while (offset < entry.chunk.code.length) {
+      const instruction = decodeInstruction(entry.chunk, offset)
+      const opName = instruction.op
+      ops.push(opName)
+      counts.opFreqs.set(opName, (counts.opFreqs.get(opName) ?? 0) + 1)
+      counts.instructionCount++
+
+      const callee = applyInstructionStackEffect(calleeStack, instruction)
+      if (callee !== undefined) {
+        counts.invFreqs.set(callee, (counts.invFreqs.get(callee) ?? 0) + 1)
+      }
+
+      offset = instruction.nextOffset
+    }
+
+    for (const n of ngramSizes) {
+      const freqMap = counts.ngramFreqMaps.get(n)!
+      for (let i = 0; i <= ops.length - n; i++) {
+        const key = ops.slice(i, i + n).join('\0')
+        freqMap.set(key, (freqMap.get(key) ?? 0) + 1)
+      }
+    }
+  }
+}
+
+function accumulateCounts(src: JsCounts, dst: JsCounts): void {
+  for (const [k, c] of src.opFreqs) dst.opFreqs.set(k, (dst.opFreqs.get(k) ?? 0) + c)
+  for (const [k, c] of src.invFreqs) dst.invFreqs.set(k, (dst.invFreqs.get(k) ?? 0) + c)
+  for (const [n, srcMap] of src.ngramFreqMaps) {
+    const dstMap = dst.ngramFreqMaps.get(n)!
+    for (const [k, c] of srcMap) dstMap.set(k, (dstMap.get(k) ?? 0) + c)
+  }
+  dst.chunkCount += src.chunkCount
+  dst.instructionCount += src.instructionCount
+}
+
+function materializeOpFreqMap(freqs: Map<string, number>): CljValue {
+  return v.map([...freqs.entries()].map(([k, c]) => [v.keyword(`:${k}`), v.number(c)]))
+}
+
+function materializeInvFreqMap(freqs: Map<string, number>): CljValue {
+  return v.map([...freqs.entries()].map(([k, c]) => [v.string(k), v.number(c)]))
+}
+
+function materializeNgramFreqMap(ngramFreqMaps: Map<number, Map<string, number>>, ngramSizes: number[]): CljValue {
+  const entries: [CljValue, CljValue][] = []
+  for (const n of ngramSizes) {
+    const freqMap = ngramFreqMaps.get(n)!
+    entries.push([
+      v.number(n),
+      v.map(
+        [...freqMap.entries()].map(([key, count]) => [
+          v.vector(key.split('\0').map((k) => v.keyword(`:${k}`))),
+          v.number(count),
+        ])
+      ),
+    ])
+  }
+  return v.map(entries)
+}
+
+function valueKindAndEntries(
+  value: CljValue,
+  label: string
+): { kind: string; arityCount: number; bytecodeArityCount: number; entries: VmDisassemblyEntry[] } {
+  const resolved = is.var(value) ? derefValue(value) : value
+
+  if (is.function(resolved) || is.macro(resolved)) {
+    const kind = is.macro(resolved) ? 'macro' : 'function'
+    const arityCount = resolved.arities.length
+    const bytecodeArityCount = resolved.arities.filter((a) => a.bytecodeBody !== undefined).length
+    const entries = bytecodeEntriesForValue(resolved, label)
+    return { kind: entries.length === 0 ? 'unsupported' : kind, arityCount, bytecodeArityCount, entries }
+  }
+
+  return {
+    kind: is.nativeFunction(resolved) ? 'native' : 'other',
+    arityCount: 0,
+    bytecodeArityCount: 0,
+    entries: [],
+  }
+}
+
+export function bytecodeCensusItemForValue(
+  value: CljValue,
+  ngramSizes: number[]
+): CljValue {
+  const resolved = is.var(value) ? derefValue(value) : value
+  const label = is.var(value)
+    ? `${(value as CljVar).ns}/${(value as CljVar).name}`
+    : valueLabelForSummary(resolved)
+
+  const { kind, arityCount, bytecodeArityCount, entries } = valueKindAndEntries(value, label)
+  const counts = makeJsCounts(ngramSizes)
+  accumulateEntryCounts(entries, ngramSizes, counts)
+
+  return v.map([
+    [v.keyword(':kind'), v.keyword(`:${kind}`)],
+    [v.keyword(':arity-count'), v.number(arityCount)],
+    [v.keyword(':bytecode-arity-count'), v.number(bytecodeArityCount)],
+    [v.keyword(':bytecode?'), v.boolean(entries.length > 0)],
+    [v.keyword(':chunk-count'), v.number(counts.chunkCount)],
+    [v.keyword(':instruction-count'), v.number(counts.instructionCount)],
+    [v.keyword(':opcode-frequencies'), materializeOpFreqMap(counts.opFreqs)],
+    [v.keyword(':invocation-frequencies'), materializeInvFreqMap(counts.invFreqs)],
+    [v.keyword(':opcode-ngrams'), materializeNgramFreqMap(counts.ngramFreqMaps, ngramSizes)],
+  ])
+}
+
+type NsCensusItem = {
+  name: CljValue
+  kind: string
+  arityCount: number
+  bytecodeArityCount: number
+  hasBytecode: boolean
+  chunkCount: number
+  instructionCount: number
+  counts: JsCounts
+}
+
+function isPrivateVar(theVar: CljVar): boolean {
+  return (theVar.meta?.entries ?? []).some(
+    ([k, val]) =>
+      is.keyword(k) && k.name === ':private' && is.boolean(val) && val.value === true
+  )
+}
+
+export function namespaceCensus(
+  ctx: EvaluationContext,
+  nsSym: CljSymbol,
+  includePrivate: boolean,
+  ngramSizes: number[]
+): CljValue {
+  const ns = ctx.resolveNs(nsSym.name)
+  if (ns === null) {
+    throw new Error(`Namespace not found: ${nsSym.name}`)
+  }
+
+  const aggCounts = makeJsCounts(ngramSizes)
+  let totalVars = 0
+  let totalBytecodeVars = 0
+  let totalNativeVars = 0
+  let totalOtherVars = 0
+  let totalUnsupportedVars = 0
+  let totalArities = 0
+  let totalBytecodeArities = 0
+  const nsItems: NsCensusItem[] = []
+
+  for (const [varName, theVar] of ns.vars) {
+    if (theVar.ns !== ns.name) continue
+    if (!includePrivate && isPrivateVar(theVar)) continue
+
+    const label = `${ns.name}/${varName}`
+    const { kind, arityCount, bytecodeArityCount, entries } = valueKindAndEntries(theVar, label)
+    const itemCounts = makeJsCounts(ngramSizes)
+    accumulateEntryCounts(entries, ngramSizes, itemCounts)
+    accumulateCounts(itemCounts, aggCounts)
+
+    totalVars++
+    totalArities += arityCount
+    totalBytecodeArities += bytecodeArityCount
+    if (entries.length > 0) totalBytecodeVars++
+    else if (kind === 'native') totalNativeVars++
+    else if (kind === 'unsupported') totalUnsupportedVars++
+    else totalOtherVars++
+
+    nsItems.push({ name: v.symbol(varName), kind, arityCount, bytecodeArityCount, hasBytecode: entries.length > 0, chunkCount: itemCounts.chunkCount, instructionCount: itemCounts.instructionCount, counts: itemCounts })
+  }
+
+  const totalsMap = v.map([
+    [v.keyword(':vars'), v.number(totalVars)],
+    [v.keyword(':bytecode-vars'), v.number(totalBytecodeVars)],
+    [v.keyword(':native-vars'), v.number(totalNativeVars)],
+    [v.keyword(':other-vars'), v.number(totalOtherVars)],
+    [v.keyword(':unsupported-vars'), v.number(totalUnsupportedVars)],
+    [v.keyword(':arities'), v.number(totalArities)],
+    [v.keyword(':bytecode-arities'), v.number(totalBytecodeArities)],
+    [v.keyword(':chunks'), v.number(aggCounts.chunkCount)],
+    [v.keyword(':instructions'), v.number(aggCounts.instructionCount)],
+  ])
+
+  const itemMaps = nsItems.map((item) =>
+    v.map([
+      [v.keyword(':name'), item.name],
+      [v.keyword(':kind'), v.keyword(`:${item.kind}`)],
+      [v.keyword(':bytecode?'), v.boolean(item.hasBytecode)],
+      [v.keyword(':arity-count'), v.number(item.arityCount)],
+      [v.keyword(':bytecode-arity-count'), v.number(item.bytecodeArityCount)],
+      [v.keyword(':chunk-count'), v.number(item.chunkCount)],
+      [v.keyword(':instruction-count'), v.number(item.instructionCount)],
+      [v.keyword(':opcode-frequencies'), materializeOpFreqMap(item.counts.opFreqs)],
+      [v.keyword(':invocation-frequencies'), materializeInvFreqMap(item.counts.invFreqs)],
+      [v.keyword(':opcode-ngrams'), materializeNgramFreqMap(item.counts.ngramFreqMaps, ngramSizes)],
+    ])
+  )
+
+  return v.map([
+    [v.keyword(':namespace'), v.symbol(nsSym.name)],
+    [v.keyword(':scope'), includePrivate ? v.keyword(':interns') : v.keyword(':publics')],
+    [v.keyword(':totals'), totalsMap],
+    [v.keyword(':opcode-frequencies'), materializeOpFreqMap(aggCounts.opFreqs)],
+    [v.keyword(':invocation-frequencies'), materializeInvFreqMap(aggCounts.invFreqs)],
+    [v.keyword(':opcode-ngrams'), materializeNgramFreqMap(aggCounts.ngramFreqMaps, ngramSizes)],
+    [v.keyword(':items'), v.vector(itemMaps)],
+  ])
+}

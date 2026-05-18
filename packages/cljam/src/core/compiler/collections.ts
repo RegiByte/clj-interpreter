@@ -10,6 +10,7 @@ import type {
   CompileEnv,
   CompileFn,
 } from '../types.ts'
+import { namedCompiledExpr } from './profile-name.ts'
 
 /**
  * Compiles a vector literal to a JS closure.
@@ -33,11 +34,11 @@ export function compileVector(
   }
   // Metadata is set at read time — capture it statically
   const meta = node.meta
-  return (env, ctx) => {
+  return namedCompiledExpr('vector', (env, ctx) => {
     const evaluated = compiledElements.map((c) => c(env, ctx))
     if (meta) return { kind: valueKeywords.vector, value: evaluated, meta }
     return v.vector(evaluated)
-  }
+  })
 }
 
 /**
@@ -62,14 +63,14 @@ export function compileMap(
     compiledPairs.push([compiledKey, compiledVal])
   }
   const meta = node.meta
-  return (env, ctx) => {
+  return namedCompiledExpr('map_lit', (env, ctx) => {
     const entries: [CljValue, CljValue][] = []
     for (const [ck, cv] of compiledPairs) {
       entries.push([ck(env, ctx), cv(env, ctx)])
     }
     if (meta) return { kind: valueKeywords.map, entries, meta }
     return v.map(entries)
-  }
+  })
 }
 
 /**
@@ -92,7 +93,7 @@ export function compileSet(
     if (compiled === null) return null
     compiledElements.push(compiled)
   }
-  return (env, ctx) => {
+  return namedCompiledExpr('set_lit', (env, ctx) => {
     const evaluated: CljValue[] = []
     for (const c of compiledElements) {
       const ev = c(env, ctx)
@@ -102,5 +103,5 @@ export function compileSet(
       }
     }
     return v.set(evaluated)
-  }
+  })
 }

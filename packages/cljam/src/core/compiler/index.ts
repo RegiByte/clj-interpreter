@@ -44,6 +44,7 @@ import { compileCall } from './callable.ts'
 import { compileMap, compileSet, compileVector } from './collections.ts'
 import { findSlot } from './compile-env.ts'
 import { compileDo, compileIf, compileTry } from './control-flow.ts'
+import { namedCompiledExpr } from './profile-name.ts'
 
 /**
  * Export the compiler functions for use in the evaluator
@@ -159,7 +160,9 @@ function compileList(
   compileEnv: CompileEnv | null,
   compile: CompileFn
 ): CompiledExpr | null {
-  if (node.value.length === 0) return () => node
+  if (node.value.length === 0) {
+    return namedCompiledExpr('list_empty', (_env, _ctx) => node)
+  }
   const head = node.value[0]
   // First check supported special forms
   if (is.symbol(head)) {
@@ -211,7 +214,7 @@ function compileSymbol(
       // Dot-chain qualified symbol: js/console.log, js/Math.pow, etc.
       // Resolves the root var (js/console, js/Math) then walks property segments.
       const segments = localName.split('.')
-      return (env, ctx) => {
+      return namedCompiledExpr(`sym_dot_${symbolName}`, (env, ctx) => {
         const nsEnv = getNamespaceEnv(env)
         const targetNs = nsEnv.ns?.aliases.get(alias) ?? ctx.resolveNs(alias) ?? null
         if (!targetNs) {
@@ -255,7 +258,7 @@ function compileSymbol(
           }
         }
         return current
-      }
+      })
     }
 
     // Phase 6: qualified symbol — alias/name strings captured at compile time,
@@ -263,7 +266,7 @@ function compileSymbol(
     // are not; REPL namespace state can evolve after a function is compiled.
     const cache: { current: CachedVarRef | null } = { current: null }
     const pos = getPos(node)
-    return (env, ctx) => {
+    return namedCompiledExpr(`sym_qual_${symbolName}`, (env, ctx) => {
       return readQualifiedSymbol(
         alias,
         localName,
@@ -273,17 +276,17 @@ function compileSymbol(
         pos,
         cache
       )
-    }
+    })
   }
   const slot = findSlot(symbolName, compileEnv)
   if (slot !== null) {
-    return (_env, _ctx) => slot.value! // direct slot access, no lookup
+    return namedCompiledExpr(`sym_slot_${symbolName}`, (_env, _ctx) => slot.value!)
   }
   // Regular lookup — capture pos at compile time so lookup failures point at
   // the symbol in the source rather than the call site.
   const pos = getPos(node)
   const cache: { current: CachedVarRef | null } = { current: null }
-  return (env, _ctx) => {
+  return namedCompiledExpr(`sym_env_${symbolName}`, (env, _ctx) => {
     try {
       return readUnqualifiedSymbol(symbolName, env, cache)
     } catch (e) {
@@ -292,7 +295,7 @@ function compileSymbol(
       }
       throw e
     }
-  }
+  })
 }
 
 /**
@@ -313,7 +316,7 @@ export function compile(
     case valueKeywords.boolean:
     case valueKeywords.regex:
     case valueKeywords.character:
-      return () => node
+      return namedCompiledExpr(`literal_${node.kind}`, (_env, _ctx) => node)
     case valueKeywords.symbol: {
       return compileSymbol(node, compileEnv)
     }

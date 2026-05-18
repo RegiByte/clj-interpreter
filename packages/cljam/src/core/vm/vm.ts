@@ -1995,6 +1995,7 @@ function closeUpvaluesForFrame(
   frame: VmCallFrame,
   fromLocal: number
 ): void {
+  if (state.openUpvalues.length === 0) return
   const remaining: VmUpvalue[] = []
   for (const upvalue of state.openUpvalues) {
     if (upvalue.frame === frame && upvalue.slot >= fromLocal) {

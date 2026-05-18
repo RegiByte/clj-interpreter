@@ -17,6 +17,7 @@ import type {
 } from '../types.ts'
 import { findLoopTarget } from './compile-env.ts'
 import { compileDo } from './control-flow.ts'
+import { namedCompiledExpr } from './profile-name.ts'
 
 const BINDINGS_POS = 1
 const BODY_START_POS = 2
@@ -56,7 +57,7 @@ export function compileLet(
   // unsupported body form, bail out
   if (compiledBody === null) return null
 
-  return (env, ctx) => {
+  return namedCompiledExpr('let', (env, ctx) => {
     // save all previous slot values (handles recursive/nested lets)
     const prevSlotValues = slotInits.map(([slot]) => slot.value)
 
@@ -73,7 +74,7 @@ export function compileLet(
     })
 
     return result
-  }
+  })
 }
 
 export function compileLoop(
@@ -120,7 +121,7 @@ export function compileLoop(
   const compiledBody = compileDo(body, loopCompileEnv, compile)
   if (compiledBody === null) return null
 
-  return (env, ctx) => {
+  return namedCompiledExpr('loop', (env, ctx) => {
     for (const [slot, compiledInit] of slotInits) {
       slot.value = compiledInit(env, ctx)
     }
@@ -137,7 +138,7 @@ export function compileLoop(
         return result
       }
     }
-  }
+  })
 }
 
 export function compileRecur(
@@ -164,13 +165,13 @@ export function compileRecur(
     if (compiled === null) return null
     compiledArgs.push(compiled)
   }
-  return (env, ctx) => {
+  return namedCompiledExpr('recur', (env, ctx) => {
     // important: evaluate ALL new values before writting ANY slot
     const newArgs = compiledArgs.map((compiledArg) => compiledArg(env, ctx))
     recurTarget.args = newArgs
     // return value ignored, loop checks recurTarget.args
     return v.nil()
-  }
+  })
 }
 
 /**
@@ -206,7 +207,7 @@ export function compileBinding(
   const compiledBody = compileDo(body, compileEnv, compile)
   if (compiledBody === null) return null
 
-  return (env, ctx) => {
+  return namedCompiledExpr('binding', (env, ctx) => {
     const boundVars: CljVar[] = []
     try {
       for (const [name, compiledInit] of pairs) {
@@ -252,7 +253,7 @@ export function compileBinding(
         boundVars[i].bindingStack!.pop()
       }
     }
-  }
+  })
 }
 
 /**
@@ -265,13 +266,16 @@ export function compileBinding(
  * At call time, applyFunctionWithContext writes args into paramSlots and calls
  * compiledBody(fn.env, ctx). save/restore around the call handles reentrancy.
  *
+ * `profileFragment` labels the generated JS closure for CPU profilers (V8 name).
+ *
  * Returns null if the body cannot be fully compiled (fallback to interpreter).
  */
 export function compileFnBody(
   params: CljSymbol[],
   restParam: CljSymbol | null,
   body: CljValue[],
-  compile: CompileFn
+  compile: CompileFn,
+  profileFragment: string = 'fn_body'
 ): { compiledBody: CompiledExpr; paramSlots: SlotRef[] } | null {
   const arityForSlots: Arity = { params, restParam, body }
   const paramSlots: SlotRef[] = params.map(() => ({ value: null }))
@@ -294,7 +298,7 @@ export function compileFnBody(
   const innerCompiled = compileDo(body, fnCompileEnv, compile)
   if (innerCompiled === null) return null
 
-  const compiledBody: CompiledExpr = (env, ctx) => {
+  const compiledBody: CompiledExpr = namedCompiledExpr(profileFragment, (env, ctx) => {
     while (true) {
       recurTarget.args = null
       const result = innerCompiled(env, ctx)
@@ -307,6 +311,6 @@ export function compileFnBody(
         return result
       }
     }
-  }
+  })
   return { compiledBody, paramSlots }
 }

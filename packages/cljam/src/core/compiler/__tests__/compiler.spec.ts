@@ -122,6 +122,22 @@ describe('Compiler Phase 1', () => {
   })
 })
 
+describe('CompiledExpr V8 / profiler names', () => {
+  it('tags compiled closures for CPU profiling (Function#name)', () => {
+    const num = compile(v.number(1))
+    expect(num).toBeDefined()
+    expect(num!.name).toBe('cljam$compile$literal_number')
+
+    const ifForm = compileForm('(if true 1 2)')
+    expect(ifForm).toBeDefined()
+    expect(ifForm!.name).toBe('cljam$compile$if')
+
+    const plusCall = compileForm('(+ 1 2)')
+    expect(plusCall).toBeDefined()
+    expect(plusCall!.name).toBe('cljam$compile$call_')
+  })
+})
+
 describe('Compiler Phase 2', () => {
   it.each([
     ['(if true 1 2)', v.number(1)],

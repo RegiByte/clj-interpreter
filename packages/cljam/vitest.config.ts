@@ -1,6 +1,7 @@
 import { resolve } from 'path'
 import { defineConfig } from 'vitest/config'
 import { cljTestPlugin } from './src/vite-plugin-cljam/index'
+import { playwright } from '@vitest/browser-playwright'
 
 export default defineConfig({
   resolve: {
@@ -26,5 +27,11 @@ export default defineConfig({
       '**/*.{test,spec}.clj',
     ],
     exclude: ['**/node_modules/**', '**/dist-vite-plugin/**', '**/dist/**'],
+    // browser: {
+    //   provider: playwright(),
+    //   enabled: true,
+    //   // at least one instance is required
+    //   instances: [{ browser: 'chromium' }],
+    // },
   },
 })

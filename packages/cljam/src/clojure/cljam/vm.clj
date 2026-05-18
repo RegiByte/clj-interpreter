@@ -3,6 +3,8 @@
 
 (declare bytecode-info*-impl)
 (declare value-summary*-impl)
+(declare bytecode-census-item*-impl)
+(declare namespace-census-impl*)
 
 (defmacro
   bytecode-info*
@@ -59,59 +61,6 @@
   [& maps]
   (apply merge-with + maps))
 
-(defn- normalize-census-opts
-  [opts]
-  {:include-private? (get opts :include-private? false)
-   :ngrams           (get opts :ngrams [2 3 4 5])
-   :top-limit        (get opts :top-limit 25)})
-
-(defn- bytecode-info-counts
-  [info]
-  (if (nil? info)
-    {:chunk-count       0
-     :instruction-count 0}
-    {:chunk-count       (count (:chunks info))
-     :instruction-count (reduce
-                         (fn [acc chunk] (+ acc (count (:instructions chunk))))
-                         0
-                         (:chunks info))}))
-
-(defn- ngram-frequencies-for-info
-  [info ns]
-  (if (nil? info)
-    {}
-    (reduce
-     (fn [acc n]
-       (assoc acc n (opcode-ngrams info n)))
-     {}
-     ns)))
-
-(defn- item-kind
-  [summary info]
-  (let [kind (:kind summary)]
-    (if (and (nil? info)
-             (or (= kind :function) (= kind :macro)))
-      :unsupported
-      kind)))
-
-(defn- census-item
-  [entry opts]
-  (let [name    (first entry)
-        the-var (second entry)
-        summary (value-summary*-impl the-var)
-        info    (:bytecode-info summary)
-        counts  (bytecode-info-counts info)]
-    {:name                   name
-     :kind                   (item-kind summary info)
-     :bytecode?              (not (nil? info))
-     :arity-count            (:arity-count summary)
-     :bytecode-arity-count   (:bytecode-arity-count summary)
-     :chunk-count            (:chunk-count counts)
-     :instruction-count      (:instruction-count counts)
-     :opcode-frequencies     (if (nil? info) {} (opcode-frequencies info))
-     :invocation-frequencies (if (nil? info) {} (invocation-frequencies info))
-     :opcode-ngrams          (ngram-frequencies-for-info info (:ngrams opts))}))
-
 (defn- merge-ngram-frequencies
   [left right]
   (reduce-kv
@@ -120,56 +69,20 @@
    left
    right))
 
-(defn- aggregate-ngram-frequencies
-  [items]
-  (reduce
-   (fn [acc item]
-     (merge-ngram-frequencies acc (:opcode-ngrams item)))
-   {}
-   items))
-
-(defn- namespace-totals
-  [items]
-  {:vars              (count items)
-   :bytecode-vars     (count (filter :bytecode? items))
-   :native-vars       (count (filter #(= (:kind %) :native) items))
-   :other-vars        (count (filter #(= (:kind %) :other) items))
-   :unsupported-vars  (count (filter #(= (:kind %) :unsupported) items))
-   :arities           (reduce (fn [acc item] (+ acc (:arity-count item))) 0 items)
-   :bytecode-arities  (reduce (fn [acc item] (+ acc (:bytecode-arity-count item))) 0 items)
-   :chunks            (reduce (fn [acc item] (+ acc (:chunk-count item))) 0 items)
-   :instructions      (reduce (fn [acc item] (+ acc (:instruction-count item))) 0 items)})
-
-(defn- aggregate-frequency-key
-  [items key]
-  (reduce
-   (fn [acc item]
-     (merge-counts acc (get item key {})))
-   {}
-   items))
-
-(defn- namespace-var-map
-  [ns-sym include-private?]
-  (if include-private?
-    (ns-interns ns-sym)
-    (ns-publics ns-sym)))
+(defn- normalize-census-opts
+  [opts]
+  {:include-private? (get opts :include-private? false)
+   :ngrams           (get opts :ngrams [2 3 4 5])
+   :top-limit        (get opts :top-limit 25)})
 
 (defn
   namespace-census
   "Returns compact VM bytecode census data for a namespace symbol. Requires the namespace first."
   ([ns-sym] (namespace-census ns-sym {}))
   ([ns-sym opts]
-   (let [opts     (normalize-census-opts opts)
-         _        (require [ns-sym])
-         scope    (if (:include-private? opts) :interns :publics)
-         items    (into [] (map #(census-item % opts)) (namespace-var-map ns-sym (:include-private? opts)))]
-     {:namespace              ns-sym
-      :scope                  scope
-      :totals                 (namespace-totals items)
-      :opcode-frequencies     (aggregate-frequency-key items :opcode-frequencies)
-      :invocation-frequencies (aggregate-frequency-key items :invocation-frequencies)
-      :opcode-ngrams          (aggregate-ngram-frequencies items)
-      :items                  items})))
+   (let [opts (normalize-census-opts opts)
+         _    (require [ns-sym])]
+     (namespace-census-impl* ns-sym (:include-private? opts) (:ngrams opts)))))
 
 (defn- merge-totals
   [left right]

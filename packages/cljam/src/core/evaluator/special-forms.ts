@@ -248,7 +248,8 @@ function evaluateFnStar(
       arity.params,
       arity.restParam,
       arity.body,
-      compile
+      compile,
+      fnName ? `fn_${fnName}` : 'fn_lambda'
     )
     if (result !== null) {
       arity.compiledBody = result.compiledBody
