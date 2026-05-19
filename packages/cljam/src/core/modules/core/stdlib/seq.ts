@@ -9,6 +9,7 @@
 import { is } from '../../../assertions.ts'
 import { EvaluationError } from '../../../errors.ts'
 import { DocGroups, docMeta, v } from '../../../factories.ts'
+import { mapAssoc, mapContains, mapCount, mapEntries, mapGet, NOT_FOUND, setContains, setConj, setValues } from '../../../persistent/map-helpers.ts'
 import { printString } from '../../../printer.ts'
 import { realizeLazySeq, toSeq } from '../../../transformations.ts'
 import {
@@ -118,10 +119,9 @@ export const seqFunctions: Record<string, CljValue> = {
         return v.vector(collection.value.slice(1))
       }
       if (is.map(collection)) {
-        if (collection.entries.length === 0) {
-          return collection // return the empty map
-        }
-        return v.map(collection.entries.slice(1))
+        const entries = mapEntries(collection)
+        if (entries.length === 0) return collection
+        return v.map(entries.slice(1))
       }
       if (is.string(collection)) {
         const chars = toSeq(collection)
@@ -175,13 +175,10 @@ export const seqFunctions: Record<string, CljValue> = {
           return v.vector([...collection.value, ...args])
         }
         if (is.map(collection)) {
-          // each argument should be a vector key-pair
-          const newEntries: [CljValue, CljValue][] = [...collection.entries]
+          let result = collection
           for (let i = 0; i < args.length; i += 1) {
             const pair = args[i] as CljVector
-            // pair args start at index 1 in the call (collection is index 0)
             const pairArgIndex = i + 1
-
             if (!is.vector(pair)) {
               throw EvaluationError.atArg(
                 `conj on maps expects each argument to be a vector key-pair for maps, got ${printString(pair)}`,
@@ -196,27 +193,17 @@ export const seqFunctions: Record<string, CljValue> = {
                 pairArgIndex
               )
             }
-            const key = pair.value[0]
-            const keyIdx = newEntries.findIndex(function findKeyEntry(entry) {
-              return is.equal(entry[0], key)
-            })
-            if (keyIdx === -1) {
-              newEntries.push([key, pair.value[1]])
-            } else {
-              newEntries[keyIdx] = [key, pair.value[1]]
-            }
+            result = mapAssoc(result, pair.value[0], pair.value[1])
           }
-          return v.map([...newEntries])
+          return result
         }
 
         if (is.set(collection)) {
-          const newValues = [...collection.values]
-          for (const v of args) {
-            if (!newValues.some((existing) => is.equal(existing, v))) {
-              newValues.push(v)
-            }
+          let result = collection
+          for (const val of args) {
+            result = setConj(result, val)
           }
-          return v.set(newValues)
+          return result
         }
 
         throw new EvaluationError(
@@ -278,13 +265,8 @@ export const seqFunctions: Record<string, CljValue> = {
 
         switch (target.kind) {
           case valueKeywords.map: {
-            const entries = target.entries
-            for (const [k, v] of entries) {
-              if (is.equal(k, key)) {
-                return v
-              }
-            }
-            return defaultValue
+            const found = mapGet(target as CljMap, key)
+            return found === NOT_FOUND ? defaultValue : found
           }
           case valueKeywords.record: {
             for (const [k, val] of target.fields) {
@@ -500,11 +482,7 @@ export const seqFunctions: Record<string, CljValue> = {
         }
         if (is.nil(coll)) return v.boolean(false)
         if (is.map(coll)) {
-          return v.boolean(
-            coll.entries.some(function checkKeyMatch([k]) {
-              return is.equal(k, key)
-            })
-          )
+          return v.boolean(mapContains(coll, key))
         }
         if (is.record(coll)) {
           return v.boolean(coll.fields.some(([k]) => is.equal(k, key)))
@@ -514,7 +492,7 @@ export const seqFunctions: Record<string, CljValue> = {
           return v.boolean(key.value >= 0 && key.value < coll.value.length)
         }
         if (is.set(coll)) {
-          return v.boolean(coll.values.some((v) => is.equal(v, key)))
+          return v.boolean(setContains(coll, key))
         }
         throw EvaluationError.atArg(
           `contains? expects a map, record, set, vector, or nil, got ${printString(coll)}`,
@@ -635,7 +613,7 @@ export const seqFunctions: Record<string, CljValue> = {
         } else if (is.cons(arg) || is.lazySeq(arg)) {
           result.push(...toSeq(arg))
         } else if (is.set(arg)) {
-          result.push(...arg.values)
+          result.push(...setValues(arg))
         } else {
           throw new EvaluationError(
             `concat* expects seqable arguments, got ${printString(arg)}`,
@@ -687,11 +665,11 @@ export const seqFunctions: Record<string, CljValue> = {
         case valueKeywords.vector:
           return v.number((countable as CljVector).value.length)
         case valueKeywords.map:
-          return v.number((countable as CljMap).entries.length)
+          return v.number(mapCount(countable as CljMap))
         case valueKeywords.record:
           return v.number(countable.fields.length)
         case valueKeywords.set:
-          return v.number((countable as CljSet).values.length)
+          return v.number(mapCount((countable as CljSet)._map))
         case valueKeywords.string:
           return v.number((countable as CljString).value.length)
         default:

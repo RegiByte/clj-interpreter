@@ -8,6 +8,7 @@
 import { is } from '../../../assertions'
 import { EvaluationError } from '../../../errors'
 import { DocGroups, docMeta, v } from '../../../factories'
+import { mapAssoc, mapDissoc, mapEntries, setDisj } from '../../../persistent/map-helpers'
 import { printString } from '../../../printer'
 import { toSeq } from '../../../transformations'
 import { type CljNumber, type CljValue } from '../../../types'
@@ -122,23 +123,11 @@ export const mapsSetsFunctions: Record<string, CljValue> = {
           return v.record(collection.recordType, collection.ns, newEntries)
         }
         if (is.map(collection)) {
-          const newEntries: [CljValue, CljValue][] = [...collection.entries]
-          // need to find the entry with the same key and replace it, if it doesn't exist, add it
+          let result = collection
           for (let i = 0; i < args.length; i += 2) {
-            const key = args[i]
-            const value = args[i + 1]
-            const entryIdx = newEntries.findIndex(
-              function findEntryByKey(entry) {
-                return is.equal(entry[0], key)
-              }
-            )
-            if (entryIdx === -1) {
-              newEntries.push([key, value])
-            } else {
-              newEntries[entryIdx] = [key, value]
-            }
+            result = mapAssoc(result, args[i], args[i + 1])
           }
-          return v.map(newEntries)
+          return result
         }
         throw new EvaluationError(
           `unhandled collection type, got ${printString(collection)}`,
@@ -214,23 +203,11 @@ export const mapsSetsFunctions: Record<string, CljValue> = {
           return v.map(newEntries)
         }
         if (is.map(collection)) {
-          if (collection.entries.length === 0) {
-            return collection // return the empty map
-          }
-          const newEntries: [CljValue, CljValue][] = [...collection.entries]
+          let result = collection
           for (let i = 0; i < args.length; i += 1) {
-            const key = args[i]
-            const entryIdx = newEntries.findIndex(
-              function findEntryByKey(entry) {
-                return is.equal(entry[0], key)
-              }
-            )
-            if (entryIdx === -1) {
-              continue // key not present — skip, don't bail
-            }
-            newEntries.splice(entryIdx, 1)
+            result = mapDissoc(result, args[i])
           }
-          return v.map(newEntries)
+          return result
         }
         throw new EvaluationError(
           `unhandled collection type, got ${printString(collection)}`,
@@ -286,7 +263,7 @@ export const mapsSetsFunctions: Record<string, CljValue> = {
           0
         )
       }
-      const entries = is.record(m) ? m.fields : m.entries
+      const entries = is.record(m) ? m.fields : mapEntries(m)
       return v.vector(
         entries.map(function extractKey([k]) {
           return k
@@ -310,7 +287,7 @@ export const mapsSetsFunctions: Record<string, CljValue> = {
           0
         )
       }
-      const entries = is.record(m) ? m.fields : m.entries
+      const entries = is.record(m) ? m.fields : mapEntries(m)
       return v.vector(
         entries.map(function extractVal([, val]) {
           return val
@@ -385,10 +362,11 @@ export const mapsSetsFunctions: Record<string, CljValue> = {
           0
         )
       }
-      const newValues = s.values.filter(
-        (v) => !items.some((item) => is.equal(item, v))
-      )
-      return v.set(newValues)
+      let result = s
+      for (const item of items) {
+        result = setDisj(result, item)
+      }
+      return result
     })
     .withMeta([
       ...docMeta({

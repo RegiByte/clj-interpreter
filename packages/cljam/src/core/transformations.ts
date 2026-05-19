@@ -2,12 +2,14 @@ import { is } from './assertions'
 import { EvaluationError } from './errors'
 import { v } from './factories'
 import { valueKeywords } from './keywords'
+import { setValues } from './persistent/map-helpers'
 import { getPrintContext, printString } from './printer'
 import {
   type CljCons,
   type CljDelay,
   type CljLazySeq,
   type CljMultiMethod,
+  type CljSet,
   type CljValue,
 } from './types'
 
@@ -53,10 +55,9 @@ export function valueToString(value: CljValue): string {
     }
     case valueKeywords.set: {
       const { printLength } = getPrintContext()
-      const items =
-        printLength !== null ? value.values.slice(0, printLength) : value.values
-      const suffix =
-        printLength !== null && value.values.length > printLength ? ' ...' : ''
+      const allItems = setValues(value as CljSet)
+      const items = printLength !== null ? allItems.slice(0, printLength) : allItems
+      const suffix = printLength !== null && allItems.length > printLength ? ' ...' : ''
       return `#{${items.map(valueToString).join(' ')}${suffix}}`
     }
     case valueKeywords.function: {
@@ -189,7 +190,7 @@ export const toSeq = (collection: CljValue): CljValue[] => {
     return collection.fields.map(([key, value]) => v.vector([key, value]))
   }
   if (is.set(collection)) {
-    return collection.values
+    return setValues(collection)
   }
   if (is.string(collection)) {
     return [...collection.value].map(v.string)

@@ -18,7 +18,7 @@ describe('VM clojure.core/destructure coverage', () => {
     const session = createSession()
 
     expect(session.evaluate("(count (destructure '[[a b] v]))")).toEqual(
-      v.number(6)
+      v.number(8)
     )
     expect(
       session.evaluate(

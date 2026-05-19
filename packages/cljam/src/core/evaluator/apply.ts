@@ -2,6 +2,7 @@ import { is } from '../assertions'
 import { EvaluationError } from '../errors'
 import { cljNil } from '../factories'
 import { valueKeywords } from '../keywords'
+import { mapGet, NOT_FOUND, setContains } from '../persistent/map-helpers'
 import { printString } from '../printer'
 import type {
   CljFunction,
@@ -188,8 +189,8 @@ export function applyCallableWithContext(
     const target = args[0]
     const defaultVal = args.length > 1 ? args[1] : cljNil()
     if (is.map(target)) {
-      const entry = target.entries.find(([k]) => is.equal(k, fn))
-      return entry ? entry[1] : defaultVal
+      const found = mapGet(target, fn)
+      return found === NOT_FOUND ? defaultVal : found
     }
     if (is.record(target)) {
       const entry = target.fields.find(([k]) => is.equal(k, fn))
@@ -244,8 +245,8 @@ export function applyCallableWithContext(
     }
     const key = args[0]
     const defaultVal = args.length > 1 ? args[1] : cljNil()
-    const entry = fn.entries.find(([k]) => is.equal(k, key))
-    return entry ? entry[1] : defaultVal
+    const found = mapGet(fn, key)
+    return found === NOT_FOUND ? defaultVal : found
   }
   if (is.set(fn)) {
     if (args.length === 0) {
@@ -255,8 +256,7 @@ export function applyCallableWithContext(
       )
     }
     const key = args[0]
-    const found = fn.values.some((v) => is.equal(v, key))
-    return found ? key : cljNil()
+    return setContains(fn, key) ? key : cljNil()
   }
   // Vars are IFn — deref to current value and delegate. This makes #'handler
   // hot-swappable: the var is captured, not the value at capture time.

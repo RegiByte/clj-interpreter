@@ -1,6 +1,7 @@
 import { is } from '../assertions'
 import { v } from '../factories'
 import { valueKeywords } from '../keywords'
+import { setValues } from '../persistent/map-helpers'
 import type {
   CljMap,
   CljSet,
@@ -31,8 +32,8 @@ export function evaluateSet(
   ctx: EvaluationContext
 ): CljValue {
   const evaluated: CljValue[] = []
-  for (const v of set.values) {
-    const ev = ctx.evaluate(v, env)
+  for (const form of setValues(set)) {
+    const ev = ctx.evaluate(form, env)
     if (!evaluated.some((existing) => is.equal(existing, ev))) {
       evaluated.push(ev)
     }
@@ -51,6 +52,7 @@ export function evaluateMap(
     const evaluatedValue = ctx.evaluate(value, env)
     entries.push([evaluatedKey, evaluatedValue])
   }
-  if (map.meta) return { kind: valueKeywords.map, entries, meta: map.meta }
-  return v.map(entries)
+  const result = v.map(entries)
+  if (map.meta) result.meta = map.meta
+  return result
 }

@@ -49,6 +49,21 @@ const isDelimiter = (char: string) =>
   isAt(char) ||
   isCaret(char)
 
+// Like isDelimiter but allows ' inside symbol names.
+// Leading ' is still a Quote reader macro because tokenParseEntries dispatches
+// on the first character before parseSymbol ever runs. Only mid/trailing '
+// changes: a' b' x'' are valid Clojure symbol names.
+const isSymbolDelimiter = (char: string) =>
+  isLParen(char) ||
+  isRParen(char) ||
+  isLBracket(char) ||
+  isRBracket(char) ||
+  isLBrace(char) ||
+  isRBrace(char) ||
+  isBacktick(char) ||
+  isAt(char) ||
+  isCaret(char)
+
 const parseWhitespace = (ctx: TokenizationContext): Token => {
   const scanner = ctx.scanner
   const start = scanner.position()
@@ -209,7 +224,7 @@ const parseSymbol = (ctx: TokenizationContext): Token => {
   const scanner = ctx.scanner
   const start = scanner.position()
   const value = scanner.consumeWhile(
-    (char) => !isWhitespace(char) && !isDelimiter(char) && !isComment(char)
+    (char) => !isWhitespace(char) && !isSymbolDelimiter(char) && !isComment(char)
   )
 
   return {

@@ -2,6 +2,7 @@
 import { is } from '../../../assertions'
 import { EvaluationError } from '../../../errors'
 import { DocGroups, docMeta, v } from '../../../factories'
+import { setCount } from '../../../persistent/map-helpers'
 import { printString } from '../../../printer'
 import type {
   Arity,
@@ -9,6 +10,7 @@ import type {
   CljMacro,
   CljMap,
   CljNativeFunction,
+  CljSet,
   CljValue,
   EvaluationContext,
   Env,
@@ -411,7 +413,7 @@ function describeValue(
     case 'set':
       return v.map([
         [keywords.kind, keywords.set],
-        [keywords.count, v.number(value.values.length)],
+        [keywords.count, v.number(setCount(value as CljSet))],
       ])
 
     case 'atom':

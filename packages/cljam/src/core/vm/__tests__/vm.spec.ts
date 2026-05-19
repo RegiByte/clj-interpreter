@@ -25,7 +25,7 @@ describe('VM Hand written chunks', () => {
     ['n-ary Mul', Op.Mul, '*', [v.number(2), v.number(3), v.number(4)], v.number(24)],
     ['unary Sub', Op.Sub, '-', [v.number(10)], v.number(-10)],
     ['n-ary Sub', Op.Sub, '-', [v.number(20), v.number(3), v.number(4)], v.number(13)],
-    ['unary Div', Op.Div, '/', [v.number(10)], v.number(10)],
+    ['unary Div', Op.Div, '/', [v.number(10)], v.number(0.1)],
     ['n-ary Div', Op.Div, '/', [v.number(100), v.number(5), v.number(2)], v.number(10)],
     ['Lt true', Op.Lt, '<', [v.number(1), v.number(2), v.number(3)], v.boolean(true)],
     ['Lt false', Op.Lt, '<', [v.number(1), v.number(3), v.number(2)], v.boolean(false)],

@@ -458,7 +458,9 @@ describe('hashCljValue', () => {
 
     it('map with meta hashes same as map without meta', () => {
       const outerMeta = v.map([[kw(':source'), s('reader')]]) as CljMap
-      const withMeta = { kind: 'map' as const, entries: [[kw(':a'), n(1)]] as [CljValue, CljValue][], meta: outerMeta }
+      const withMetaBase = v.map([[kw(':a'), n(1)]])
+      withMetaBase.meta = outerMeta
+      const withMeta = withMetaBase
       const withoutMeta = v.map([[kw(':a'), n(1)]])
       expect(hashCljValue(withMeta)).toBe(hashCljValue(withoutMeta))
     })

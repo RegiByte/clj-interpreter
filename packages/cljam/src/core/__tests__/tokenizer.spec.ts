@@ -75,6 +75,43 @@ describe('tokenizer', () => {
     ])
   })
 
+  it('should tokenize primed symbols (trailing single quote)', () => {
+    const tokens = tokenize("(let [a' 42] a')")
+    expect(tokens).toMatchObject([
+      { kind: 'LParen' },
+      { kind: 'Symbol', value: 'let' },
+      { kind: 'LBracket' },
+      { kind: 'Symbol', value: "a'" },
+      { kind: 'Number', value: 42 },
+      { kind: 'RBracket' },
+      { kind: 'Symbol', value: "a'" },
+      { kind: 'RParen' },
+    ])
+  })
+
+  it('should tokenize double-primed symbols', () => {
+    const tokens = tokenize("a''")
+    expect(tokens).toMatchObject([{ kind: 'Symbol', value: "a''" }])
+  })
+
+  it('should not confuse leading quote with primed symbols', () => {
+    // 'x is (quote x), not a primed symbol
+    const tokens = tokenize("'x")
+    expect(tokens).toMatchObject([
+      { kind: 'Quote' },
+      { kind: 'Symbol', value: 'x' },
+    ])
+  })
+
+  it('should tokenize primed symbol next to leading quote', () => {
+    // 'a' is (quote a') — the leading ' is still a reader macro
+    const tokens = tokenize("'a'")
+    expect(tokens).toMatchObject([
+      { kind: 'Quote' },
+      { kind: 'Symbol', value: "a'" },
+    ])
+  })
+
   it('should tokenize comment lines', () => {
     const tokens = tokenize(';foo\n;bar\n;baz')
     expect(tokens).toMatchObject([

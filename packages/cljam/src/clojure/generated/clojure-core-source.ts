@@ -1730,15 +1730,18 @@ export const clojure_coreSource = `\
                    pvec
                    (fn [bvec b val]
                      (let* [gvec     (gensym "vec__")
+                            graw     (gensym "raw__")
                             gseq     (gensym "seq__")
                             gfirst   (gensym "first__")
                             has-rest (some #{'&} b)]
-                       (loop [ret (let [ret (conj bvec gvec
-                                                  (list 'if (list 'or (list 'nil? val) (list 'sequential? val))
-                                                        val
-                                                        (list 'throw (list 'ex-info
-                                                                           (list 'str "Cannot destructure " (list 'pr-str val) " as a sequential collection")
-                                                                           (hash-map)))))]
+                       (loop [ret (let [ret (-> bvec
+                                               (conj graw val)
+                                               (conj gvec
+                                                     (list 'if (list 'or (list 'nil? graw) (list 'sequential? graw))
+                                                           graw
+                                                           (list 'throw (list 'ex-info
+                                                                              (list 'str "Cannot destructure " (list 'pr-str graw) " as a sequential collection")
+                                                                              (hash-map))))))]
                                     (if has-rest
                                       (conj ret gseq (list 'seq gvec))
                                       ret))

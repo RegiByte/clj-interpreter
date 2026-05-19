@@ -7,10 +7,25 @@ export type CljNil = { kind: 'nil'; value: null }
 export type CljSymbol = { kind: 'symbol'; name: string; meta?: CljMap }
 export type CljList = { kind: 'list'; value: CljValue[]; meta?: CljMap }
 export type CljVector = { kind: 'vector'; value: CljValue[]; meta?: CljMap }
+import type { HamtNode } from './persistent/hamt-kernel.ts'
+
+// ─── CljMap internal representation ─────────────────────────────────────────
+
+export type SmallMapData = { kind: 'small'; entries: [CljValue, CljValue][] }
+export type HamtMapData = {
+  kind: 'hamt'
+  root: HamtNode<CljValue, CljValue>
+  size: number
+}
+export type CljMapData = SmallMapData | HamtMapData
+
 export type CljMap = {
   kind: 'map'
-  entries: [CljValue, CljValue][]
+  _data: CljMapData
   meta?: CljMap
+  // Compatibility bridge — materializes entries from _data on every call.
+  // Hot paths must use mapGet/mapAssoc/mapEntries/mapCount from map-helpers.ts.
+  readonly entries: [CljValue, CljValue][]
 }
 export type CljNamespace = {
   kind: 'namespace'
@@ -101,7 +116,11 @@ export type CljReduced = { kind: 'reduced'; value: CljValue }
 export type CljVolatile = { kind: 'volatile'; value: CljValue }
 export type CljRegex = { kind: 'regex'; pattern: string; flags: string }
 
-export type CljSet = { kind: 'set'; values: CljValue[] }
+export type CljSet = {
+  kind: 'set'
+  _map: CljMap
+  meta?: CljMap
+}
 
 export type CljDelay = {
   kind: 'delay'

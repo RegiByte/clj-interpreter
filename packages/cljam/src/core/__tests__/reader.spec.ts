@@ -175,9 +175,31 @@ describe('reader', () => {
     ['boolean-false', 'false', v.boolean(false)],
     ['nil', 'nil', v.nil()],
     ['generic symbol', 'another-symbol!', v.symbol('another-symbol!')],
+    ['primed symbol', "a'", v.symbol("a'")],
+    ['double-primed symbol', "a''", v.symbol("a''")],
   ])('should read special symbols', (_description, input, expected) => {
     const result = readForms(tokenize(input))
     expect(result).toEqual([expected])
+  })
+
+  it("should read primed symbols in let bindings", () => {
+    // This is the idiom from the jank test suite: a' b' as "primed" variable names
+    const result = readForms(tokenize("(let [a' 42 b' 99] [a' b'])"))
+    expect(result).toEqual([
+      v.list([
+        v.symbol('let'),
+        v.vector([v.symbol("a'"), v.number(42), v.symbol("b'"), v.number(99)]),
+        v.vector([v.symbol("a'"), v.symbol("b'")]),
+      ]),
+    ])
+  })
+
+  it("should not confuse leading quote with trailing prime in symbol", () => {
+    // 'a' should be (quote a'), not (quote a) followed by a stray quote
+    const result = readForms(tokenize("'a'"))
+    expect(result).toEqual([
+      v.list([v.symbol('quote'), v.symbol("a'")]),
+    ])
   })
 
   it('should read quote', () => {

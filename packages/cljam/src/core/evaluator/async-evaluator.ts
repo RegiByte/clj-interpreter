@@ -47,7 +47,8 @@ import { extend } from '../env'
 import { CljThrownSignal, EvaluationError, isEvaluationError } from '../errors'
 import { v } from '../factories'
 import { specialFormKeywords, valueKeywords } from '../keywords'
-import type { CljList, CljValue, Env, EvaluationContext } from '../types'
+import { setValues } from '../persistent/map-helpers'
+import type { CljList, CljSet, CljValue, Env, EvaluationContext } from '../types'
 import { bindParams, RecurSignal, resolveArity } from './arity'
 import { setupBindingVars } from './binding-setup'
 import { destructureBindings } from './destructure'
@@ -137,7 +138,7 @@ async function evaluateFormAsync(
 
   if (is.set(expr)) {
     const elements: CljValue[] = []
-    for (const el of expr.values) {
+    for (const el of setValues(expr as CljSet)) {
       elements.push(await evaluateFormAsync(el, env, asyncCtx))
     }
     return v.set(elements)
@@ -516,13 +517,10 @@ async function evaluateTryAsync(
     } else if (isEvaluationError(e)) {
       const evalErr = e
       const typeKeyword = evalErr.code ? v.keyword(`:${evalErr.code}`) : v.keyword(':error/runtime')
-      thrownValue = {
-        kind: valueKeywords.map,
-        entries: [
-          [v.keyword(':type'), typeKeyword],
-          [v.keyword(':message'), v.string(e.message)],
-        ],
-      }
+      thrownValue = v.map([
+        [v.keyword(':type'), typeKeyword],
+        [v.keyword(':message'), v.string(e.message)],
+      ])
     } else {
       throw e
     }

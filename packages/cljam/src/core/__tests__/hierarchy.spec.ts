@@ -18,8 +18,9 @@
 
 import { describe, expect, it } from 'vitest'
 import { freshSession } from '../evaluator/__tests__/evaluator-test-utils'
+import { setValues } from '../persistent/map-helpers'
 import { printString } from '../printer'
-import type { CljValue } from '../types'
+import type { CljSet, CljValue } from '../types'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -32,7 +33,7 @@ function s() {
 /** Extract all keyword name strings from a CljSet or CljVector value. */
 function setNames(value: CljValue): string[] {
   if (value.kind === 'nil') return []
-  if (value.kind === 'set') return value.values.map((v) => printString(v))
+  if (value.kind === 'set') return setValues(value as CljSet).map((v) => printString(v))
   if (value.kind === 'vector') return value.value.map((v) => printString(v))
   throw new Error(`setNames: expected set/vector/nil, got ${value.kind}`)
 }

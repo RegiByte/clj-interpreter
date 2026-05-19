@@ -1,5 +1,5 @@
 import { EvaluationError } from './errors'
-import type { CljCons, CljKeyword, CljLazySeq } from './types'
+import type { CljCons, CljKeyword, CljLazySeq, CljSet } from './types'
 import {
   type CljMultiMethod,
   type CljValue,
@@ -9,6 +9,7 @@ import { derefValue } from './env'
 import { specialFormKeywords, valueKeywords } from './keywords.ts'
 import { is } from './assertions.ts'
 import { v } from './factories.ts'
+import { setValues } from './persistent/map-helpers.ts'
 
 const LAZY_PRINT_CAP = 100
 
@@ -272,10 +273,10 @@ function printStringImpl(value: CljValue, depth: number): string {
       return `#'${value.ns}/${value.name}`
     case valueKeywords.set: {
       const { printLength } = _printCtx
-      const items =
-        printLength !== null ? value.values.slice(0, printLength) : value.values
+      const allItems = setValues(value as CljSet)
+      const items = printLength !== null ? allItems.slice(0, printLength) : allItems
       const suffix =
-        printLength !== null && value.values.length > printLength ? ' ...' : ''
+        printLength !== null && allItems.length > printLength ? ' ...' : ''
       return `#{${items.map((v) => printString(v, depth + 1)).join(' ')}${suffix}}`
     }
     case valueKeywords.delay:
@@ -415,7 +416,7 @@ function pp(value: CljValue, col: number, maxWidth: number): string {
     case valueKeywords.map:
       return ppMap(value.entries, col, maxWidth)
     case valueKeywords.set:
-      return ppSet(value.values, col, maxWidth)
+      return ppSet(setValues(value as CljSet), col, maxWidth)
     case valueKeywords.record:
       return ppRecord(value.fields, value.ns, value.recordType, col, maxWidth)
     case valueKeywords.lazySeq:

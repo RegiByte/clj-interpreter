@@ -4,8 +4,10 @@
  */
 
 import { describe, expect, it } from 'vitest'
+import { setValues } from '../../persistent/map-helpers'
 import { createSession } from '../../session'
 import { freshSession } from '../../evaluator/__tests__/evaluator-test-utils'
+import type { CljSet } from '../../types'
 
 function jsSession(bindings: Record<string, unknown>) {
   return createSession({ hostBindings: bindings })
@@ -446,7 +448,7 @@ describe('js/keys', () => {
     const result = session.evaluate('(set (js/keys js/target))')
     expect(result.kind).toBe('set')
     if (result.kind === 'set') {
-      const names = new Set(result.values.map((v) => (v.kind === 'string' ? v.value : '')))
+      const names = new Set(setValues(result as CljSet).map((v) => (v.kind === 'string' ? v.value : '')))
       expect(names.has('join')).toBe(true)
       expect(names.has('resolve')).toBe(true)
       expect(names.has('sep')).toBe(true)

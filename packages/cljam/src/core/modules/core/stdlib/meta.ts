@@ -1,7 +1,7 @@
 // Metadata: with-meta, meta, alter-meta!
 import { is } from '../../../assertions'
 import { EvaluationError } from '../../../errors'
-import { DocGroups, docMeta, v } from '../../../factories'
+import { DocGroups, docMeta, v, cljWithMeta } from '../../../factories'
 import { printString } from '../../../printer'
 import type {
   CljAtom,
@@ -69,7 +69,7 @@ export const metaFunctions: Record<string, CljValue> = {
         )
       }
       const meta = is.nil(m) ? undefined : (m as CljMap)
-      return { ...val, meta }
+      return cljWithMeta(val, meta)
     })
     .withMeta([
       ...docMeta({

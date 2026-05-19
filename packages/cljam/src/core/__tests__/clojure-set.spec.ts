@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { freshSession } from '../evaluator/__tests__/evaluator-test-utils'
+import { setValues } from '../persistent/map-helpers'
+import type { CljSet } from '../types'
 
 function s() {
   const session = freshSession()
@@ -11,69 +13,69 @@ describe('clojure.set/union', () => {
   it('union of two sets', () => {
     const r = s().evaluate('(set/union #{1 2} #{2 3})')
     expect(r.kind).toBe('set')
-    expect((r as any).values).toHaveLength(3)
+    expect(setValues(r as CljSet)).toHaveLength(3)
   })
 
   it('union with empty set', () => {
     const r = s().evaluate('(set/union #{1 2} #{})')
-    expect((r as any).values).toHaveLength(2)
+    expect(setValues(r as CljSet)).toHaveLength(2)
   })
 
   it('0-arity returns empty set', () => {
     const r = s().evaluate('(set/union)')
     expect(r).toMatchObject({ kind: 'set' })
-    expect((r as any).values).toHaveLength(0)
+    expect(setValues(r as CljSet)).toHaveLength(0)
   })
 
   it('3-arity union', () => {
     const r = s().evaluate('(set/union #{1} #{2} #{3})')
-    expect((r as any).values).toHaveLength(3)
+    expect(setValues(r as CljSet)).toHaveLength(3)
   })
 })
 
 describe('clojure.set/intersection', () => {
   it('intersection of overlapping sets', () => {
     const r = s().evaluate('(set/intersection #{1 2 3} #{2 3 4})')
-    expect((r as any).values).toHaveLength(2)
+    expect(setValues(r as CljSet)).toHaveLength(2)
   })
 
   it('intersection of disjoint sets', () => {
     const r = s().evaluate('(set/intersection #{1 2} #{3 4})')
-    expect((r as any).values).toHaveLength(0)
+    expect(setValues(r as CljSet)).toHaveLength(0)
   })
 
   it('1-arity returns same set', () => {
     const r = s().evaluate('(set/intersection #{1 2 3})')
-    expect((r as any).values).toHaveLength(3)
+    expect(setValues(r as CljSet)).toHaveLength(3)
   })
 })
 
 describe('clojure.set/difference', () => {
   it('removes elements in second set', () => {
     const r = s().evaluate('(set/difference #{1 2 3} #{2})')
-    expect((r as any).values).toHaveLength(2)
+    expect(setValues(r as CljSet)).toHaveLength(2)
   })
 
   it('difference with empty set returns original', () => {
     const r = s().evaluate('(set/difference #{1 2 3} #{})')
-    expect((r as any).values).toHaveLength(3)
+    expect(setValues(r as CljSet)).toHaveLength(3)
   })
 
   it('1-arity returns same set', () => {
     const r = s().evaluate('(set/difference #{1 2})')
-    expect((r as any).values).toHaveLength(2)
+    expect(setValues(r as CljSet)).toHaveLength(2)
   })
 })
 
 describe('clojure.set/select', () => {
   it('filters elements by predicate', () => {
     const r = s().evaluate('(set/select even? #{1 2 3 4})')
-    expect((r as any).values).toHaveLength(2)
+    expect(setValues(r as CljSet)).toHaveLength(2)
   })
 
   it('returns empty set when no match', () => {
     const r = s().evaluate('(set/select neg? #{1 2 3})')
-    expect((r as any).values).toHaveLength(0)
+    expect(setValues(r as CljSet)).toHaveLength(0)
   })
 })
 

@@ -157,6 +157,11 @@ export const arithmeticFunctions: Record<string, CljValue> = {
           { args: nums },
           0
         )
+      if (nums.length === 1) {
+        if ((nums[0] as CljNumber).value === 0)
+          throw EvaluationError.atArg('division by zero', { args: nums }, 0)
+        return v.number(1 / (nums[0] as CljNumber).value)
+      }
       if (nums.length === 2) {
         if (!is.number(nums[1]))
           throw EvaluationError.atArg(
@@ -528,11 +533,10 @@ export const arithmeticFunctions: Record<string, CljValue> = {
         err.data = { argIndex: 1 }
         throw err
       }
-      // Clojure mod always returns non-negative when divisor is positive
-      const result = (n as CljNumber).value % (d as CljNumber).value
-      return v.number(
-        result < 0 ? result + Math.abs((d as CljNumber).value) : result
-      )
+      // Floor modulo: result has the same sign as the divisor (unlike rem/%)
+      const nVal = (n as CljNumber).value
+      const dVal = (d as CljNumber).value
+      return v.number(nVal - dVal * Math.floor(nVal / dVal))
     })
     .withMeta([
       ...docMeta({

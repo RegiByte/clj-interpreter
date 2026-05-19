@@ -26,6 +26,7 @@ import type {
   VmUpvalueDescriptor,
   VmArityTemplate,
 } from '../types'
+import { setValues } from '../persistent/map-helpers'
 import {
   addConstant,
   emit,
@@ -1461,7 +1462,7 @@ function emitSet(
   compileEnv: VmCompileEnv
 ): boolean {
   return emitTransaction(chunk, () => {
-    const elements = node.values
+    const elements = setValues(node)
     if (elements.length === 0) {
       emit(chunk, Op.MakeSet, getPos(node) ?? null)
       emitOperand(chunk, 0, getPos(node) ?? null)

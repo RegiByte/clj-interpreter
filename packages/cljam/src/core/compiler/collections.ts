@@ -1,6 +1,7 @@
 import { is } from '../assertions.ts'
 import { v } from '../factories.ts'
 import { valueKeywords } from '../keywords.ts'
+import { setValues } from '../persistent/map-helpers.ts'
 import type {
   CljMap,
   CljSet,
@@ -68,8 +69,9 @@ export function compileMap(
     for (const [ck, cv] of compiledPairs) {
       entries.push([ck(env, ctx), cv(env, ctx)])
     }
-    if (meta) return { kind: valueKeywords.map, entries, meta }
-    return v.map(entries)
+    const result = v.map(entries)
+    if (meta) result.meta = meta
+    return result
   })
 }
 
@@ -88,7 +90,7 @@ export function compileSet(
   compile: CompileFn
 ): CompiledExpr | null {
   const compiledElements: CompiledExpr[] = []
-  for (const el of node.values) {
+  for (const el of setValues(node)) {
     const compiled = compile(el, compileEnv)
     if (compiled === null) return null
     compiledElements.push(compiled)

@@ -8,7 +8,7 @@ import {
   constructJsValue,
   readJsProperty,
 } from '../evaluator/js-interop'
-import { v } from '../factories'
+import { v, cljWithMeta } from '../factories'
 import { framesToClj, getPos } from '../positions'
 import { printString } from '../printer'
 import type {
@@ -740,7 +740,7 @@ function executeInstruction(state: VmState): void {
         )
       }
 
-      stack[stack.length - 1] = { ...value, meta }
+      stack[stack.length - 1] = cljWithMeta(value, meta)
       break
     }
     case Op.Closure: {
@@ -2256,6 +2256,13 @@ function applyIntrinsic(name: IntrinsicName, args: CljValue[]): CljValue {
     case '/': {
       if (args.length === 0) {
         throw new EvaluationError('/ expects at least one argument', { args })
+      }
+      if (args.length === 1) {
+        const num = assertNumberArg(name, args, 0)
+        if (num === 0) {
+          throw EvaluationError.atArg('division by zero', { args }, 0)
+        }
+        return v.number(1 / num)
       }
       let result = assertNumberArg(name, args, 0)
       for (let i = 1; i < args.length; i++) {

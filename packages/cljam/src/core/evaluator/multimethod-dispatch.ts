@@ -14,6 +14,7 @@
 import { is } from '../assertions'
 import { EvaluationError } from '../errors'
 import { getPos } from '../positions'
+import { setContains } from '../persistent/map-helpers'
 import { printString } from '../printer'
 import type {
   CljList,
@@ -49,7 +50,7 @@ function isAInHierarchy(h: CljMap, child: CljValue, parent: CljValue): boolean {
     for (const [ck, cv] of (subMap as CljMap).entries) {
       if (!is.equal(ck, child)) continue
       if (!is.set(cv)) return false
-      return (cv as CljSet).values.some((x) => is.equal(x, parent))
+      return setContains(cv as CljSet, parent)
     }
     return false
   }

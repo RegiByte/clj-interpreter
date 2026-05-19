@@ -1,6 +1,7 @@
 import { is } from '../assertions'
 import { EvaluationError } from '../errors'
 import { v } from '../factories'
+import { mapContains, mapGet, NOT_FOUND } from '../persistent/map-helpers'
 import { getPos } from '../positions'
 import { consToArray, realizeLazySeq } from '../transformations'
 import type { CljMap, CljValue, Env, EvaluationContext } from '../types'
@@ -64,12 +65,12 @@ function isLazy(value: CljValue): boolean {
 }
 
 function findMapEntry(map: CljMap, key: CljValue): CljValue | undefined {
-  const entry = map.entries.find(([k]) => is.equal(k, key))
-  return entry ? entry[1] : undefined
+  const found = mapGet(map, key)
+  return found === NOT_FOUND ? undefined : found
 }
 
 function mapContainsKey(map: CljMap, key: CljValue): boolean {
-  return map.entries.some(([k]) => is.equal(k, key))
+  return mapContains(map, key)
 }
 
 function destructureVector(

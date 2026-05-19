@@ -35,6 +35,11 @@ import type {
   Env,
   EvaluationContext,
 } from './types'
+import {
+  cljMap as _cljMap,
+  makeCljMap,
+  makeCljSet,
+} from './persistent/map-helpers'
 
 export const cljNumber = <T extends number>(value: T) =>
   ({ kind: 'number', value }) as const satisfies CljNumber
@@ -59,11 +64,29 @@ export const cljSymbol = <T extends string>(name: T) =>
   ({ kind: 'symbol', name }) as const satisfies CljSymbol
 export const cljList = <T extends CljValue[]>(value: T) =>
   ({ kind: 'list', value }) as const satisfies CljList
-export const cljSet = (values: CljValue[]): CljSet => ({ kind: 'set', values })
+export const cljSet = (values: CljValue[]): CljSet => makeCljSet(values)
 export const cljVector = <T extends CljValue[]>(value: T) =>
   ({ kind: 'vector', value }) as const satisfies CljVector
-export const cljMap = <T extends [CljValue, CljValue][]>(entries: T) =>
-  ({ kind: 'map', entries }) as const satisfies CljMap
+
+// ─── CljMap factory (implementation lives in persistent/map-helpers.ts) ───────
+
+export { makeCljMap }
+
+/** Returns a new value with the given metadata attached.
+ *  CljMap is handled specially because its `entries` getter lives on the
+ *  prototype — object-spread would strip it.  All other IMeta types are plain
+ *  objects where `{ ...val, meta }` is safe. */
+export function cljWithMeta(
+  val: CljValue,
+  meta: CljMap | undefined
+): CljValue {
+  if (val.kind === 'map') {
+    return makeCljMap((val as CljMap)._data, meta)
+  }
+  return { ...val, meta } as CljValue
+}
+
+export const cljMap = _cljMap
 export const cljFunction = (
   params: CljSymbol[],
   restParam: CljSymbol | null,

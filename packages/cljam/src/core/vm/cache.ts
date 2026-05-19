@@ -1,5 +1,6 @@
 import { getPos } from '../positions'
-import type { CljMap, CljValue, Pos } from '../types'
+import { mapEntries, setValues } from '../persistent/map-helpers'
+import type { CljMap, CljSet, CljValue, Pos } from '../types'
 
 export const TOP_LEVEL_VM_CACHE_VERSION = 'top-level-vm-cache-v1'
 
@@ -48,9 +49,9 @@ function fingerprintValue(value: CljValue): string | null {
     case 'vector':
       return withMeta(sequenceFingerprint('vector', value.value), value.meta)
     case 'map':
-      return withMeta(`map:[${fingerprintEntries(value.entries)}]`, value.meta)
+      return withMeta(`map:[${fingerprintEntries(mapEntries(value))}]`, value.meta)
     case 'set':
-      return `set:[${fingerprintSequence(value.values)}]`
+      return `set:[${fingerprintSequence(setValues(value as CljSet))}]`
     case 'record':
       return `record:${json(value.ns)}/${json(value.recordType)}:[${fingerprintEntries(value.fields)}]`
     case 'cons': {
@@ -142,7 +143,7 @@ function collectPositionSignature(value: CljValue, parts: string[]): void {
       }
       break
     case 'set':
-      for (const child of value.values) collectPositionSignature(child, parts)
+      for (const child of setValues(value as CljSet)) collectPositionSignature(child, parts)
       break
     case 'record':
       for (const [key, child] of value.fields) {

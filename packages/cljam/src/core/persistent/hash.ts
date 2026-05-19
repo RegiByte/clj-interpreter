@@ -1,12 +1,16 @@
 import type {
   CljCons,
+  CljKeyword,
   CljLazySeq,
   CljList,
+  CljMap,
   CljRecord,
+  CljSet,
   CljValue,
   CljVector,
 } from '../types.ts'
 import { identityHash } from './identity-hash.ts'
+import { hamtEntries, type HamtNode } from './hamt-kernel.ts'
 
 // ─── seeds and fixed hash constants ─────────────────────────────────────────
 
@@ -162,8 +166,14 @@ export function hashCljValue(v: CljValue): number {
     case 'character':
       return mix3(v.value.charCodeAt(0) ^ CHAR_SEED)
     // Keyword and symbol must not collide for the same name string.
-    case 'keyword':
-      return mix3(hashString(v.name) ^ KEYWORD_SEED)
+    case 'keyword': {
+      // Cache on first call — keywords are immutable and reused constantly.
+      const kw = v as CljKeyword & { _hashCode?: number }
+      if (kw._hashCode !== undefined) return kw._hashCode
+      const h = mix3(hashString(v.name) ^ KEYWORD_SEED)
+      kw._hashCode = h
+      return h
+    }
     case 'symbol':
       return mix3(hashString(v.name) ^ SYMBOL_SEED) // v.meta intentionally ignored
 
@@ -178,10 +188,25 @@ export function hashCljValue(v: CljValue): number {
       return hashCljValue(realizeLazySeqLocal(v))
 
     // ── maps and sets ────────────────────────────────────────────────────────
-    case 'map':
-      return hashMapEntries(v.entries) // v.meta intentionally ignored
-    case 'set':
-      return hashSetValues(v.values)
+    case 'map': {
+      // Inline _data access like the set case — avoids the .entries getter.
+      const data = (v as CljMap)._data
+      const entries: [CljValue, CljValue][] =
+        data.kind === 'small'
+          ? data.entries
+          : hamtEntries(data.root as HamtNode<CljValue, CljValue>)
+      return hashMapEntries(entries) // v.meta intentionally ignored
+    }
+    case 'set': {
+      // hash.ts cannot import map-helpers (it would be circular), so we inline
+      // the key extraction directly from the backing CljMap's _data.
+      const data = (v as CljSet)._map._data
+      const keys: CljValue[] =
+        data.kind === 'small'
+          ? data.entries.map(([k]) => k)
+          : hamtEntries(data.root as HamtNode<CljValue, CljValue>).map(([k]) => k)
+      return hashSetValues(keys)
+    }
 
     // ── records ──────────────────────────────────────────────────────────────
     case 'record':
