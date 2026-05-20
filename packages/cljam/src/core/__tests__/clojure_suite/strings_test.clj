@@ -1,7 +1,7 @@
 ;; String operation tests written in Clojure.
 ;; Covers str, subs, clojure.string functions, and string-as-sequence.
 
-(ns cljam.suite.strings-test
+(ns clojure-suite.strings-test
   (:require [clojure.test :refer [deftest is testing are]]
             [clojure.string :as str]))
 

@@ -1,8 +1,8 @@
 ;; Collection operation tests written in Clojure.
 ;; Covers maps, vectors, sets, and lists — construction, access, update.
 
-(ns cljam.suite.collections-test
-  (:require [clojure.test :refer [deftest is testing are]]))
+(ns clojure-suite.collections-test
+  (:require [clojure.test :refer [deftest is testing are thrown?]]))
 
 ;;; ── Maps ─────────────────────────────────────────────────────────────────────
 
@@ -75,7 +75,30 @@
   (is (not (contains? {:a 1} :b)))
   (is (contains? {:a nil} :a)))
 
-;; NOTE: find is not yet implemented in cljam core.
+(deftest map-find-key-val
+  (testing "find returns a map-entry-like vector when present"
+    (let [entry (find {:a 1 :b 2} :a)]
+      (is (= [:a 1] entry))
+      (is (vector? entry))
+      (is (sequential? entry))
+      (is (= :a (first entry)))
+      (is (= 1 (second entry)))
+      (is (= :a (nth entry 0)))
+      (is (= 1 (nth entry 1)))
+      (is (= :a (key entry)))
+      (is (= 1 (val entry)))))
+  (testing "find returns nil when key is absent"
+    (is (nil? (find {:a 1} :missing))))
+  (testing "nil is accepted as an empty map"
+    (is (nil? (find nil :a))))
+  (testing "key and val reject ordinary vectors"
+    (is (thrown? :default (key [:a 1])))
+    (is (thrown? :default (val [:a 1])))))
+
+(deftest map-entry-type-distinction
+  (is (= :map-entry (type (first {:a 1}))))
+  (is (= :vector (type [:a 1])))
+  (is (= [:a 1] (first {:a 1}))))
 
 (deftest map-conj
   ;; In cljam, conj on a map accepts vector [k v] pairs.

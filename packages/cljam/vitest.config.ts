@@ -25,6 +25,7 @@ export default defineConfig({
     include: [
       '**/*.{test,spec}.{js,mjs,cjs,jsx,ts,mts,cts,tsx}',
       '**/*.{test,spec}.clj',
+      '**/*_{test,spec}.clj',
     ],
     exclude: ['**/node_modules/**', '**/dist-vite-plugin/**', '**/dist/**'],
     // browser: {

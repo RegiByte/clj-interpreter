@@ -9,7 +9,7 @@
 import { is } from '../../../assertions.ts'
 import { EvaluationError } from '../../../errors.ts'
 import { DocGroups, docMeta, v } from '../../../factories.ts'
-import { mapAssoc, mapContains, mapCount, mapEntries, mapGet, NOT_FOUND, setContains, setConj, setValues } from '../../../persistent/map-helpers.ts'
+import { mapAssoc, mapContains, mapCount, mapGet, NOT_FOUND, setContains, setConj, setValues } from '../../../persistent/map-helpers.ts'
 import { printString } from '../../../printer.ts'
 import { realizeLazySeq, toSeq } from '../../../transformations.ts'
 import {
@@ -118,10 +118,9 @@ export const seqFunctions: Record<string, CljValue> = {
       if (is.vector(collection)) {
         return v.vector(collection.value.slice(1))
       }
-      if (is.map(collection)) {
-        const entries = mapEntries(collection)
-        if (entries.length === 0) return collection
-        return v.map(entries.slice(1))
+      if (is.map(collection) || is.record(collection)) {
+        const entries = toSeq(collection)
+        return v.list(entries.slice(1))
       }
       if (is.string(collection)) {
         const chars = toSeq(collection)

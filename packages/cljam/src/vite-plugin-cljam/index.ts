@@ -7,7 +7,12 @@ import type { Plugin, ResolvedConfig, ViteDevServer } from 'vite'
 import { createSession } from '../core/session'
 import type { Session } from '../core/session'
 import { nsToPath, pathToNs, extractStringRequires } from './namespace-utils'
-import { generateModuleCode, generateDts, generateTestModuleCode, safeJsIdentifier } from './codegen'
+import {
+  generateModuleCode,
+  generateDts,
+  generateTestModuleCode,
+  safeJsIdentifier,
+} from './codegen'
 import type { CodegenContext } from './codegen'
 import { startBrowserNreplRelay } from '../nrepl/relay'
 
@@ -105,7 +110,10 @@ export function cljPlugin(options?: CljPluginOptions): Plugin {
       for (const filePath of collectCljFiles(rootPath)) {
         try {
           const source = readFileSync(filePath, 'utf-8')
-          const nsNameFromPath = pathToNs(relative(projectRoot, filePath), sourceRoots)
+          const nsNameFromPath = pathToNs(
+            relative(projectRoot, filePath),
+            sourceRoots
+          )
           const dts = generateDts(codegenCtx, nsNameFromPath, source)
           if (dts) writeFileIfChanged(filePath + '.d.ts', dts)
         } catch {
@@ -214,7 +222,9 @@ export function cljPlugin(options?: CljPluginOptions): Plugin {
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      throw new Error(`Failed to generate built-in namespace sources: ${message}`)
+      throw new Error(
+        `Failed to generate built-in namespace sources: ${message}`
+      )
     }
   }
 
@@ -229,7 +239,9 @@ export function cljPlugin(options?: CljPluginOptions): Plugin {
       const varName = `_imp_${i}`
       // Import statement uses the resolved path (absolute for local files, pkg name for packages).
       // Map key uses the original CLJ source string — this is what importModule(s) receives at runtime.
-      importLines.push(`import * as ${varName} from ${JSON.stringify(resolved)};`)
+      importLines.push(
+        `import * as ${varName} from ${JSON.stringify(resolved)};`
+      )
       mapEntries.push(`  ${JSON.stringify(original)}: ${varName},`)
     })
     return { importLines, mapEntries }
@@ -292,7 +304,9 @@ export function cljPlugin(options?: CljPluginOptions): Plugin {
           `import { createSession, printString } from ${JSON.stringify(coreIndexPath)};`,
           ...importLines,
           ...(entrypointPath
-            ? [`import __conjureFactory from ${JSON.stringify(entrypointPath)};`]
+            ? [
+                `import __conjureFactory from ${JSON.stringify(entrypointPath)};`,
+              ]
             : []),
           ``,
           `const __importMap = {`,
@@ -318,7 +332,7 @@ export function cljPlugin(options?: CljPluginOptions): Plugin {
             `    });`,
             `  }`,
             `  return _session;`,
-            `}`,
+            `}`
           )
         } else {
           // Mode 1: auto-generate session with import map wired in
@@ -331,7 +345,7 @@ export function cljPlugin(options?: CljPluginOptions): Plugin {
             `    });`,
             `  }`,
             `  return _session;`,
-            `}`,
+            `}`
           )
         }
 
@@ -369,7 +383,7 @@ export function cljPlugin(options?: CljPluginOptions): Plugin {
             `      import.meta.hot.send('conjure:load-file-result', { id, error: err instanceof Error ? err.message : String(err), ns: session.currentNs, ...(out ? { out } : {}) });`,
             `    }`,
             `  });`,
-            `}`,
+            `}`
           )
         }
 
@@ -395,7 +409,10 @@ export function cljPlugin(options?: CljPluginOptions): Plugin {
         }
         const source = await read()
         try {
-          const nsNameFromPath = pathToNs(relative(projectRoot, file), sourceRoots)
+          const nsNameFromPath = pathToNs(
+            relative(projectRoot, file),
+            sourceRoots
+          )
           await serverSession.loadFileAsync(source, nsNameFromPath)
           const dts = generateDts(codegenCtx, nsNameFromPath, source)
           writeFileIfChanged(file + '.d.ts', dts)
@@ -447,6 +464,7 @@ export function cljPlugin(options?: CljPluginOptions): Plugin {
  * })
  * ```
  */
+const knownTestExts = ['.test.clj', '.spec.clj', '_test.clj', '_spec.clj']
 export function cljTestPlugin(options?: CljPluginOptions): Plugin {
   const sourceRoots = options?.sourceRoots ?? ['src']
   let projectRoot = ''
@@ -482,14 +500,22 @@ export function cljTestPlugin(options?: CljPluginOptions): Plugin {
     },
 
     load(id: string) {
-      if ((id.endsWith('.test.clj') || id.endsWith('.spec.clj')) && !id.includes('?')) {
+      if (!knownTestExts.some((ext) => id.endsWith(ext))) return undefined
+      if (!id.includes('?')) {
         const source = readFileSync(id, 'utf-8')
         const nsNameFromPath = pathToNs(relative(projectRoot, id), sourceRoots)
-        return generateTestModuleCode(codegenCtx, nsNameFromPath, source, { entrypointPath })
+        return generateTestModuleCode(codegenCtx, nsNameFromPath, source, {
+          entrypointPath,
+        })
       }
     },
   } satisfies Plugin
 }
 
-export { safeJsIdentifier, generateModuleCode, generateDts, generateTestModuleCode }
+export {
+  safeJsIdentifier,
+  generateModuleCode,
+  generateDts,
+  generateTestModuleCode,
+}
 export type { CljPluginOptions, CodegenContext }

@@ -60,8 +60,8 @@ describe('rest', () => {
   it.each([
     ['(rest (quote (1 2 3)))', v.list([v.number(2), v.number(3)])],
     ['(rest [1 2 3])', v.vector([v.number(2), v.number(3)])],
-    ['(rest {"a" 1 "b" 2})', v.map([[v.string('b'), v.number(2)]])],
-    ['(rest {})', v.map([])],
+    ['(rest {"a" 1 "b" 2})', v.list([v.mapEntry(v.string('b'), v.number(2))])],
+    ['(rest {})', v.list([])],
     ['(rest [])', v.vector([])],
     ["(rest '())", v.list([])],
     ['(rest "hello")', v.list([v.string('e'), v.string('l'), v.string('l'), v.string('o')])],

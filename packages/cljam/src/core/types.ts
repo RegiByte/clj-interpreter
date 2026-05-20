@@ -6,7 +6,14 @@ export type CljKeyword = { kind: 'keyword'; name: string }
 export type CljNil = { kind: 'nil'; value: null }
 export type CljSymbol = { kind: 'symbol'; name: string; meta?: CljMap }
 export type CljList = { kind: 'list'; value: CljValue[]; meta?: CljMap }
-export type CljVector = { kind: 'vector'; value: CljValue[]; meta?: CljMap }
+export type CljVector = {
+  kind: 'vector'
+  value: CljValue[]
+  meta?: CljMap
+  /** Internal marker for vector-like map entries. Not a public CljValue kind. */
+  __cljamMapEntry?: true
+}
+export type CljMapEntry = CljVector & { __cljamMapEntry: true }
 import type { HamtNode } from './persistent/hamt-kernel.ts'
 
 // ─── CljMap internal representation ─────────────────────────────────────────

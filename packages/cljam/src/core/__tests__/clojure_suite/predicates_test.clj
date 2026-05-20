@@ -1,7 +1,7 @@
 ;; Type predicate tests written in Clojure.
 ;; Mirrors jank suite *_qmark.cljc files for the predicates we support.
 
-(ns cljam.suite.predicates-test
+(ns clojure-suite.predicates-test
   (:require [clojure.test :refer [deftest is testing are]]))
 
 (deftest nil?-predicate

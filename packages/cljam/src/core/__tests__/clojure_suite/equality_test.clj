@@ -2,7 +2,7 @@
 ;; Mirrors the spirit of the jank test suite eq.cljc, stripped of
 ;; multi-platform reader conditionals and JVM-specific type nuances.
 
-(ns cljam.suite.equality-test
+(ns clojure-suite.equality-test
   (:require [clojure.test :refer [deftest is testing are]]))
 
 (deftest scalars-are-equal

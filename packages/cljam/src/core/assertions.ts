@@ -11,6 +11,7 @@ import {
   type CljList,
   type CljMacro,
   type CljMap,
+  type CljMapEntry,
   type CljMultiMethod,
   type CljNamespace,
   type CljNativeFunction,
@@ -54,6 +55,8 @@ export const isSymbol = (value: CljValue): value is CljSymbol =>
   value.kind === 'symbol'
 export const isVector = (value: CljValue): value is CljVector =>
   value.kind === 'vector'
+export const isMapEntry = (value: CljValue): value is CljMapEntry =>
+  isVector(value) && value.__cljamMapEntry === true
 export const isList = (value: CljValue): value is CljList =>
   value.kind === 'list'
 export const isFunction = (value: CljValue): value is CljFunction =>
@@ -160,6 +163,7 @@ export const is = {
   specialForm: isSpecialForm,
   symbol: isSymbol,
   vector: isVector,
+  mapEntry: isMapEntry,
   list: isList,
   function: isFunction,
   nativeFunction: isNativeFunction,

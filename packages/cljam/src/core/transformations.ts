@@ -184,10 +184,10 @@ export const toSeq = (collection: CljValue): CljValue[] => {
     return collection.value
   }
   if (is.map(collection)) {
-    return collection.entries.map(([key, value]) => v.vector([key, value]))
+    return collection.entries.map(([key, value]) => v.mapEntry(key, value))
   }
   if (is.record(collection)) {
-    return collection.fields.map(([key, value]) => v.vector([key, value]))
+    return collection.fields.map(([key, value]) => v.mapEntry(key, value))
   }
   if (is.set(collection)) {
     return setValues(collection)

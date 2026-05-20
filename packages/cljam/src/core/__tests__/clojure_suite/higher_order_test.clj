@@ -5,9 +5,8 @@
 ;;   - ((comp) x y z) returns x (first arg). JVM (comp) returns identity which is strict 1-arity.
 ;;   - cljam arity checking is lenient for native fns — ((partial inc 1) 2) returns 2, not throw.
 ;;   - some-fn and every-pred are NOT implemented (tracked as known gap).
-;;   - Error testing uses try/catch — clojure.test's thrown? is not in cljam.
 
-(ns cljam.suite.higher-order-test
+(ns clojure-suite.higher-order-test
   (:require [clojure.test :refer [deftest is testing]]))
 
 ;;; ── comp ─────────────────────────────────────────────────────────────────────

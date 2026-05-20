@@ -1,7 +1,7 @@
 ;; Sequence operation tests written in Clojure.
 ;; Covers map, filter, reduce, apply and lazy sequence semantics.
 
-(ns cljam.suite.sequences-test
+(ns clojure-suite.sequences-test
   (:require [clojure.test :refer [deftest is testing are]]))
 
 ;;; ── Core sequence access ──────────────────────────────────────────────────────
@@ -38,9 +38,8 @@
   (is (= [2 4 6] (vec (map #(* 2 %) [1 2 3]))))
   (is (= [] (vec (map inc []))))
   (is (= [5 7 9] (vec (map + [1 2 3] [4 5 6]))))
-  ;; NOTE: key/val (map entry accessors) are not yet in cljam core.
-  ;; Use keys/vals for collections: (set (keys {:a 1 :b 2})) works.
-  (is (= #{:a :b :c} (set (keys {:a 1 :b 2 :c 3})))))
+  (is (= #{:a :b :c} (set (map key {:a 1 :b 2 :c 3}))))
+  (is (= #{1 2 3} (set (map val {:a 1 :b 2 :c 3})))))
 
 (deftest filter-removes
   (is (= [2 4 6] (vec (filter even? [1 2 3 4 5 6]))))

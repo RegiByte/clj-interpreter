@@ -24,6 +24,7 @@ import type {
  */
 export function typeTagOf(value: CljValue): string {
   if (is.record(value)) return `${value.ns}/${value.recordType}`
+  if (is.mapEntry(value)) return 'map-entry'
   return value.kind
 }
 

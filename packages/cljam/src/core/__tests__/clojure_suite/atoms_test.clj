@@ -9,8 +9,8 @@
 ;;   - with-meta throws on atoms (not supported).
 ;;   - thrown? IS implemented in cljam (catch type is a keyword, e.g. :default).
 
-(ns cljam.suite.atoms-test
-  (:require [clojure.test :refer [deftest is testing]]))
+(ns clojure-suite.atoms-test
+  (:require [clojure.test :refer [deftest is testing thrown?]]))
 
 ;;; ── atom basics ──────────────────────────────────────────────────────────────
 
@@ -241,5 +241,5 @@
     ;; Volatiles have no watch protocol — add-watch should throw or not fire
     (let [v     (volatile! 0)
           calls (atom 0)]
-      (is (= :threw (try (add-watch v :w (fn [_ _ _ _] (swap! calls inc)))
-                         (catch :default _ :threw)))))))
+      (is (thrown? :default
+            (add-watch v :w (fn [_ _ _ _] (swap! calls inc))))))))

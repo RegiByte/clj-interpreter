@@ -239,6 +239,7 @@ export const utilFunctions: Record<string, CljValue> = {
       if (is.record(x)) {
         return v.keyword(`:${x.ns}/${x.recordType}`)
       }
+      if (is.mapEntry(x)) return v.keyword(':map-entry')
       const kindToKeyword: Record<string, string> = {
         number: ':number',
         string: ':string',

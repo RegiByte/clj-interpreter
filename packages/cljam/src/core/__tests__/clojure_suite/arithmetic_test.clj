@@ -7,10 +7,9 @@
 ;;   - BigInt (1N) and BigDecimal (1.0M) types do not exist
 ;;   - ##Inf / ##NaN reader literals are not supported
 ;;   - (+ 1 nil) throws, matching JVM behavior (unlike ClojureScript)
-;;   - Error testing uses try/catch — clojure.test's thrown? is not in cljam
 
-(ns cljam.suite.arithmetic-test
-  (:require [clojure.test :refer [deftest is testing are]]))
+(ns clojure-suite.arithmetic-test
+  (:require [clojure.test :refer [deftest is testing are thrown?]]))
 
 ;;; ── Addition ─────────────────────────────────────────────────────────────────
 
@@ -47,14 +46,14 @@
       0   -1))
 
   (testing "throws on nil"
-    (is (= :threw (try (+ 1 nil) (catch :default _ :threw))))
-    (is (= :threw (try (+ nil 1) (catch :default _ :threw))))))
+    (is (thrown? :default (+ 1 nil)))
+    (is (thrown? :default (+ nil 1)))))
 
 ;;; ── Subtraction ──────────────────────────────────────────────────────────────
 
 (deftest subtraction
   (testing "zero-arg throws"
-    (is (= :threw (try (-) (catch :default _ :threw)))))
+    (is (thrown? :default (-))))
 
   (testing "single arg negates"
     (is (= -3    (- 3)))
@@ -119,9 +118,9 @@
     (is (= 10.0 (/ 100 2 5))))
 
   (testing "division by zero throws"
-    (is (= :threw (try (/ 1 0)   (catch :default _ :threw))))
-    (is (= :threw (try (/ 0)     (catch :default _ :threw))))
-    (is (= :threw (try (/ 1 nil) (catch :default _ :threw))))))
+    (is (thrown? :default (/ 1 0)))
+    (is (thrown? :default (/ 0)))
+    (is (thrown? :default (/ 1 nil)))))
 
 ;;; ── mod ──────────────────────────────────────────────────────────────────────
 
@@ -142,7 +141,7 @@
     (is (= -2.0 (mod 10.0 -3.0))))
 
   (testing "division by zero throws"
-    (is (= :threw (try (mod 10 0) (catch :default _ :threw))))))
+    (is (thrown? :default (mod 10 0)))))
 
 ;;; ── rem ──────────────────────────────────────────────────────────────────────
 
@@ -161,7 +160,7 @@
     (is (= -1.0 (rem -10.0 3.0))))
 
   (testing "division by zero throws"
-    (is (= :threw (try (rem 10 0) (catch :default _ :threw))))))
+    (is (thrown? :default (rem 10 0)))))
 
 ;;; ── quot ─────────────────────────────────────────────────────────────────────
 
@@ -182,7 +181,7 @@
     (is (= -3.0 (quot -10.0 3.0))))
 
   (testing "division by zero throws"
-    (is (= :threw (try (quot 10 0) (catch :default _ :threw))))))
+    (is (thrown? :default (quot 10 0)))))
 
 ;;; ── mod vs rem semantic distinction ─────────────────────────────────────────
 
@@ -243,8 +242,8 @@
     (is (= 1.0 (min 1.0 2.0))))
 
   (testing "throws on nil"
-    (is (= :threw (try (max 1 nil) (catch :default _ :threw))))
-    (is (= :threw (try (min 1 nil) (catch :default _ :threw))))))
+    (is (thrown? :default (max 1 nil)))
+    (is (thrown? :default (min 1 nil)))))
 
   ;; NOTE: NaN propagation in max/min works correctly ((max NaN 1) → NaN),
   ;; but ##NaN reader literals and js/Math host bindings are not available

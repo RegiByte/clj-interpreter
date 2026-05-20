@@ -14,6 +14,7 @@ import type {
   CljList,
   CljMacro,
   CljMap,
+  CljMapEntry,
   CljMultiMethod,
   CljNamespace,
   CljNativeFunction,
@@ -67,6 +68,11 @@ export const cljList = <T extends CljValue[]>(value: T) =>
 export const cljSet = (values: CljValue[]): CljSet => makeCljSet(values)
 export const cljVector = <T extends CljValue[]>(value: T) =>
   ({ kind: 'vector', value }) as const satisfies CljVector
+export const cljMapEntry = (key: CljValue, value: CljValue): CljMapEntry => ({
+  kind: 'vector',
+  value: [key, value],
+  __cljamMapEntry: true,
+})
 
 // ─── CljMap factory (implementation lives in persistent/map-helpers.ts) ───────
 
@@ -389,6 +395,7 @@ export const v = {
   // collections
   list: cljList,
   vector: cljVector,
+  mapEntry: cljMapEntry,
   map: cljMap,
   set: cljSet,
   cons: cljCons,

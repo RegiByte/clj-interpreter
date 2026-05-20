@@ -1,5 +1,5 @@
-// Associative and set operations: hash-map, assoc, dissoc, keys, vals, zipmap,
-// hash-set, set, set?, disj
+// Associative and set operations: hash-map, assoc, dissoc, find, key, val,
+// keys, vals, zipmap, hash-set, set, set?, disj
 //
 // assoc and dissoc handle both maps and vectors (by numeric index). They live
 // here because their primary semantic is associative (key→value update/remove);
@@ -250,6 +250,66 @@ export const mapsSetsFunctions: Record<string, CljValue> = {
       ...docMeta({
         doc: 'Returns a new map with the keys and values of the given collections.',
         arglists: [['ks', 'vs']],
+        docGroup: DocGroups.maps,
+      }),
+    ]),
+
+  find: v
+    .nativeFn('find', function findImpl(m: CljValue, key: CljValue) {
+      if (m === undefined || is.nil(m)) return v.nil()
+      if (!is.map(m) && !is.record(m)) {
+        throw EvaluationError.atArg(
+          `find expects a map, record, or nil${m !== undefined ? `, got ${printString(m)}` : ''}`,
+          { m },
+          0
+        )
+      }
+      const entries = is.record(m) ? m.fields : mapEntries(m)
+      const found = entries.find(([entryKey]) => is.equal(entryKey, key))
+      return found === undefined ? v.nil() : v.mapEntry(found[0], found[1])
+    })
+    .withMeta([
+      ...docMeta({
+        doc: 'Returns the map entry for key in m, or nil if key is not present.',
+        arglists: [['m', 'key']],
+        docGroup: DocGroups.maps,
+      }),
+    ]),
+
+  key: v
+    .nativeFn('key', function keyImpl(entry: CljValue) {
+      if (entry === undefined || !is.mapEntry(entry)) {
+        throw EvaluationError.atArg(
+          `key expects a map entry${entry !== undefined ? `, got ${printString(entry)}` : ''}`,
+          { entry },
+          0
+        )
+      }
+      return entry.value[0]
+    })
+    .withMeta([
+      ...docMeta({
+        doc: 'Returns the key from a map entry.',
+        arglists: [['entry']],
+        docGroup: DocGroups.maps,
+      }),
+    ]),
+
+  val: v
+    .nativeFn('val', function valImpl(entry: CljValue) {
+      if (entry === undefined || !is.mapEntry(entry)) {
+        throw EvaluationError.atArg(
+          `val expects a map entry${entry !== undefined ? `, got ${printString(entry)}` : ''}`,
+          { entry },
+          0
+        )
+      }
+      return entry.value[1]
+    })
+    .withMeta([
+      ...docMeta({
+        doc: 'Returns the value from a map entry.',
+        arglists: [['entry']],
         docGroup: DocGroups.maps,
       }),
     ]),
