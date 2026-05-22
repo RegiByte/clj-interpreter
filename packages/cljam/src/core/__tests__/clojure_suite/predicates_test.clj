@@ -33,9 +33,38 @@
   (is (int? -5))
   (is (not (int? 3.14)))
   (is (not (int? nil))))
-  ;; NOTE: integer? is not yet in cljam core.
 
-;; NOTE: float? is not yet in cljam core.
+(deftest integer?-predicate
+  (are [expected x] (= expected (integer? x))
+    true 0
+    true 42
+    true -5
+    false 3.14
+    false -0.25
+    false nil
+    false true
+    false "42"
+    false :42
+    false [1 2]
+    false {:a 1}
+    false #{1 2}
+    false '(1 2)))
+
+(deftest float?-predicate
+  (are [expected x] (= expected (float? x))
+    true 3.14
+    true -0.25
+    false 0
+    false 42
+    false -5
+    false nil
+    false true
+    false "3.14"
+    false :3.14
+    false [1 2]
+    false {:a 1}
+    false #{1 2}
+    false '(1 2)))
 
 (deftest pos?-neg?-zero?
   (is (pos? 1))
@@ -124,7 +153,22 @@
   (is (not (fn? 42)))
   (is (not (fn? :not-a-fn))))
 
-;; NOTE: ifn? is not yet in cljam core.
+(defrecord PredicateRecord [x])
+
+(deftest ifn?-predicate
+  (is (ifn? identity))
+  (is (ifn? (fn [] nil)))
+  (is (ifn? #(+ 1 %)))
+  (is (ifn? :keyword))
+  (is (ifn? {:a 1}))
+  (is (ifn? #{:a}))
+  (is (ifn? [:a :b]))
+  (is (ifn? #'ifn?))
+  (is (ifn? (->PredicateRecord 1)))
+  (is (not (ifn? nil)))
+  (is (not (ifn? 42)))
+  (is (not (ifn? "string")))
+  (is (not (ifn? 'symbol))))
 
 (deftest map?-predicate
   (is (map? {}))
@@ -151,7 +195,19 @@
   (is (not (list? [])))
   (is (not (list? nil))))
 
-;; NOTE: seq? is not yet in cljam core.
+(deftest seq?-predicate
+  (is (seq? '()))
+  (is (seq? '(1 2 3)))
+  (is (seq? (seq [1 2 3])))
+  (is (seq? (lazy-seq (list 1 2 3))))
+  (is (seq? (cons 1 (lazy-seq nil))))
+  (is (not (seq? [1 2 3])))
+  (is (not (seq? {:a 1})))
+  (is (not (seq? #{:a})))
+  (is (not (seq? "string")))
+  (is (not (seq? nil)))
+  (is (not (seq? 42)))
+  (is (not (seq? :keyword))))
 
 (deftest coll?-predicate
   (is (coll? []))

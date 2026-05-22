@@ -58,8 +58,13 @@
   (is (= [1 2 2 3 3 4] (vec (mapcat #(list % (inc %)) [1 2 3]))))
   (is (= [:a :b :c] (vec (mapcat identity [[:a] [:b :c]])))))
 
-;; NOTE: map-indexed has a known issue with lazy-seq + letfn upvalue capture
-;; in the current VM. See NEXT_STEPS for tracking.
+(deftest map-indexed-preserves-letfn-lazy-captures
+  ;; Regression coverage for a former VM issue where map-indexed's letfn helper
+  ;; did not survive the lazy-seq boundary with its captured locals intact.
+  (is (= [[0 :a] [1 :b] [2 :c]]
+         (vec (map-indexed (fn [i x] [i x]) [:a :b :c]))))
+  (is (= [[0 10] [1 11] [2 12] [3 13]]
+         (vec (take 4 (map-indexed vector (iterate inc 10)))))))
 
 ;;; ── Reduction ────────────────────────────────────────────────────────────────
 

@@ -5,7 +5,52 @@ import { EvaluationError } from '../../../errors'
 import { DocGroups, docMeta, v } from '../../../factories'
 import { printString } from '../../../printer'
 import { toSeq } from '../../../transformations'
-import type { CljValue, Env, EvaluationContext } from '../../../types'
+import type {
+  CljNumber,
+  CljValue,
+  Env,
+  EvaluationContext,
+} from '../../../types'
+
+function compareKeyValues(x: CljValue, y: CljValue): number {
+  if (is.number(x) && is.number(y)) {
+    const xv = (x as CljNumber).value
+    const yv = (y as CljNumber).value
+    return xv < yv ? -1 : xv > yv ? 1 : 0
+  }
+  throw new EvaluationError(
+    `key values are not comparable: ${printString(x)} and ${printString(y)}`,
+    { x, y }
+  )
+}
+
+function predicateArgOrder(
+  predCount: number,
+  argCount: number,
+  restByArgument: boolean
+): Array<[predIdx: number, argIdx: number]> {
+  const order: Array<[predIdx: number, argIdx: number]> = []
+  const leadingCount = Math.min(argCount, 3)
+  for (let predIdx = 0; predIdx < predCount; predIdx++) {
+    for (let argIdx = 0; argIdx < leadingCount; argIdx++) {
+      order.push([predIdx, argIdx])
+    }
+  }
+  if (restByArgument) {
+    for (let argIdx = 3; argIdx < argCount; argIdx++) {
+      for (let predIdx = 0; predIdx < predCount; predIdx++) {
+        order.push([predIdx, argIdx])
+      }
+    }
+  } else {
+    for (let predIdx = 0; predIdx < predCount; predIdx++) {
+      for (let argIdx = 3; argIdx < argCount; argIdx++) {
+        order.push([predIdx, argIdx])
+      }
+    }
+  }
+  return order
+}
 
 export const hofFunctions: Record<string, CljValue> = {
   reduce: v
@@ -205,6 +250,188 @@ export const hofFunctions: Record<string, CljValue> = {
       ...docMeta({
         doc: 'Returns the composition of fns, applied right-to-left. (comp f g) is equivalent to (fn [x] (f (g x))). Accepts any callable: functions, keywords, and collections.',
         arglists: [[], ['f'], ['f', 'g'], ['f', 'g', '&', 'fns']],
+        docGroup: DocGroups.higher_order,
+      }),
+    ]),
+
+  'some-fn': v
+    .nativeFn('some-fn', (...preds: CljValue[]) => {
+      if (preds.length === 0) {
+        throw new EvaluationError('some-fn expects at least one predicate', {
+          preds,
+        })
+      }
+      const capturedPreds = preds
+      return v.nativeFnCtx(
+        'some-fn',
+        (ctx: EvaluationContext, callEnv: Env, ...args: CljValue[]) => {
+          if (args.length === 0) return v.nil()
+          const restByArgument =
+            capturedPreds.length > 1 && capturedPreds.length <= 3
+          for (const [predIdx, argIdx] of predicateArgOrder(
+            capturedPreds.length,
+            args.length,
+            restByArgument
+          )) {
+            const result = ctx.applyCallable(
+              capturedPreds[predIdx],
+              [args[argIdx]],
+              callEnv
+            )
+            if (is.truthy(result)) return result
+          }
+          return v.boolean(false)
+        }
+      )
+    })
+    .withMeta([
+      ...docMeta({
+        doc: 'Returns a function that returns the first truthy result from applying any predicate to any argument, or false.',
+        arglists: [
+          ['p'],
+          ['p1', 'p2'],
+          ['p1', 'p2', 'p3'],
+          ['p1', 'p2', 'p3', '&', 'ps'],
+        ],
+        docGroup: DocGroups.higher_order,
+      }),
+    ]),
+
+  'every-pred': v
+    .nativeFn('every-pred', (...preds: CljValue[]) => {
+      if (preds.length === 0) {
+        throw new EvaluationError('every-pred expects at least one predicate', {
+          preds,
+        })
+      }
+      const capturedPreds = preds
+      return v.nativeFnCtx(
+        'every-pred',
+        (ctx: EvaluationContext, callEnv: Env, ...args: CljValue[]) => {
+          if (args.length === 0) return v.boolean(true)
+          const restByArgument =
+            capturedPreds.length > 1 && capturedPreds.length <= 3
+          for (const [predIdx, argIdx] of predicateArgOrder(
+            capturedPreds.length,
+            args.length,
+            restByArgument
+          )) {
+            const result = ctx.applyCallable(
+              capturedPreds[predIdx],
+              [args[argIdx]],
+              callEnv
+            )
+            if (is.falsy(result)) return v.boolean(false)
+          }
+          return v.boolean(true)
+        }
+      )
+    })
+    .withMeta([
+      ...docMeta({
+        doc: 'Returns a function that returns true when every predicate is truthy for every argument, otherwise false.',
+        arglists: [
+          ['p'],
+          ['p1', 'p2'],
+          ['p1', 'p2', 'p3'],
+          ['p1', 'p2', 'p3', '&', 'ps'],
+        ],
+        docGroup: DocGroups.higher_order,
+      }),
+    ]),
+
+  'max-key': v
+    .nativeFnCtx(
+      'max-key',
+      (
+        ctx: EvaluationContext,
+        callEnv: Env,
+        k: CljValue | undefined,
+        x: CljValue | undefined,
+        ...rest: CljValue[]
+      ) => {
+        if (k === undefined || x === undefined) {
+          throw new EvaluationError('max-key expects at least 2 arguments', {
+            k,
+            x,
+          })
+        }
+        if (rest.length === 0) return x
+        if (!is.callable(k)) {
+          throw EvaluationError.atArg(
+            `max-key expects a callable as first argument, got ${printString(k)}`,
+            { k },
+            0
+          )
+        }
+        let best = x
+        let bestKey = ctx.applyCallable(k, [x], callEnv)
+        for (const candidate of rest) {
+          const candidateKey = ctx.applyCallable(k, [candidate], callEnv)
+          if (compareKeyValues(candidateKey, bestKey) >= 0) {
+            best = candidate
+            bestKey = candidateKey
+          }
+        }
+        return best
+      }
+    )
+    .withMeta([
+      ...docMeta({
+        doc: 'Returns the item whose key value is greatest. On ties, returns the later item.',
+        arglists: [
+          ['k', 'x'],
+          ['k', 'x', 'y'],
+          ['k', 'x', 'y', '&', 'more'],
+        ],
+        docGroup: DocGroups.higher_order,
+      }),
+    ]),
+
+  'min-key': v
+    .nativeFnCtx(
+      'min-key',
+      (
+        ctx: EvaluationContext,
+        callEnv: Env,
+        k: CljValue | undefined,
+        x: CljValue | undefined,
+        ...rest: CljValue[]
+      ) => {
+        if (k === undefined || x === undefined) {
+          throw new EvaluationError('min-key expects at least 2 arguments', {
+            k,
+            x,
+          })
+        }
+        if (rest.length === 0) return x
+        if (!is.callable(k)) {
+          throw EvaluationError.atArg(
+            `min-key expects a callable as first argument, got ${printString(k)}`,
+            { k },
+            0
+          )
+        }
+        let best = x
+        let bestKey = ctx.applyCallable(k, [x], callEnv)
+        for (const candidate of rest) {
+          const candidateKey = ctx.applyCallable(k, [candidate], callEnv)
+          if (compareKeyValues(candidateKey, bestKey) <= 0) {
+            best = candidate
+            bestKey = candidateKey
+          }
+        }
+        return best
+      }
+    )
+    .withMeta([
+      ...docMeta({
+        doc: 'Returns the item whose key value is least. On ties, returns the later item.',
+        arglists: [
+          ['k', 'x'],
+          ['k', 'x', 'y'],
+          ['k', 'x', 'y', '&', 'more'],
+        ],
         docGroup: DocGroups.higher_order,
       }),
     ]),

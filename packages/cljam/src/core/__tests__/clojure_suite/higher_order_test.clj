@@ -4,10 +4,9 @@
 ;; cljam differences from JVM Clojure noted inline:
 ;;   - ((comp) x y z) returns x (first arg). JVM (comp) returns identity which is strict 1-arity.
 ;;   - cljam arity checking is lenient for native fns — ((partial inc 1) 2) returns 2, not throw.
-;;   - some-fn and every-pred are NOT implemented (tracked as known gap).
 
 (ns clojure-suite.higher-order-test
-  (:require [clojure.test :refer [deftest is testing]]))
+  (:require [clojure.test :refer [deftest is testing thrown?]]))
 
 ;;; ── comp ─────────────────────────────────────────────────────────────────────
 
@@ -40,6 +39,78 @@
 
   (testing "comp chains keyword and fn"
     (is (= 43 ((comp inc :count) {:count 42})))))
+
+;;; ── some-fn / every-pred ────────────────────────────────────────────────────
+
+(deftest some-fn-basic
+  (testing "some-fn is a fn factory"
+    (is (fn? some-fn))
+    (is (fn? (some-fn even?))))
+
+  (testing "returns the first truthy predicate result"
+    (is (= nil ((some-fn even?))))
+    (is (= false ((some-fn even?) 1)))
+    (is (= true ((some-fn even?) 1 2)))
+    (is (= 2 ((some-fn :a :b) {:a nil :b 2})))
+    (is (= 3 ((some-fn #{1 2} #{3 4}) 5 3 7))))
+
+  (testing "short-circuits predicates and arguments"
+    (let [calls (atom [])]
+      (is (= :hit
+             ((some-fn (fn [x] (swap! calls conj [:p1 x]) (when (= x 2) :hit))
+                       (fn [x] (swap! calls conj [:p2 x]) false))
+              1 2 3)))
+      (is (= [[:p1 1] [:p1 2]] @calls))))
+
+  (testing "bad predicate values fail when the returned fn is invoked"
+    (is (fn? (some-fn 42)))
+    (is (thrown? :default ((some-fn 42) nil)))))
+
+(deftest every-pred-basic
+  (testing "every-pred is a fn factory"
+    (is (fn? every-pred))
+    (is (fn? (every-pred even?))))
+
+  (testing "returns true only when every predicate accepts every argument"
+    (is (= true ((every-pred even?) 2 4 6)))
+    (is (= false ((every-pred even?) 2 3 4)))
+    (is (= true ((every-pred pos? integer?) 1 2 3)))
+    (is (= false ((every-pred :a :b) {:a true})))
+    (is (= true ((every-pred :a :b) {:a true :b 1}))))
+
+  (testing "zero-arg result function returns true"
+    (is (= true ((every-pred even?)))))
+
+  (testing "short-circuits on first falsy predicate result"
+    (let [calls (atom [])]
+      (is (= false
+             ((every-pred (fn [x] (swap! calls conj [:p1 x]) (not= x 2))
+                          (fn [x] (swap! calls conj [:p2 x]) true))
+              1 2 3)))
+      (is (= [[:p1 1] [:p1 2]] @calls))))
+
+  (testing "bad predicate values fail when the returned fn is invoked"
+    (is (fn? (every-pred 42)))
+    (is (thrown? :default ((every-pred 42) nil)))))
+
+(deftest max-key-min-key-basic
+  (testing "single item returns the original item without invoking k"
+    (is (= 1 (max-key nil 1)))
+    (is (= 1 (min-key nil 1))))
+
+  (testing "selects by computed key"
+    (is (= -3 (max-key #(* % %) -3 -1 2)))
+    (is (= -1 (min-key #(* % %) -3 -1 2)))
+    (is (= "ccc" (max-key count "a" "bb" "ccc")))
+    (is (= "a" (min-key count "a" "bb" "ccc"))))
+
+  (testing "ties return the later item"
+    (is (= "bb" (max-key count "aa" "bb")))
+    (is (= :c (min-key (constantly 5) :a :b :c))))
+
+  (testing "key values must be numeric for cljam's comparison predicates"
+    (is (thrown? :default (max-key identity "x" "y")))
+    (is (thrown? :default (min-key identity :a :b)))))
 
 (deftest comp-multi-arg-result
   (testing "result fn can accept multiple args when first fn is variadic"
