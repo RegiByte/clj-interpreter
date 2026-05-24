@@ -1778,6 +1778,8 @@
                    pmap
                    (fn [bvec b v]
                      (let* [gmap     (gensym "map__")
+                            graw     (gensym "raw__")
+                            source   (if (symbol? v) v graw)
                             defaults (:or b)
                             ;; Expand :keys/:strs/:syms shorthands into direct
                             ;; {sym lookup-key} entries before the main loop.
@@ -1819,14 +1821,16 @@
                        ;; be turned into a map before we can do key lookups.
                        ;; Non-map, non-nil, non-sequential values throw a clear
                        ;; error rather than leaking (apply hash-map ...) internals.
-                       (loop [ret     (-> bvec
+                       (loop [ret     (-> (if (symbol? v)
+                                             bvec
+                                             (conj bvec graw v))
                                           (conj gmap)
-                                          (conj (list 'if (list 'map? v) v
-                                                      (list 'if (list 'nil? v) (hash-map)
-                                                            (list 'if (list 'sequential? v)
-                                                                  (list 'apply 'hash-map v)
+                                          (conj (list 'if (list 'map? source) source
+                                                      (list 'if (list 'nil? source) (hash-map)
+                                                            (list 'if (list 'sequential? source)
+                                                                  (list 'apply 'hash-map source)
                                                                   (list 'throw (list 'ex-info
-                                                                                     (list 'str "Cannot destructure " (list 'pr-str v) " as a map")
+                                                                                     (list 'str "Cannot destructure " (list 'pr-str source) " as a map")
                                                                                      (hash-map)))))))
                                           ((fn [r]
                                              (if (:as b)

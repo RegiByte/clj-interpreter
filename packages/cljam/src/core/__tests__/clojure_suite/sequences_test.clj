@@ -2,7 +2,12 @@
 ;; Covers map, filter, reduce, apply and lazy sequence semantics.
 
 (ns clojure-suite.sequences-test
-  (:require [clojure.test :refer [deftest is testing are]]))
+  (:require [clojure.test :refer [deftest is testing are thrown?]]))
+
+(defn lazy-range-from
+  [n]
+  (lazy-seq
+    (cons n (lazy-range-from (inc n)))))
 
 ;;; ── Core sequence access ──────────────────────────────────────────────────────
 
@@ -148,6 +153,95 @@
     (is (= 0 @realized))
     (first xs)
     (is (pos? @realized))))
+
+(deftest lazy-seq-realization-boundaries
+  (let [xs (lazy-seq (cons 1 (lazy-seq (cons 2 nil))))]
+    (is (lazy-seq? xs))
+    (is (not (realized? xs)))
+    (is (= 1 (first xs)))
+    (is (realized? xs))
+    (let [tail (rest xs)]
+      (is (lazy-seq? tail))
+      (is (not (realized? tail)))
+      (is (= 2 (first tail)))
+      (is (realized? tail)))))
+
+(deftest lazy-seq-realizes-body-once
+  (let [hits (atom [])
+        xs (lazy-seq
+             (swap! hits conj :realized)
+             [1 2 3])]
+    (is (= [] @hits))
+    (is (= 1 (first xs)))
+    (is (= [:realized] @hits))
+    (is (= [1 2 3] (vec xs)))
+    (is (= [:realized] @hits))))
+
+(deftest lazy-seq-oddball-realized-values
+  (is (nil? (first (lazy-seq nil))))
+  (is (= '() (rest (lazy-seq nil))))
+  (is (nil? (next (lazy-seq nil))))
+  (is (nil? (first (lazy-seq '()))))
+  (is (= '() (rest (lazy-seq '()))))
+  (is (nil? (next (lazy-seq '()))))
+  (let [xs (lazy-seq
+             (lazy-seq
+               (lazy-seq
+                 (cons 1
+                       (lazy-seq
+                         (lazy-seq
+                           (cons 2
+                                 (lazy-seq
+                                   (lazy-seq
+                                     (cons 3 nil))))))))))]
+    (is (= [1 2 3] (vec xs)))))
+
+(deftest lazy-seq-invalid-realized-value-throws
+  (is (thrown? js/Error (first (lazy-seq 1)))))
+
+(deftest bounded-consumers-do-not-over-realize
+  (let [seen (atom [])
+        xs (map (fn [x]
+                  (swap! seen conj x)
+                  x)
+                (lazy-range-from 0))]
+    (is (= [] @seen))
+    (is (= [0 1 2] (vec (take 3 xs))))
+    (is (= [0 1 2] @seen))
+    (is (= 3 (first (drop 3 xs))))
+    (is (= [0 1 2 3] @seen))))
+
+(deftest take-zero-does-not-realize-source
+  (let [seen (atom [])
+        xs (map (fn [x]
+                  (swap! seen conj x)
+                  x)
+                (lazy-range-from 0))]
+    (is (= [] (vec (take 0 xs))))
+    (is (= [] @seen))))
+
+(deftest filter-and-keep-realize-only-needed-prefix
+  (let [filter-seen (atom [])
+        evens (filter (fn [x]
+                        (swap! filter-seen conj x)
+                        (even? x))
+                      (lazy-range-from 0))]
+    (is (= [0 2 4] (vec (take 3 evens))))
+    (is (= [0 1 2 3 4] @filter-seen)))
+  (let [keep-seen (atom [])
+        kept (keep (fn [x]
+                     (swap! keep-seen conj x)
+                     (when (even? x) (* x 10)))
+                   (lazy-range-from 0))]
+    (is (= [0 20 40] (vec (take 3 kept))))
+    (is (= [0 1 2 3 4] @keep-seen))))
+
+(deftest nth-over-infinite-lazy-sequences
+  (is (= 5 (nth (iterate inc 0) 5)))
+  (is (= 100 (nth (range) 100)))
+  (is (= 4 (nth (map inc (range)) 3)))
+  (is (= :not-found (nth (take 3 (range)) 10 :not-found)))
+  (is (thrown? js/Error (nth (take 3 (range)) 10))))
 
 ;;; ── Aggregation ──────────────────────────────────────────────────────────────
 
