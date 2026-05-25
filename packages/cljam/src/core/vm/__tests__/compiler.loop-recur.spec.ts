@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createEvaluationContext } from '../../evaluator'
 import { v } from '../../factories'
 import { createSession } from '../../session'
+import { tryCompileVmFnBody } from '../compiler'
 import { disassembleChunk } from '../debug'
 import { Op } from '../opcodes'
 import { executeChunk } from '../vm'
@@ -9,6 +10,7 @@ import { expectVmFallsBack } from './helpers'
 import {
   compileFnBodyForTest,
   expectVmFnBodyCompilesTo,
+  formToNode,
   makeCallTestEnv,
 } from './compiler-test-utils'
 
@@ -449,6 +451,20 @@ describe('VM loop and recur integration', () => {
   })
 
   it('throws like the interpreter for non-tail recur in a loop* body', () => {
+    const result = tryCompileVmFnBody(
+      [],
+      null,
+      [formToNode('(loop* [i 0] (+ 1 (recur (+ i 1))))')]
+    )
+
+    expect(result).toMatchObject({
+      ok: false,
+      fatal: true,
+      reason: {
+        category: 'compile-error',
+        detail: 'Can only recur from tail position',
+      },
+    })
     expect(() =>
       createSession().evaluate(
         '(fn [] (loop* [i 0] (+ 1 (recur (+ i 1)))))'

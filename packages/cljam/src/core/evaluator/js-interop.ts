@@ -140,6 +140,18 @@ export function readJsProperty(
   return jsToClj(rawProp)
 }
 
+export function resolveJsDotChainSymbol(
+  root: CljValue,
+  symbolForm: CljValue,
+  segments: string[]
+): CljValue {
+  let current = root
+  for (const segment of segments) {
+    current = readJsProperty(current, symbolForm, segment)
+  }
+  return current
+}
+
 export function callJsMethod(
   target: CljValue,
   targetForm: CljValue,

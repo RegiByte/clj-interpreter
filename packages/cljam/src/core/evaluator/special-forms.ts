@@ -239,6 +239,13 @@ function evaluateFnStar(
             phase: 'vm:function-body-compile',
           },
         })
+        if (vmResult.fatal === true) {
+          throw new EvaluationError(vmResult.reason.detail, {
+            reason: vmResult.reason,
+            list,
+            env,
+          }, getPos(list))
+        }
       }
     }
     // Phase 4b: params and rest param are all guaranteed simple symbols

@@ -26,6 +26,7 @@ import { executeChunk } from '../vm/vm'
 import { makeTopLevelVmCacheKey } from '../vm/cache'
 import { evaluateMap, evaluateSet, evaluateVector } from './collections'
 import { evaluateList } from './dispatch'
+import { resolveJsDotChainSymbol } from './js-interop'
 
 export type EvaluationMeasurement = {
   result: CljValue
@@ -252,6 +253,21 @@ function evaluateWithContextInner(
             symbol: expr.name,
             env,
           }, getPos(expr))
+        }
+        if (sym.includes('.')) {
+          const segments = sym.split('.')
+          const root = targetNs.vars.get(segments[0])
+          if (root === undefined) {
+            throw new EvaluationError(`Symbol ${alias}/${segments[0]} not found`, {
+              symbol: expr.name,
+              env,
+            }, getPos(expr))
+          }
+          return resolveJsDotChainSymbol(
+            derefValue(root),
+            expr,
+            segments.slice(1)
+          )
         }
         const v = targetNs.vars.get(sym)
         if (v === undefined) {

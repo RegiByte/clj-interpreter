@@ -589,7 +589,8 @@ export type VmFallbackReason =
 
 export type VmCompileResult =
   | { ok: true; chunk: VmChunk }
-  | { ok: false; reason: VmFallbackReason }
+  | { ok: false; reason: VmFallbackReason; fatal?: false }
+  | { ok: false; reason: VmFallbackReason; fatal: true }
 
 export type EvalEvent = {
   path:

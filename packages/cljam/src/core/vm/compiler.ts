@@ -77,6 +77,13 @@ type VmCompileEnv = {
   failureReason: VmFallbackReason | null
 }
 
+class VmCompilePanic extends Error {
+  constructor(readonly reason: VmFallbackReason) {
+    super(reason.detail)
+    this.name = 'VmCompilePanic'
+  }
+}
+
 type UpvalueResolution = number | null
 
 type VmTryCatchClause = {
@@ -174,6 +181,9 @@ export function tryCompileVm(node: CljValue): VmCompileResult {
       }
     }
   } catch (error) {
+    if (error instanceof VmCompilePanic) {
+      return { ok: false, reason: error.reason, fatal: true }
+    }
     return {
       ok: false,
       reason: {
@@ -231,6 +241,21 @@ function fail(
 ): false {
   compileEnv.failureReason ??= reason
   return false
+}
+
+function panic(reason: VmFallbackReason): never {
+  throw new VmCompilePanic(reason)
+}
+
+function assertVmRecurInTailPosition(body: CljValue[]): void {
+  try {
+    assertRecurInTailPosition(body)
+  } catch (error) {
+    panic({
+      category: 'compile-error',
+      detail: error instanceof Error ? error.message : String(error),
+    })
+  }
 }
 
 function emitExpression(
@@ -741,7 +766,7 @@ function compileVmArityTemplates(
   const upvalueDescriptors: VmUpvalueDescriptor[] = []
 
   for (const arity of arities) {
-    assertRecurInTailPosition(arity.body)
+    assertVmRecurInTailPosition(arity.body)
     const arityResult = compileVmFnBodyInternal(
       arity.params,
       arity.restParam,
@@ -754,6 +779,7 @@ function compileVmArityTemplates(
       }
     )
     if (!arityResult.ok) {
+      if (arityResult.fatal === true) panic(arityResult.reason)
       fail(compileEnv, arityResult.reason)
       return null
     }
@@ -1768,7 +1794,7 @@ function emitLoopStar(
     if (!bindings) return false
     if (!is.vector(bindings) || bindings.value.length % 2 !== 0) return false
     const body = node.value.slice(2)
-    assertRecurInTailPosition(body)
+    assertVmRecurInTailPosition(body)
 
     const localStart = compileEnv.nextLocalSlot
     const localCount = bindings.value.length / 2
@@ -1995,6 +2021,9 @@ function compileVmFnBodyInternal(
       }
     }
   } catch (error) {
+    if (error instanceof VmCompilePanic) {
+      return { ok: false, reason: error.reason, fatal: true }
+    }
     return {
       ok: false,
       reason: {
