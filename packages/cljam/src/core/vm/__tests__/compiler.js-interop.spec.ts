@@ -151,7 +151,7 @@ describe('VM JS interop', () => {
       })
     })
 
-    it('matches closure compiler behavior for non-js qualified aliases', () => {
+    it('supports dot-chain access for non-js qualified aliases', () => {
       expectVmRequiredValue('h/root.deep.value', { kind: 'number', value: 77 }, [
         '(ns host.core) (def root js/root)',
         '(ns user (:require [host.core :as h]))',

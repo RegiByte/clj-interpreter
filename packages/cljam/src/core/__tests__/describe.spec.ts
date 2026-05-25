@@ -436,17 +436,16 @@ describe('describe — namespace', () => {
     for (let i = 0; i < 20; i++) {
       sess.evaluate(`(def y${i} ${i})`)
     }
-    // Pass explicit limit as second arg — works regardless of compiler/binding status
+    // Pass explicit limit as second arg to avoid dynamic binding concerns.
     const m = mapToObj(sess.evaluate("(describe (find-ns 'user) 7)"))
     const showing = m[':showing']
     expect(showing.kind).toBe('number')
     if (showing.kind === 'number') expect(showing.value).toBe(7)
   })
 
-  // NOTE: (binding [*describe-limit* N] (describe ns)) requires Phase 10 of the
-  // compiler (dynamic var scoping in compiled fn bodies). Bootstrap-compiled
-  // functions see the root var value, not thread-local bindings, until that phase
-  // is implemented. Use (describe ns limit) directly in the meantime.
+  // NOTE: (binding [*describe-limit* N] (describe ns)) depends on dynamic-var
+  // reads inside bootstrap-loaded function bodies. Use (describe ns limit)
+  // directly in the meantime.
 })
 
 // ---------------------------------------------------------------------------

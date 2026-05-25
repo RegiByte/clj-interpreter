@@ -246,7 +246,7 @@ export function hierarchyUnderive(
 /**
  * Find the session-specific *hierarchy* CljVar using the runtime registry.
  * Uses ctx.allNamespaces() which always returns per-session data, bypassing
- * the snapshot env captured in bootstrap-compiled function closures.
+ * the snapshot env captured by bootstrap-loaded function values.
  */
 function getSessionHierarchyVar(ctx: EvaluationContext): CljVar | null {
   const coreNs = ctx.allNamespaces().find((ns) => ns.name === 'clojure.core')
@@ -351,7 +351,7 @@ export const hierarchyFunctions: Record<string, CljValue> = {
 
   // ─── Session-aware global *hierarchy* functions ───────────────────────────
   // These use ctx.allNamespaces() to find the per-session *hierarchy* CljVar,
-  // bypassing the snapshot env captured in bootstrap-compiled closures.
+  // bypassing the snapshot env captured by bootstrap-loaded function values.
 
   'hierarchy-derive-global!': v
     .nativeFnCtx(

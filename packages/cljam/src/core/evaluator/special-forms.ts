@@ -25,7 +25,6 @@ import { evaluateDot, evaluateNew } from './js-interop'
 
 import { assertRecurInTailPosition } from './recur-check'
 
-import { compile, compileFnBody } from '../compiler/index.ts'
 import { assignChunkIds } from '../vm/chunk.ts'
 import { tryCompileVmFnBody } from '../vm/compiler.ts'
 
@@ -246,27 +245,6 @@ function evaluateFnStar(
             env,
           }, getPos(list))
         }
-      }
-    }
-    // Phase 4b: params and rest param are all guaranteed simple symbols
-    // (validated above). Compile with param slots to eliminate both bindParams
-    // env allocation and lookup chain walks for params.
-    const result = compileFnBody(
-      arity.params,
-      arity.restParam,
-      arity.body,
-      compile,
-      fnName ? `fn_${fnName}` : 'fn_lambda'
-    )
-    if (result !== null) {
-      arity.compiledBody = result.compiledBody
-      arity.paramSlots = result.paramSlots
-    } else if (arity.restParam !== null) {
-      const compiled = compile(
-        v.list([v.symbol(specialFormKeywords.do), ...arity.body])
-      )
-      if (compiled !== null) {
-        arity.compiledBody = compiled
       }
     }
   }

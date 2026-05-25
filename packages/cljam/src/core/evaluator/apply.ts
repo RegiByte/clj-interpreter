@@ -62,27 +62,7 @@ export function applyFunctionWithContext(
       })
     }
 
-    // Phase 4b fast path: param slots compiled into body — no Env allocation,
-    // no lookup chain walks, no RecurSignal (while(true) is inside compiledBody).
-    // Save/restore handles reentrancy for mutual and non-tail-recursive calls.
-    if (arity.compiledBody && arity.paramSlots) {
-      const slots = arity.paramSlots
-      const slotValues = slotValuesForArity(arity, args)
-      const savedValues: (CljValue | null)[] = new Array(slots.length)
-      for (let i = 0; i < slots.length; i++) {
-        savedValues[i] = slots[i].value // save for reentrancy
-        slots[i].value = slotValues[i] // write call args
-      }
-      try {
-        return arity.compiledBody(fn.env, ctx)
-      } finally {
-        for (let i = 0; i < slots.length; i++) {
-          slots[i].value = savedValues[i] // restore on exit
-        }
-      }
-    }
-
-    // Original path: bindParams + RecurSignal loop (rest params, uncompiled bodies)
+    // Interpreter path: bindParams + RecurSignal loop.
     let currentArgs = args
     while (true) {
       const localEnv = bindParams(
@@ -94,9 +74,6 @@ export function applyFunctionWithContext(
         callEnv
       )
       try {
-        if (arity.compiledBody) {
-          return arity.compiledBody(localEnv, ctx)
-        }
         return ctx.evaluateForms(arity.body, localEnv)
       } catch (e) {
         if (e instanceof RecurSignal) {

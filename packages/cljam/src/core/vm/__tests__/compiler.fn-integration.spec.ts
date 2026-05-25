@@ -8,15 +8,11 @@ import { formToNode } from './compiler-test-utils'
 
 describe('VM function body integration', () => {
   it('reports nested function-body fallback reasons through structured compilation', () => {
-    const result = tryCompileVmFnBody(
-      [],
-      null,
-      [
-        formToNode(
-          '(let* [cat (fn* cat [xy zs] (try 1 (catch :default e (async e))))] cat)'
-        ),
-      ]
-    )
+    const result = tryCompileVmFnBody([], null, [
+      formToNode(
+        '(let* [cat (fn* cat [xy zs] (try 1 (catch :default e (async e))))] cat)'
+      ),
+    ])
 
     expect(result).toEqual({
       ok: false,
@@ -44,9 +40,6 @@ describe('VM function body integration', () => {
     if (fn.kind !== 'function') return
 
     expect(fn.arities[0].bytecodeBody).toBeDefined()
-    fn.arities[0].compiledBody = () => {
-      throw new Error('compiledBody should not run when bytecodeBody exists')
-    }
 
     const result = applyFunctionWithContext(
       fn,
@@ -159,9 +152,9 @@ describe('VM function body integration', () => {
   })
 
   it('preserves arity mismatch errors for bytecode-backed functions', () => {
-    expect(() =>
-      createSession().evaluate('(let* [f (fn [x] x)] (f))')
-    ).toThrow('No matching arity for 0 arguments. Available arities: 1')
+    expect(() => createSession().evaluate('(let* [f (fn [x] x)] (f))')).toThrow(
+      'No matching arity for 0 arguments. Available arities: 1'
+    )
   })
 
   it('falls back to namespace-redefined operators at intrinsic execution time', () => {

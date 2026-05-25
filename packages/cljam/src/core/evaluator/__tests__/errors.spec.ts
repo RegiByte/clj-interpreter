@@ -520,8 +520,8 @@ describe('per-argument error positions (argIndex)', () => {
       )
     })
 
-    it('undefined symbol in compiled fn body shows symbol name, not call site', () => {
-      // The compiler path (compiled closure) must stamp e.pos from the symbol
+    it('undefined symbol in bytecode fn body shows symbol name, not call site', () => {
+      // The bytecode path must stamp e.pos from the symbol
       // in the definition body, not from the call site.
       const s = freshSession()
       s.evaluate('(defn broken [x] (no-such-fn x))')

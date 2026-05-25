@@ -37,16 +37,18 @@ import {
 } from './chunk'
 import { Op } from './opcodes'
 
-type RecurTarget = {
-  kind: 'loop'
-  localStart: number
-  localCount: number
-  loopHeader: number
-} | {
-  kind: 'fn'
-  paramCount: number
-  hasRestParam: boolean
-}
+type RecurTarget =
+  | {
+      kind: 'loop'
+      localStart: number
+      localCount: number
+      loopHeader: number
+    }
+  | {
+      kind: 'fn'
+      paramCount: number
+      hasRestParam: boolean
+    }
 
 type IntrinsicName = '+' | '-' | '*' | '/' | '<' | '>' | '<=' | '>=' | '='
 
@@ -78,9 +80,11 @@ type VmCompileEnv = {
 }
 
 class VmCompilePanic extends Error {
-  constructor(readonly reason: VmFallbackReason) {
+  reason: VmFallbackReason
+  constructor(reason: VmFallbackReason) {
     super(reason.detail)
     this.name = 'VmCompilePanic'
+    this.reason = reason
   }
 }
 
@@ -202,17 +206,25 @@ function fallbackReasonForNode(node: CljValue): VmFallbackReason {
     const head = node.value[0]
     if (is.symbol(head)) {
       const name = head.name
-      if (name === specialFormKeywords['def'] || name === specialFormKeywords.ns) {
+      if (
+        name === specialFormKeywords['def'] ||
+        name === specialFormKeywords.ns
+      ) {
         return {
           category: 'unsupported-top-level-mutation',
           detail: `VM does not support top-level mutation form ${name}`,
         }
       }
-      if (name === specialFormKeywords['let*'] || name === specialFormKeywords['loop*']) {
+      if (
+        name === specialFormKeywords['let*'] ||
+        name === specialFormKeywords['loop*']
+      ) {
         const bindings = node.value[1]
         if (
           is.vector(bindings) &&
-          bindings.value.some((binding, index) => index % 2 === 0 && !is.symbol(binding))
+          bindings.value.some(
+            (binding, index) => index % 2 === 0 && !is.symbol(binding)
+          )
         ) {
           return {
             category: 'unsupported-binding-form',
@@ -235,10 +247,7 @@ function fallbackReasonForNode(node: CljValue): VmFallbackReason {
   }
 }
 
-function fail(
-  compileEnv: VmCompileEnv,
-  reason: VmFallbackReason
-): false {
+function fail(compileEnv: VmCompileEnv, reason: VmFallbackReason): false {
   compileEnv.failureReason ??= reason
   return false
 }
@@ -463,7 +472,9 @@ function parseVmTryStructure(node: CljList): VmTryStructure | null {
   }
 }
 
-function isInlineFnDiscriminator(discriminator: CljValue): discriminator is CljList {
+function isInlineFnDiscriminator(
+  discriminator: CljValue
+): discriminator is CljList {
   return (
     is.list(discriminator) &&
     discriminator.value.length > 0 &&
@@ -584,13 +595,7 @@ function emitCatchClause(
   tableClause.bindingSlot = bindingSlot
   tableClause.bodyIp = chunk.code.length
   if (state.hasFinally) {
-    const catchTry = emitPushTry(
-      chunk,
-      state.finallyOnlyTableIndex,
-      -1,
-      0,
-      pos
-    )
+    const catchTry = emitPushTry(chunk, state.finallyOnlyTableIndex, -1, 0, pos)
     state.finallyOperands.push(catchTry.finallyOperand)
     state.afterOperands.push(catchTry.afterOperand)
   }
@@ -1039,7 +1044,8 @@ function emitDefMacro(
 
     const rest = node.value.slice(2)
     const maybeDocstring = rest[0]
-    const hasDocstring = maybeDocstring !== undefined && is.string(maybeDocstring)
+    const hasDocstring =
+      maybeDocstring !== undefined && is.string(maybeDocstring)
     const arityForms = hasDocstring ? rest.slice(1) : rest
 
     let arities: Arity[]
@@ -1247,7 +1253,9 @@ function emitCall(
   return emitTransaction(chunk, () => {
     const callee = node.value[0]
     const args = node.value.slice(1)
-    if (emitTailSelfCall(chunk, callee, args, compileEnv, getPos(node) ?? null)) {
+    if (
+      emitTailSelfCall(chunk, callee, args, compileEnv, getPos(node) ?? null)
+    ) {
       return true
     }
 
@@ -1365,10 +1373,7 @@ function emitTailSelfCall(
   return true
 }
 
-function canEmitDirectThrow(
-  node: CljList,
-  compileEnv: VmCompileEnv
-): boolean {
+function canEmitDirectThrow(node: CljList, compileEnv: VmCompileEnv): boolean {
   if (node.value.length !== 2) return false
   const callee = node.value[0]
   return (

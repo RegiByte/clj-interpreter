@@ -81,9 +81,7 @@ export type Arity = {
   params: CljSymbol[]
   restParam: CljSymbol | null
   body: CljValue[]
-  compiledBody?: CompiledExpr
   bytecodeBody?: VmChunk
-  paramSlots?: SlotRef[] // Phase 4b: set when body compiled with param slots
   vmClosure?: VmFunctionClosure
 }
 
@@ -312,10 +310,7 @@ export type EvaluationContext = {
   allocateChunkIdentity?: (chunk: VmChunk) => number
   getCachedTopLevelVmChunk?: (key: string) => VmChunk | undefined
   setCachedTopLevelVmChunk?: (key: string, chunk: VmChunk) => void
-  touchNamespace?: (
-    ns: CljNamespace,
-    reason: NamespaceMutationReason
-  ) => void
+  touchNamespace?: (ns: CljNamespace, reason: NamespaceMutationReason) => void
   currentEvalIdentity?: RuntimeEvalIdentity
   /**
    * Internal recursion guard used to keep first top-level VM integration at the
@@ -528,44 +523,6 @@ export type Token = (
   | TokenCharacter
 ) & { start: Cursor; end: Cursor }
 
-/** Compiler */
-
-/**
- * A compiled expression takes runtime env + ctx, returns a CljValue.
- * Signature includes ctx even though we don't use it yet
- * Phases 2+ (if, fn*, apply) will need it. We keep the shape fixed now.
- */
-export type CompiledExpr = (env: Env, ctx: EvaluationContext) => CljValue
-
-/**
- * A compile function takes a node and an optional compile-time env. It returns a compiled expression
- * when it can't compile a node, it returns null, falling back to the interpreter
- * we have this definition here so that recursive compiler functions such as compileIf,
- * and compileDo can reference the "root dispatcher" when compiling sub-forms.
- * It's a clean way to prevent cyclical dependencies. Only recursive compiler fns need this.
- */
-export type CompileFn = (
-  node: CljValue,
-  env: CompileEnv | null
-) => CompiledExpr | null
-
-/**
- * A mutable box. Allocated at compile time.
- * Read by compiled symbols that reference the slot binding.
- */
-export type SlotRef = { value: CljValue | null }
-
-export type CompileEnv = {
-  bindings: Map<string, SlotRef>
-  outer: CompileEnv | null
-  loop?: {
-    slots: SlotRef[]
-    recurTarget: { args: CljValue[] | null }
-    fixedParamCount?: number
-    hasRestParam?: boolean
-  }
-}
-
 /**
  * VM Types
  */
@@ -595,7 +552,6 @@ export type VmCompileResult =
 export type EvalEvent = {
   path:
     | 'interpreter'
-    | 'closure-compiler'
     | 'vm:function-body-compiled'
     | 'vm:function-body'
     | 'vm:macro-body'
@@ -609,7 +565,14 @@ export type EvalEvent = {
 }
 
 export type EvaluationMeasurementStage = {
-  stage: ':macroexpand' | ':vm/compile' | ':vm/execute' | ':vm/cache-hit' | ':fallback' | ':closure-compiler' | ':interpreter' | string
+  stage:
+    | ':macroexpand'
+    | ':vm/compile'
+    | ':vm/execute'
+    | ':vm/cache-hit'
+    | ':fallback'
+    | ':interpreter'
+    | string
   elapsedMs: number
   path?: EvalEvent['path']
   reason?: VmFallbackReason

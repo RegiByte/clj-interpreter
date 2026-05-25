@@ -2,11 +2,10 @@
  * Evaluator - Core entrypoint
  * Handles the evaluation of a single expression.
  * Delegates most of the work to domain handlers.
- * Uses the compiler to compile the expression to a closure when possible.
+ * Uses the VM at top-level when possible, then falls back to the interpreter.
  * The interpreter is the source of truth for the semantics of the language.
  */
 
-import { compile } from '../compiler'
 import { derefValue, getNamespaceEnv, lookup } from '../env'
 import { EvaluationError } from '../errors'
 import { v } from '../factories'
@@ -197,23 +196,6 @@ function evaluateWithContextInner(
   ctx: EvaluationContext,
   shouldEmitPathEvent: boolean
 ): CljValue {
-  const compiled = compile(expr)
-  if (compiled !== null) {
-    if (shouldEmitPathEvent) {
-      emitEvalEvent(ctx, {
-        path: 'closure-compiler',
-        formKind: formKind(expr),
-        ast: expr,
-      })
-      ctx.measurement?.setPath('closure-compiler')
-    }
-    if (!shouldEmitPathEvent || !ctx.measurement) return compiled(env, ctx)
-    const { value, elapsedMs } = measureSync(() => compiled(env, ctx))
-    recordMeasurementStage(ctx, ':closure-compiler', elapsedMs, {
-      path: 'closure-compiler',
-    })
-    return value
-  }
   if (shouldEmitPathEvent) {
     emitEvalEvent(ctx, {
       path: 'interpreter',
