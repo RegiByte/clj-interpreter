@@ -211,8 +211,7 @@ function executeInstruction(state: VmState): void {
         )
       }
       try {
-        const value = lookup(symbol.name, env)
-        stack.push(value)
+        stack.push(resolveGlobalOperand(chunk, symbol, symbolIndex, env))
       } catch (e) {
         hydrateVmErrorPos(e, getPos(symbol) ?? instructionPos)
         throw e
@@ -1457,6 +1456,39 @@ function readSymbolConstantOperand(
     )
   }
   return value
+}
+
+function resolveGlobalOperand(
+  chunk: VmChunk,
+  symbol: CljSymbol,
+  symbolIndex: number,
+  env: Env
+): CljValue {
+  let current: Env | null = env
+  while (current) {
+    const raw = current.bindings.get(symbol.name)
+    if (raw !== undefined) return raw
+
+    const ns = current.ns
+    if (ns !== undefined) {
+      const cached = chunk.globalVarCache[symbolIndex]
+      if (cached !== undefined && cached.ns === ns) {
+        return derefValue(cached.var)
+      }
+
+      const theVar = ns.vars.get(symbol.name)
+      if (theVar !== undefined) {
+        chunk.globalVarCache[symbolIndex] = { ns, var: theVar }
+        return derefValue(theVar)
+      }
+    }
+
+    current = current.outer
+  }
+
+  throw new EvaluationError(`Symbol ${symbol.name} not found`, {
+    name: symbol.name,
+  })
 }
 
 function resolveVarOperand(

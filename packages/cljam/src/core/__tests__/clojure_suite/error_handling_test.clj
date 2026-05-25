@@ -30,6 +30,13 @@
              :body
              (finally :ignored))))))
 
+(deftest try-invalid-shapes
+  (testing "finally must be the final try clause"
+    (is (thrown? :error/runtime
+                 (try 42
+                   (finally :ignored)
+                   (finally :also-ignored))))))
+
 ;;; -- throw / catch ------------------------------------------------------------
 
 (deftest throw-and-catch
@@ -66,6 +73,23 @@
                (throw {:type :error/test})
                (catch :error/other e :wrong))
              (catch :default e (:type e)))))))
+
+(deftest nested-try-catch
+  (testing "an inner catch handles before the outer catch can observe"
+    (is (= :handled-inner
+           (try
+             (try
+               (throw {:type :error/inner})
+               (catch :error/inner e :handled-inner))
+             (catch :default e :outer)))))
+
+  (testing "an uncaught inner throw can be handled by the outer try"
+    (is (= :caught-by-outer
+           (try
+             (try
+               (throw {:type :error/escaped})
+               (catch :error/other e :wrong))
+             (catch :error/escaped e :caught-by-outer))))))
 
 (deftest predicate-catch
   (testing "predicate catch clauses can match thrown values"

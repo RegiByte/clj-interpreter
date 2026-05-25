@@ -61,6 +61,99 @@ describe('VM global opcodes', () => {
     ).toEqual(v.number(2))
   })
 
+  it('does not cache plain env bindings as namespace vars', () => {
+    const chunk = makeChunk('load-global-env-binding-cache-test')
+    const index = addConstant(chunk, v.symbol('x'))
+
+    emit(chunk, Op.LoadGlobal)
+    emitOperand(chunk, index)
+    emit(chunk, Op.Return)
+
+    const firstEnv = makeEnv()
+    define('x', v.number(1), firstEnv)
+
+    const secondEnv = makeEnv()
+    define('x', v.number(2), secondEnv)
+
+    expect(
+      executeChunk({ chunk, env: firstEnv, ctx: createEvaluationContext() })
+    ).toEqual(v.number(1))
+    expect(
+      executeChunk({ chunk, env: secondEnv, ctx: createEvaluationContext() })
+    ).toEqual(v.number(2))
+  })
+
+  it('does not reuse cached vars across different namespace objects', () => {
+    const chunk = makeChunk('load-global-namespace-object-cache-test')
+    const index = addConstant(chunk, v.symbol('x'))
+
+    emit(chunk, Op.LoadGlobal)
+    emitOperand(chunk, index)
+    emit(chunk, Op.Return)
+
+    const firstEnv = makeEnv()
+    firstEnv.ns = makeNamespace('user')
+    internVar('x', v.number(1), firstEnv)
+
+    const secondEnv = makeEnv()
+    secondEnv.ns = makeNamespace('user')
+    internVar('x', v.number(2), secondEnv)
+
+    expect(
+      executeChunk({ chunk, env: firstEnv, ctx: createEvaluationContext() })
+    ).toEqual(v.number(1))
+    expect(
+      executeChunk({ chunk, env: secondEnv, ctx: createEvaluationContext() })
+    ).toEqual(v.number(2))
+  })
+
+  it('does not negatively cache missing globals', () => {
+    const chunk = makeChunk('load-global-missing-cache-test')
+    const index = addConstant(chunk, v.symbol('x'))
+
+    emit(chunk, Op.LoadGlobal)
+    emitOperand(chunk, index)
+    emit(chunk, Op.Return)
+
+    const env = makeEnv()
+    env.ns = makeNamespace('user')
+
+    expect(() =>
+      executeChunk({ chunk, env, ctx: createEvaluationContext() })
+    ).toThrow(EvaluationError)
+
+    internVar('x', v.number(42), env)
+
+    expect(
+      executeChunk({ chunk, env, ctx: createEvaluationContext() })
+    ).toEqual(v.number(42))
+  })
+
+  it('respects dynamic binding stacks for cached globals', () => {
+    const chunk = makeChunk('load-global-dynamic-cache-test')
+    const index = addConstant(chunk, v.symbol('*answer*'))
+
+    emit(chunk, Op.LoadGlobal)
+    emitOperand(chunk, index)
+    emit(chunk, Op.Return)
+
+    const env = makeEnv()
+    env.ns = makeNamespace('user')
+    internVar('*answer*', v.keyword(':root'), env)
+    const answer = env.ns.vars.get('*answer*')!
+    answer.dynamic = true
+
+    expect(
+      executeChunk({ chunk, env, ctx: createEvaluationContext() })
+    ).toEqual(v.keyword(':root'))
+
+    answer.bindingStack = [v.keyword(':bound')]
+
+    expect(
+      executeChunk({ chunk, env, ctx: createEvaluationContext() })
+    ).toEqual(v.keyword(':bound'))
+  })
+
   it('throws for missing globals', () => {
     const chunk = makeChunk('missing-global-test')
     const index = addConstant(chunk, v.symbol('missing'))

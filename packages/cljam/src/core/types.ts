@@ -686,6 +686,13 @@ export type VmChunk = {
   id?: number
   code: number[]
   constants: CljValue[]
+  globalVarCache: Array<
+    | {
+        ns: CljNamespace
+        var: CljVar
+      }
+    | undefined
+  >
   positions: Array<Pos | null>
   callArgPositions: Array<Array<Pos | null> | undefined>
   name?: string

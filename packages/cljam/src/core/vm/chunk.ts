@@ -26,6 +26,7 @@ export function makeChunk(name?: string): VmChunk {
   const chunk = {
     code: [],
     constants: [],
+    globalVarCache: [],
     positions: [],
     callArgPositions: [],
     name,
