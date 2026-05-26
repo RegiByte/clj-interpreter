@@ -275,6 +275,31 @@
   (is (not (false? true)))
   (is (not (false? nil))))
 
+(deftest truthy-falsy-and-boolean-coercion
+  (is (truthy? true))
+  (is (truthy? 0))
+  (is (truthy? ""))
+  (is (not (truthy? false)))
+  (is (not (truthy? nil)))
+  (is (falsy? false))
+  (is (falsy? nil))
+  (is (not (falsy? 0)))
+  (is (= true (boolean 1)))
+  (is (= true (boolean "x")))
+  (is (= false (boolean false)))
+  (is (= false (boolean nil))))
+
+(deftest every-with-ifn-predicates
+  (is (every? :a [{:a 1} {:a true}]))
+  (is (every? #{1 2 3} [1 2]))
+  (is (every? {:a true :b true} [:a :b])))
+
+(deftest nat-int-and-floating-edge-predicates
+  (is (nat-int? 0))
+  (is (nat-int? 5))
+  (is (not (nat-int? -1)))
+  (is (not (nat-int? 1.2))))
+
 (deftest var?-predicate
   (def test-var-for-predicate 42)
   (is (var? #'test-var-for-predicate))

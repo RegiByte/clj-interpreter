@@ -1,7 +1,24 @@
 import { is } from './assertions'
 import { makeEnv, makeNamespace } from './env'
 import { EvaluationError } from './errors'
-import type { CljValue, Env } from './types'
+import type {
+  Arity,
+  CljAtom,
+  CljFunction,
+  CljLazySeq,
+  CljMacro,
+  CljMap,
+  CljMultiMethod,
+  CljNamespace,
+  CljProtocol,
+  CljValue,
+  CljVar,
+  Env,
+  VmChunk,
+  VmFunctionClosure,
+  VmFunctionTemplate,
+  VmUpvalue,
+} from './types'
 import { v } from './factories'
 
 // ---------------------------------------------------------------------------
@@ -39,49 +56,385 @@ export type NamespaceRegistry = Map<string, Env>
 // Clone helpers — used by snapshot / restoreRuntime
 // ---------------------------------------------------------------------------
 
-function cloneBindings(bindings: Map<string, CljValue>): Map<string, CljValue> {
-  const out = new Map<string, CljValue>()
-  for (const [k, v] of bindings) {
-    out.set(k, is.var(v) ? { ...v } : v)
-  }
-  return out
+type CloneContext = {
+  envs: Map<Env, Env>
+  namespaces: Map<CljNamespace, CljNamespace>
+  vars: Map<CljVar, CljVar>
+  values: Map<object, CljValue>
+  chunks: Map<VmChunk, VmChunk>
+  upvalues: Map<VmUpvalue, VmUpvalue>
 }
 
-function cloneEnv(env: Env, memo: Map<Env, Env>): Env {
-  if (memo.has(env)) return memo.get(env)!
+function makeCloneContext(): CloneContext {
+  return {
+    envs: new Map(),
+    namespaces: new Map(),
+    vars: new Map(),
+    values: new Map(),
+    chunks: new Map(),
+    upvalues: new Map(),
+  }
+}
+
+function cloneEnv(env: Env, ctx: CloneContext): Env {
+  if (ctx.envs.has(env)) return ctx.envs.get(env)!
   const cloned: Env = {
-    bindings: cloneBindings(env.bindings),
+    bindings: new Map(),
     outer: null,
   }
-  if (env.ns) {
-    cloned.ns = v.namespace(env.ns.name)
-    cloned.ns.id = env.ns.id
-    cloned.ns.version = env.ns.version
-    cloned.ns.vars = new Map([...env.ns.vars].map(([k, v]) => [k, { ...v }]))
-    cloned.ns.aliases = new Map() // wired in cloneRegistry pass 2
-    cloned.ns.readerAliases = new Map(env.ns.readerAliases)
+  ctx.envs.set(env, cloned)
+  if (env.outer) cloned.outer = cloneEnv(env.outer, ctx)
+  if (env.ns) cloned.ns = cloneNamespace(env.ns, ctx)
+  for (const [name, value] of env.bindings) {
+    cloned.bindings.set(name, cloneValue(value, ctx))
   }
-  memo.set(env, cloned)
-  if (env.outer) cloned.outer = cloneEnv(env.outer, memo)
   return cloned
 }
 
-export function cloneRegistry(registry: NamespaceRegistry): NamespaceRegistry {
-  const memo = new Map<Env, Env>()
-  const next = new Map<string, Env>()
-  // Pass 1: clone all envs (ns.aliases left empty)
-  for (const [name, env] of registry) {
-    next.set(name, cloneEnv(env, memo))
+function cloneNamespace(ns: CljNamespace, ctx: CloneContext): CljNamespace {
+  const existing = ctx.namespaces.get(ns)
+  if (existing) return existing
+  const cloned = v.namespace(ns.name)
+  cloned.id = ns.id
+  cloned.version = ns.version
+  cloned.doc = ns.doc
+  cloned.readerAliases = new Map(ns.readerAliases)
+  cloned.aliases = new Map()
+  cloned.vars = new Map()
+  ctx.namespaces.set(ns, cloned)
+  for (const [name, theVar] of ns.vars) {
+    cloned.vars.set(name, cloneVar(theVar, ctx))
   }
-  // Pass 2: wire ns.aliases to the cloned CljNamespace objects
-  for (const [name, env] of registry) {
-    const clonedEnv = next.get(name)!
-    if (env.ns && clonedEnv.ns) {
-      for (const [alias, origNs] of env.ns.aliases) {
-        const targetCloned = next.get(origNs.name)
-        if (targetCloned?.ns) clonedEnv.ns.aliases.set(alias, targetCloned.ns)
-      }
+  for (const [alias, target] of ns.aliases) {
+    cloned.aliases.set(alias, cloneNamespace(target, ctx))
+  }
+  return cloned
+}
+
+function cloneVar(theVar: CljVar, ctx: CloneContext): CljVar {
+  const existing = ctx.vars.get(theVar)
+  if (existing) return existing
+  const cloned: CljVar = {
+    kind: 'var',
+    ns: theVar.ns,
+    name: theVar.name,
+    value: v.nil(),
+    dynamic: theVar.dynamic,
+  }
+  ctx.vars.set(theVar, cloned)
+  cloned.value = cloneValue(theVar.value, ctx)
+  if (theVar.bindingStack) {
+    cloned.bindingStack = theVar.bindingStack.map((value) =>
+      cloneValue(value, ctx)
+    )
+  }
+  if (theVar.meta) cloned.meta = cloneValue(theVar.meta, ctx) as CljMap
+  return cloned
+}
+
+function cloneArity(arity: Arity, ctx: CloneContext): Arity {
+  return {
+    params: arity.params.map((param) => cloneValue(param, ctx) as typeof param),
+    restParam: arity.restParam
+      ? (cloneValue(arity.restParam, ctx) as typeof arity.restParam)
+      : null,
+    body: arity.body.map((form) => cloneValue(form, ctx)),
+    ...(arity.bytecodeBody
+      ? { bytecodeBody: cloneVmChunk(arity.bytecodeBody, ctx) }
+      : {}),
+    ...(arity.vmClosure
+      ? { vmClosure: cloneVmFunctionClosure(arity.vmClosure, ctx) }
+      : {}),
+  }
+}
+
+function cloneVmFunctionClosure(
+  closure: VmFunctionClosure,
+  ctx: CloneContext
+): VmFunctionClosure {
+  return {
+    env: cloneEnv(closure.env, ctx),
+    upvalues: closure.upvalues.map((upvalue) => cloneVmUpvalue(upvalue, ctx)),
+    name: closure.name,
+  }
+}
+
+function cloneVmUpvalue(upvalue: VmUpvalue, ctx: CloneContext): VmUpvalue {
+  const existing = ctx.upvalues.get(upvalue)
+  if (existing) return existing
+  const cloned: VmUpvalue = { frame: null, slot: upvalue.slot, closedValue: null }
+  ctx.upvalues.set(upvalue, cloned)
+  const value =
+    upvalue.frame !== null
+      ? (upvalue.frame.locals[upvalue.slot] ?? v.nil())
+      : (upvalue.closedValue ?? v.nil())
+  cloned.closedValue = cloneValue(value, ctx)
+  return cloned
+}
+
+function cloneVmFunctionTemplate(
+  template: VmFunctionTemplate,
+  ctx: CloneContext
+): VmFunctionTemplate {
+  return {
+    arities: template.arities.map((arity) => ({
+      params: arity.params.map((param) => cloneValue(param, ctx) as typeof param),
+      restParam: arity.restParam
+        ? (cloneValue(arity.restParam, ctx) as typeof arity.restParam)
+        : null,
+      body: arity.body.map((form) => cloneValue(form, ctx)),
+      chunk: cloneVmChunk(arity.chunk, ctx),
+    })),
+    upvalueDescriptors: template.upvalueDescriptors.map((descriptor) => ({
+      ...descriptor,
+    })),
+    name: template.name,
+    ...(template.meta ? { meta: cloneValue(template.meta, ctx) as CljMap } : {}),
+  }
+}
+
+function cloneVmChunk(chunk: VmChunk, ctx: CloneContext): VmChunk {
+  const existing = ctx.chunks.get(chunk)
+  if (existing) return existing
+  const cloned: VmChunk = {
+    id: chunk.id,
+    code: [...chunk.code],
+    constants: [],
+    globalVarCache: [],
+    positions: [...chunk.positions],
+    callArgPositions: chunk.callArgPositions.map((positions) =>
+      positions ? [...positions] : undefined
+    ),
+    name: chunk.name,
+    maxStack: chunk.maxStack,
+    localCount: chunk.localCount,
+    innerFunctions: [],
+    catchTables: [],
+    lexicalVarLookups: [],
+    selfSlot: chunk.selfSlot,
+  }
+  ctx.chunks.set(chunk, cloned)
+  cloned.constants = chunk.constants.map((constant) => cloneValue(constant, ctx))
+  cloned.globalVarCache = chunk.globalVarCache.map((entry) =>
+    entry
+      ? {
+          ns: cloneNamespace(entry.ns, ctx),
+          var: cloneVar(entry.var, ctx),
+        }
+      : undefined
+  )
+  cloned.innerFunctions = chunk.innerFunctions.map((template) =>
+    cloneVmFunctionTemplate(template, ctx)
+  )
+  cloned.catchTables = chunk.catchTables.map((table) => ({
+    clauses: table.clauses.map((clause) => ({
+      ...clause,
+      discriminator: cloneValue(clause.discriminator, ctx),
+    })),
+  }))
+  cloned.lexicalVarLookups = chunk.lexicalVarLookups.map((lookup) => ({
+    symbol: cloneValue(lookup.symbol, ctx) as typeof lookup.symbol,
+    candidates: lookup.candidates.map((candidate) => ({ ...candidate })),
+  }))
+  return cloned
+}
+
+function cloneObjectValue<T extends CljValue>(
+  value: T,
+  ctx: CloneContext,
+  clone: () => T
+): T {
+  const existing = ctx.values.get(value as object)
+  if (existing) return existing as T
+  const cloned = clone()
+  ctx.values.set(value as object, cloned)
+  return cloned
+}
+
+function cloneValue(value: CljValue, ctx: CloneContext): CljValue {
+  if (!value || typeof value !== 'object') return value
+  const existing = ctx.values.get(value as object)
+  if (existing) return existing
+
+  switch (value.kind) {
+    case 'number':
+    case 'string':
+    case 'character':
+    case 'boolean':
+    case 'keyword':
+    case 'nil':
+    case 'regex':
+    case 'native-function':
+    case 'js-value':
+    case 'pending':
+      return value
+    case 'symbol':
+      return cloneObjectValue(value, ctx, () => ({
+        ...value,
+        ...(value.meta ? { meta: cloneValue(value.meta, ctx) as CljMap } : {}),
+      }))
+    case 'list':
+      return cloneObjectValue(value, ctx, () => ({
+        ...value,
+        value: value.value.map((item) => cloneValue(item, ctx)),
+        ...(value.meta ? { meta: cloneValue(value.meta, ctx) as CljMap } : {}),
+      }))
+    case 'vector':
+      return cloneObjectValue(value, ctx, () => ({
+        ...value,
+        value: value.value.map((item) => cloneValue(item, ctx)),
+        ...(value.meta ? { meta: cloneValue(value.meta, ctx) as CljMap } : {}),
+      }))
+    case 'map': {
+      const cloned = v.map(
+        value.entries.map(([k, v]) => [cloneValue(k, ctx), cloneValue(v, ctx)])
+      )
+      if (value.meta) cloned.meta = cloneValue(value.meta, ctx) as CljMap
+      ctx.values.set(value, cloned)
+      return cloned
     }
+    case 'set': {
+      const cloned = v.set(value._map.entries.map(([item]) => cloneValue(item, ctx)))
+      if (value.meta) cloned.meta = cloneValue(value.meta, ctx) as CljMap
+      ctx.values.set(value, cloned)
+      return cloned
+    }
+    case 'namespace':
+      return cloneNamespace(value, ctx)
+    case 'var':
+      return cloneVar(value, ctx)
+    case 'function': {
+      const cloned: CljFunction = { ...value, arities: [], env: makeEnv() }
+      ctx.values.set(value, cloned)
+      cloned.env = cloneEnv(value.env, ctx)
+      cloned.arities = value.arities.map((arity) => cloneArity(arity, ctx))
+      if (value.meta) cloned.meta = cloneValue(value.meta, ctx) as CljMap
+      return cloned
+    }
+    case 'macro': {
+      const cloned: CljMacro = { ...value, arities: [], env: makeEnv() }
+      ctx.values.set(value, cloned)
+      cloned.env = cloneEnv(value.env, ctx)
+      cloned.arities = value.arities.map((arity) => cloneArity(arity, ctx))
+      if (value.meta) cloned.meta = cloneValue(value.meta, ctx) as CljMap
+      return cloned
+    }
+    case 'atom': {
+      const cloned: CljAtom = { kind: 'atom', value: v.nil() }
+      ctx.values.set(value, cloned)
+      cloned.value = cloneValue(value.value, ctx)
+      if (value.meta) cloned.meta = cloneValue(value.meta, ctx) as CljMap
+      if (value.validator) cloned.validator = cloneValue(value.validator, ctx)
+      if (value.watches) {
+        cloned.watches = new Map(
+          [...value.watches].map(([k, watch]) => [
+            k,
+            {
+              key: cloneValue(watch.key, ctx),
+              fn: cloneValue(watch.fn, ctx),
+              callEnv: cloneEnv(watch.callEnv, ctx),
+            },
+          ])
+        )
+      }
+      return cloned
+    }
+    case 'volatile':
+      return cloneObjectValue(value, ctx, () => ({
+        kind: 'volatile',
+        value: cloneValue(value.value, ctx),
+      }))
+    case 'reduced':
+      return cloneObjectValue(value, ctx, () => ({
+        kind: 'reduced',
+        value: cloneValue(value.value, ctx),
+      }))
+    case 'delay': {
+      const cloned = {
+        kind: 'delay' as const,
+        thunk: value.thunk,
+        realized: value.realized,
+        value: value.value ? cloneValue(value.value, ctx) : undefined,
+        thunkFn: value.thunkFn ? cloneValue(value.thunkFn, ctx) : undefined,
+        callEnv: value.callEnv ? cloneEnv(value.callEnv, ctx) : undefined,
+      }
+      ctx.values.set(value, cloned)
+      return cloned
+    }
+    case 'lazy-seq': {
+      const cloned: CljLazySeq = {
+        kind: 'lazy-seq',
+        thunk: value.thunk,
+        realized: value.realized,
+        value: value.value ? cloneValue(value.value, ctx) : undefined,
+        thunkFn: value.thunkFn ? cloneValue(value.thunkFn, ctx) : undefined,
+        callEnv: value.callEnv ? cloneEnv(value.callEnv, ctx) : undefined,
+      }
+      ctx.values.set(value, cloned)
+      return cloned
+    }
+    case 'cons':
+      return cloneObjectValue(value, ctx, () => ({
+        ...value,
+        head: cloneValue(value.head, ctx),
+        tail: cloneValue(value.tail, ctx),
+        ...(value.meta ? { meta: cloneValue(value.meta, ctx) as CljMap } : {}),
+      }))
+    case 'multi-method': {
+      const cloned: CljMultiMethod = {
+        kind: 'multi-method',
+        name: value.name,
+        dispatchFn: value.dispatchFn,
+        methods: [],
+      }
+      ctx.values.set(value, cloned)
+      cloned.dispatchFn = cloneValue(value.dispatchFn, ctx) as CljMultiMethod['dispatchFn']
+      cloned.methods = value.methods.map((method) => ({
+        dispatchVal: cloneValue(method.dispatchVal, ctx),
+        fn: cloneValue(method.fn, ctx) as typeof method.fn,
+      }))
+      if (value.defaultMethod) {
+        cloned.defaultMethod = cloneValue(value.defaultMethod, ctx) as typeof value.defaultMethod
+      }
+      if (value.defaultDispatchVal) {
+        cloned.defaultDispatchVal = cloneValue(value.defaultDispatchVal, ctx)
+      }
+      return cloned
+    }
+    case 'protocol': {
+      const cloned: CljProtocol = {
+        kind: 'protocol',
+        name: value.name,
+        ns: value.ns,
+        fns: value.fns.map((fn) => ({ ...fn, arglists: fn.arglists.map((a) => [...a]) })),
+        doc: value.doc,
+        impls: new Map(),
+        ...(value.meta ? { meta: cloneValue(value.meta, ctx) as CljMap } : {}),
+      }
+      ctx.values.set(value, cloned)
+      for (const [typeTag, impls] of value.impls) {
+        const clonedImpls: Record<string, typeof impls[string]> = {}
+        for (const [name, fn] of Object.entries(impls)) {
+          clonedImpls[name] = cloneValue(fn, ctx) as typeof fn
+        }
+        cloned.impls.set(typeTag, clonedImpls)
+      }
+      return cloned
+    }
+    case 'record':
+      return cloneObjectValue(value, ctx, () => ({
+        ...value,
+        fields: value.fields.map(([k, v]) => [cloneValue(k, ctx), cloneValue(v, ctx)]),
+        ...(value.meta ? { meta: cloneValue(value.meta, ctx) as CljMap } : {}),
+      }))
+  }
+}
+
+export function cloneRegistry(registry: NamespaceRegistry): NamespaceRegistry {
+  const ctx = makeCloneContext()
+  const next = new Map<string, Env>()
+  for (const [name, env] of registry) {
+    next.set(name, cloneEnv(env, ctx))
   }
   return next
 }

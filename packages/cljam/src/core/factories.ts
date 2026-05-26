@@ -180,15 +180,27 @@ export const cljVolatile = (value: CljValue): CljVolatile => ({
   kind: 'volatile',
   value,
 })
-export const cljDelay = (thunk: () => CljValue): CljDelay => ({
+export const cljDelay = (
+  thunk: () => CljValue,
+  thunkFn?: CljValue,
+  callEnv?: Env
+): CljDelay => ({
   kind: 'delay',
   thunk,
+  thunkFn,
+  callEnv,
   realized: false,
   value: undefined,
 })
-export const cljLazySeq = (thunk: () => CljValue): CljLazySeq => ({
+export const cljLazySeq = (
+  thunk: () => CljValue,
+  thunkFn?: CljValue,
+  callEnv?: Env
+): CljLazySeq => ({
   kind: 'lazy-seq',
   thunk,
+  thunkFn,
+  callEnv,
   realized: false,
   value: undefined,
 })

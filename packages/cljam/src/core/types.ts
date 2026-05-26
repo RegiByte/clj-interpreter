@@ -113,7 +113,7 @@ export type CljAtom = {
   meta?: CljMap
   watches?: Map<
     string,
-    { key: CljValue; fn: CljValue; ctx: EvaluationContext; callEnv: Env }
+    { key: CljValue; fn: CljValue; callEnv: Env }
   >
   validator?: CljValue
 }
@@ -130,6 +130,8 @@ export type CljSet = {
 export type CljDelay = {
   kind: 'delay'
   thunk: () => CljValue
+  thunkFn?: CljValue
+  callEnv?: Env
   realized: boolean
   value?: CljValue
 }
@@ -137,6 +139,8 @@ export type CljDelay = {
 export type CljLazySeq = {
   kind: 'lazy-seq'
   thunk: (() => CljValue) | null
+  thunkFn?: CljValue
+  callEnv?: Env
   realized: boolean
   value?: CljValue // nil, list, cons, or another lazy-seq after realization
 }

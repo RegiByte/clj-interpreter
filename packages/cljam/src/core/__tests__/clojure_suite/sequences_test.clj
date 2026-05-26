@@ -23,6 +23,14 @@
   (is (nil? (next [1])))
   (is (nil? (next []))))
 
+(deftest expanded-sequence-accessors
+  (is (= 2 (fnext [1 2 3])))
+  (is (= '(3) (nnext [1 2 3])))
+  (is (= '(3 4) (nthnext [1 2 3 4] 2)))
+  (is (= [3 4] (vec (nthrest [1 2 3 4] 2))))
+  (is (= '(1 2 3 4) (list* 1 2 [3 4])))
+  (is (= '(1 2 3) (list* 1 [2 3]))))
+
 (deftest last-butlast
   (is (= 3 (last [1 2 3])))
   (is (= 3 (last '(1 2 3))))
@@ -62,6 +70,13 @@
 (deftest mapcat-flattens
   (is (= [1 2 2 3 3 4] (vec (mapcat #(list % (inc %)) [1 2 3]))))
   (is (= [:a :b :c] (vec (mapcat identity [[:a] [:b :c]])))))
+
+(deftest eager-vector-sequence-helpers
+  (is (= [2 3 4] (mapv inc [1 2 3])))
+  (is (= [2 4] (filterv even? [1 2 3 4])))
+  (let [seen (atom [])]
+    (is (nil? (run! #(swap! seen conj %) [1 2 3])))
+    (is (= [1 2 3] @seen))))
 
 (deftest map-indexed-preserves-letfn-lazy-captures
   ;; Regression coverage for a former VM issue where map-indexed's letfn helper
@@ -140,11 +155,14 @@
 
 (deftest repeat-replicates
   (is (= [42 42 42] (vec (take 3 (repeat 42)))))
-  (is (= [7 7 7] (vec (repeat 3 7)))))
+  (is (= [7 7 7] (vec (repeat 3 7))))
+  (is (= [0 0 0] (vec (take 3 (repeatedly (constantly 0)))))))
 
 (deftest iterate-unfolds
   (is (= [0 1 2 3 4] (vec (take 5 (iterate inc 0)))))
-  (is (= [1 2 4 8 16] (vec (take 5 (iterate #(* 2 %) 1))))))
+  (is (= [1 2 4 8 16] (vec (take 5 (iterate #(* 2 %) 1)))))
+  ;; cljam's take-nth currently realizes too eagerly for an unbounded range.
+  (is (= [0 3 6 9] (vec (take-nth 3 (range 12))))))
 
 (deftest lazy-seq-is-lazy
   ;; lazy-seq must not realize elements until forced
@@ -275,6 +293,7 @@
 
 (deftest interleave-and-interpose
   (is (= [1 :a 2 :b 3 :c] (vec (interleave [1 2 3] [:a :b :c]))))
+  (is (= [1 :a 2 :b] (vec (interleave [1 2 3] [:a :b]))))
   (is (= [1 "," 2 "," 3] (vec (interpose "," [1 2 3]))))
   (is (= [] (vec (interpose "," [])))))
 
@@ -294,7 +313,15 @@
 (deftest partition-chunks
   (is (= [[1 2] [3 4] [5 6]] (vec (partition 2 [1 2 3 4 5 6]))))
   (is (= [[1 2] [3 4]] (vec (partition 2 [1 2 3 4 5]))))
-  (is (= [[1 2] [3 4] [5 nil]] (vec (partition 2 2 [nil] [1 2 3 4 5])))))
+  (is (= [[1 2 3] [3 4 5] [5 6 7]] (vec (partition 3 2 [1 2 3 4 5 6 7]))))
+  (is (= [[1 2] [3 4] [5 nil]] (vec (partition 2 2 [nil] [1 2 3 4 5]))))
+  (is (= [[1 3 5] [2 4 6]] (vec (partition-by odd? [1 3 5 2 4 6])))))
+
+(deftest reductions-and-splitting
+  (is (= [0 1 3 6] (vec (reductions + 0 [1 2 3]))))
+  (is (= [1 3 6] (vec (reductions + [1 2 3]))))
+  (is (= [[1 2] [3 4]] (split-at 2 [1 2 3 4])))
+  (is (= [[1 2] [3 4]] (split-with #(< % 3) [1 2 3 4]))))
 
 (deftest flatten-nested
   (is (= [1 2 3 4 5] (flatten [1 [2 [3 [4 [5]]]]])))

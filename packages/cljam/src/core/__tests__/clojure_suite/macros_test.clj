@@ -34,6 +34,11 @@
   `(let [v# ~a]
      (if v# v# ~b)))
 
+(defmacro my-and-multi
+  ([] true)
+  ([x] x)
+  ([x & more] `(if ~x (my-and-multi ~@more) ~x)))
+
 ;;; -- quote / quasiquote -------------------------------------------------------
 
 (deftest quote-produces-data
@@ -187,3 +192,59 @@
 
   (testing "user macros can use auto-gensym for hygienic bindings"
     (is (= 10 (let [v 10] (my-or false v))))))
+
+;;; -- threading macros --------------------------------------------------------
+
+(deftest threading-macros
+  (testing "as->"
+    (is (= 4 (as-> 1 x (+ x 1) (* x 2))))
+    (is (= 42 (as-> 42 x)))
+    (is (= 4 (as-> [1 2 3] v (conj v 4) (count v))))
+    (is (= 25 (as-> 5 n (* n n)))))
+
+  (testing "cond-> and cond->>"
+    (is (= 2 (cond-> 1 true inc)))
+    (is (= 1 (cond-> 1 false inc)))
+    (is (= 2 (cond-> 0 true inc true inc false inc)))
+    (is (= 42 (cond-> 42)))
+    (is (= 15 (cond-> 10 true (+ 5))))
+    (is (= [2 3 4] (vec (cond->> [1 2 3] true (map inc)))))
+    (is (= [1 2 3] (cond->> [1 2 3] false (map inc))))
+    (is (= 99 (cond->> 99))))
+
+  (testing "nil-safe threading"
+    (is (= 3 (some-> 1 inc inc)))
+    (is (nil? (some-> nil inc)))
+    (is (nil? (some-> [] first inc)))
+    (is (= 5 (some-> 5)))
+    (is (= [2 4] (vec (some->> [1 2 3] (map inc) (filter even?)))))
+    (is (nil? (some->> nil (map inc))))
+    (is (= 42 (some->> 42)))))
+
+(deftest binding-condition-macros
+  (testing "if-let"
+    (is (= :then (if-let [x 1] :then :else)))
+    (is (= :else (if-let [x nil] :then :else)))
+    (is (= :else (if-let [x false] :then :else)))
+    (is (nil? (if-let [x nil] :then)))
+    (is (= 2 (if-let [x 1] (inc x) :else)))
+    (is (= :outer (let [x :outer] (if-let [y nil] y x)))))
+
+  (testing "when-let"
+    (is (= 2 (when-let [x 1] (inc x))))
+    (is (nil? (when-let [x nil] (inc x))))
+    (is (nil? (when-let [x false] x)))
+    (is (= :last (when-let [x 1] :first :last)))))
+
+(deftest qualified-core-macro-calls
+  (is (= 42 (clojure.core/when true 42)))
+  (is (nil? (clojure.core/when false 42)))
+  (is (= 2 (clojure.core/when-let [x 1] (inc x))))
+  (is (= 3 (clojure.core/and true 3)))
+  (is (= :fallback (clojure.core/or nil :fallback))))
+
+(deftest multi-arity-macros
+  (is (= true (my-and-multi)))
+  (is (= 42 (my-and-multi 42)))
+  (is (= 99 (my-and-multi true true 99)))
+  (is (= false (my-and-multi true false 99))))

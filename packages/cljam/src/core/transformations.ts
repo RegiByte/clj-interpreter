@@ -11,6 +11,8 @@ import {
   type CljMultiMethod,
   type CljSet,
   type CljValue,
+  type Env,
+  type EvaluationContext,
 } from './types'
 
 export function valueToString(value: CljValue): string {
@@ -148,15 +150,27 @@ export function valueToString(value: CljValue): string {
 }
 
 /** Realize a delay: evaluate thunk once, cache result. */
-export function realizeDelay(d: CljDelay): CljValue {
+export function realizeDelay(
+  d: CljDelay,
+  ctx?: EvaluationContext,
+  callEnv?: Env
+): CljValue {
   if (d.realized) return d.value!
-  d.value = d.thunk()
+  if (ctx && d.thunkFn) {
+    d.value = ctx.applyCallable(d.thunkFn, [], d.callEnv ?? callEnv!)
+  } else {
+    d.value = d.thunk()
+  }
   d.realized = true
   return d.value!
 }
 
 /** Realize a lazy-seq: evaluate thunk once, cache result. Trampolines through chained lazy-seqs. */
-export function realizeLazySeq(ls: CljLazySeq): CljValue {
+export function realizeLazySeq(
+  ls: CljLazySeq,
+  ctx?: EvaluationContext,
+  callEnv?: Env
+): CljValue {
   let current: CljValue = ls
   while (current.kind === 'lazy-seq') {
     const lazy = current as CljLazySeq
@@ -165,7 +179,11 @@ export function realizeLazySeq(ls: CljLazySeq): CljValue {
       continue
     }
     if (lazy.thunk) {
-      lazy.value = lazy.thunk()
+      if (ctx && lazy.thunkFn) {
+        lazy.value = ctx.applyCallable(lazy.thunkFn, [], lazy.callEnv ?? callEnv!)
+      } else {
+        lazy.value = lazy.thunk()
+      }
       lazy.thunk = null
       lazy.realized = true
       current = lazy.value!

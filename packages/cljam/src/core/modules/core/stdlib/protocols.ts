@@ -163,7 +163,14 @@ export const protocolFunctions: Record<string, CljValue> = {
               }
               const target = args[0]
               const tag = typeTagOf(target)
-              const typeImpls = protocol.impls.get(tag)
+              const activeProtocolVar = innerCtx
+                .resolveNs(nsName)
+                ?.vars.get(protocolName)
+              const activeProtocol =
+                activeProtocolVar && is.protocol(activeProtocolVar.value)
+                  ? activeProtocolVar.value
+                  : protocol
+              const typeImpls = activeProtocol.impls.get(tag)
               if (!typeImpls || !typeImpls[methodName]) {
                 throw new EvaluationError(
                   `No implementation of protocol method '${nsName}/${protocolName}/${methodName}' for type '${tag}'`,

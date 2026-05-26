@@ -40,12 +40,12 @@ export const seqFunctions: Record<string, CljValue> = {
     ]),
 
   seq: v
-    .nativeFn('seq', function seqImpl(coll: CljValue): CljValue {
+    .nativeFnCtx('seq', function seqImpl(ctx, callEnv, coll: CljValue): CljValue {
       if (is.nil(coll)) return v.nil()
       if (is.lazySeq(coll)) {
-        const realized = realizeLazySeq(coll)
+        const realized = realizeLazySeq(coll, ctx, callEnv)
         if (is.nil(realized)) return v.nil()
-        return seqImpl(realized)
+        return seqImpl(ctx, callEnv, realized)
       }
       if (is.cons(coll)) return coll
       if (!is.seqable(coll)) {
@@ -67,12 +67,12 @@ export const seqFunctions: Record<string, CljValue> = {
     ]),
 
   first: v
-    .nativeFn('first', function firstImpl(collection: CljValue): CljValue {
+    .nativeFnCtx('first', function firstImpl(ctx, callEnv, collection: CljValue): CljValue {
       if (is.nil(collection)) return v.nil()
       if (is.lazySeq(collection)) {
-        const realized = realizeLazySeq(collection)
+        const realized = realizeLazySeq(collection, ctx, callEnv)
         if (is.nil(realized)) return v.nil()
-        return firstImpl(realized)
+        return firstImpl(ctx, callEnv, realized)
       }
       if (is.cons(collection)) return collection.head
       if (!is.seqable(collection)) {
@@ -94,12 +94,12 @@ export const seqFunctions: Record<string, CljValue> = {
     ]),
 
   rest: v
-    .nativeFn('rest', function restImpl(collection: CljValue): CljValue {
+    .nativeFnCtx('rest', function restImpl(ctx, callEnv, collection: CljValue): CljValue {
       if (is.nil(collection)) return v.list([])
       if (is.lazySeq(collection)) {
-        const realized = realizeLazySeq(collection)
+        const realized = realizeLazySeq(collection, ctx, callEnv)
         if (is.nil(realized)) return v.list([])
-        return restImpl(realized)
+        return restImpl(ctx, callEnv, realized)
       }
       if (is.cons(collection)) return collection.tail
       if (!is.seqable(collection)) {
@@ -303,9 +303,9 @@ export const seqFunctions: Record<string, CljValue> = {
     ]),
 
   nth: v
-    .nativeFn(
+    .nativeFnCtx(
       'nth',
-      function nthImpl(coll: CljValue, n: CljValue, notFound?: CljValue) {
+      function nthImpl(_ctx, callEnv, coll: CljValue, n: CljValue, notFound?: CljValue) {
         if (n === undefined || !is.number(n)) {
           throw new EvaluationError(
             `nth expects a number index${n !== undefined ? `, got ${printString(n)}` : ''}`,
@@ -329,7 +329,7 @@ export const seqFunctions: Record<string, CljValue> = {
           while (true) {
             // Peel any lazy-seq wrappers before inspecting the head
             while (is.lazySeq(current)) {
-              current = realizeLazySeq(current)
+              current = realizeLazySeq(current, _ctx, callEnv)
             }
             if (is.nil(current)) {
               // Sequence ended before reaching index

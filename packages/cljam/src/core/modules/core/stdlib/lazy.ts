@@ -6,9 +6,9 @@ import type { CljValue, Env, EvaluationContext } from '../../../types'
 
 export const lazyFunctions = {
   force: v
-    .nativeFn('force', function force(value: CljValue) {
-      if (is.delay(value)) return realizeDelay(value)
-      if (is.lazySeq(value)) return realizeLazySeq(value)
+    .nativeFnCtx('force', function force(ctx, callEnv, value: CljValue) {
+      if (is.delay(value)) return realizeDelay(value, ctx, callEnv)
+      if (is.lazySeq(value)) return realizeLazySeq(value, ctx, callEnv)
       return value
     })
     .withMeta([
@@ -67,7 +67,7 @@ export const lazyFunctions = {
             { fn }
           )
         }
-        return v.delay(() => ctx.applyCallable(fn, [], callEnv))
+        return v.delay(() => ctx.applyCallable(fn, [], callEnv), fn, callEnv)
       }
     )
     .withMeta([
@@ -91,7 +91,7 @@ export const lazyFunctions = {
             { fn }
           )
         }
-        return v.lazySeq(() => ctx.applyCallable(fn, [], callEnv))
+        return v.lazySeq(() => ctx.applyCallable(fn, [], callEnv), fn, callEnv)
       }
     )
     .withMeta([

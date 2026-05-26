@@ -40,6 +40,19 @@
   (testing "comp chains keyword and fn"
     (is (= 43 ((comp inc :count) {:count 42})))))
 
+;;; ── Anonymous function reader macro ─────────────────────────────────────────
+
+(deftest anonymous-function-reader-macro
+  (is (= 10 (#(* 2 %) 5)))
+  (is (= 7 (#(+ %1 %2) 3 4)))
+  (is (= "x-x" (#(str % "-" %1) "x")))
+  (is (= [0 2 4 6 8] (into [] (map #(* % 2) (range 5)))))
+  (is (= 10 (#(apply + %&) 1 2 3 4)))
+  (is (= "hello world!" (#(str %1 " " (apply str %&)) "hello" "world" "!")))
+  (is (= 3 (#(+ 1 2))))
+  (is (= 15 (#(+ %1 %3) 10 0 5)))
+  (is (= [0 2 4] (into [] (filter #(even? %) (range 6))))))
+
 ;;; ── some-fn / every-pred ────────────────────────────────────────────────────
 
 (deftest some-fn-basic
@@ -149,6 +162,36 @@
   (testing "map over sequence of partials"
     (let [doublers (map #(partial * 2 %) (range 1 4))]
       (is (= [2 4 6] (map #(%) doublers))))))
+
+(deftest multi-arity-functions
+  (testing "dispatches by argument count"
+    (let [f (fn
+              ([] 0)
+              ([x] x)
+              ([x y] (+ x y)))]
+      (is (= 0 (f)))
+      (is (= 5 (f 5)))
+      (is (= 7 (f 3 4)))))
+
+  (testing "exact fixed arity wins over variadic"
+    (let [f (fn
+              ([x] :exact)
+              ([x & rest] :variadic))]
+      (is (= :exact (f 1)))
+      (is (= :variadic (f 1 2 3)))))
+
+  (testing "arity mismatch and duplicate variadics throw"
+    (is (thrown? :default ((fn ([] 0) ([x y] (+ x y))) 1)))
+    (is (thrown? :default (fn ([x & a] x) ([y & b] y)))))
+
+  (testing "defn multi arity"
+    (defn local-greet
+      ([] "hi")
+      ([x] (str "hi " x))
+      ([x y] (str "hi " x " and " y)))
+    (is (= "hi" (local-greet)))
+    (is (= "hi world" (local-greet "world")))
+    (is (= "hi world and universe" (local-greet "world" "universe")))))
 
 ;;; ── juxt ─────────────────────────────────────────────────────────────────────
 

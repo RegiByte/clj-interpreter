@@ -37,6 +37,7 @@ export type { NamespaceRegistry }
 export type RuntimeSnapshot = {
   registry: NamespaceRegistry
   identity: RuntimeIdentityState
+  sourceLoadedNs: string[]
 }
 
 export type RuntimeIdentityState = {
@@ -122,7 +123,8 @@ function buildRuntime(
   registry: NamespaceRegistry,
   coreEnv: Env,
   identity: RuntimeIdentityState,
-  options: RuntimeOptions | undefined
+  options: RuntimeOptions | undefined,
+  initialSourceLoadedNs?: Iterable<string>
 ): Runtime {
   const sourceRoots = new Set<string>(options?.sourceRoots ?? [])
   const topLevelVmCache = new Map<string, VmChunk>()
@@ -139,7 +141,7 @@ function buildRuntime(
   // Distinct from the registry — a namespace can be pre-declared via declareNs
   // (native vars only) without its source being loaded. resolveNamespace is
   // idempotent against this set, so repeated require calls are no-ops.
-  const sourceLoadedNs = new Set<string>()
+  const sourceLoadedNs = new Set<string>(initialSourceLoadedNs)
 
   // resolveNamespace: loads a namespace's .clj source if it hasn't been loaded
   // yet. Idempotent — returns true immediately if already source-loaded.
@@ -494,7 +496,11 @@ function buildRuntime(
     },
 
     snapshot(): RuntimeSnapshot {
-      return { registry: cloneRegistry(registry), identity: { ...identity } }
+      return {
+        registry: cloneRegistry(registry),
+        identity: { ...identity },
+        sourceLoadedNs: [...sourceLoadedNs],
+      }
     },
   }
 
@@ -542,7 +548,13 @@ export function restoreRuntime(
 ): Runtime {
   const registry = cloneRegistry(snapshot.registry)
   const coreEnv = registry.get('clojure.core')!
-  const runtime = buildRuntime(registry, coreEnv, { ...snapshot.identity }, options)
+  const runtime = buildRuntime(
+    registry,
+    coreEnv,
+    { ...snapshot.identity },
+    options,
+    snapshot.sourceLoadedNs ?? []
+  )
   // No module reinstallation needed — IO functions (println, print, etc.) read
   // ctx.io.stdout at call time, so the snapshot's native functions automatically
   // use the session's output channel without any rewiring.

@@ -38,6 +38,23 @@
   (is (nil? (the-ns 'clojure-suite.no-such-ns)))
   (is (every? namespace? (all-ns))))
 
+(deftest namespace-utility-functions
+  (is (= 'user (ns-name 'user)))
+  (is (= 'user (ns-name "user")))
+  (is (nil? (ns-name 42)))
+  (is (map? (ns-imports 'clojure-suite.namespaces-test)))
+  (is (empty? (ns-imports 'clojure-suite.namespaces-test)))
+  (is (set? (loaded-libs)))
+  (is (contains? (loaded-libs) 'clojure.core))
+  (is (= false (instance? String "x")))
+  (is (= "conjure.string" (class "x")))
+  (is (nil? (class)))
+  (is (not (class? String)))
+  (is (the-ns 'clojure-suite.namespaces-test))
+  (is (special-symbol? 'def))
+  (is (special-symbol? 'if))
+  (is (not (special-symbol? 'not-special))))
+
 (deftest require-alias-and-refer
   (is (= "HELLO" (upper-case "hello")))
   (is (= "hello" (str/lower-case "HELLO")))

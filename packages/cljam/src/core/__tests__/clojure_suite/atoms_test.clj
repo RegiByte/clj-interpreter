@@ -84,6 +84,11 @@
       (swap! a assoc :name "test")
       (is (= {:count 1 :name "test"} @a)))))
 
+(deftest atom-error-cases
+  (is (thrown? :default (deref 42)))
+  (is (thrown? :default (swap! 42 inc)))
+  (is (thrown? :default (reset! 42 1))))
+
 ;;; ── compare-and-set! ─────────────────────────────────────────────────────────
 
 (deftest compare-and-set-bang

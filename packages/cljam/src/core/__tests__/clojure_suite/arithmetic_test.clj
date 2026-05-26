@@ -197,6 +197,14 @@
     (is (= 2  (mod -10 3)))   ;; mod: follows divisor (positive)
     (is (= -1 (rem -10 3))))) ;; rem: follows dividend (negative)
 
+(deftest bit-operations
+  (is (= 1 (bit-and 5 3)))
+  (is (= 7 (bit-or 5 3)))
+  (is (= 6 (bit-xor 5 3)))
+  (is (= -1 (bit-not 0)))
+  (is (= 16 (bit-shift-left 1 4)))
+  (is (= 1 (bit-shift-right 16 4))))
+
 ;;; ── abs ──────────────────────────────────────────────────────────────────────
 
 (deftest absolute-value
@@ -267,3 +275,15 @@
   (testing "keywords"
     (is (= 0 (compare :a :a)))
     (is (not= 0 (compare :a :b)))))
+
+(deftest comparison-predicate-errors
+  (is (thrown? :default (> 3)))
+  (is (thrown? :default (> 3 2 "a")))
+  (is (thrown? :default (< 3)))
+  (is (thrown? :default (< 3 2 "a")))
+  (is (thrown? :default (>=)))
+  (is (thrown? :default (>= 1)))
+  (is (thrown? :default (>= 1 "a")))
+  (is (thrown? :default (<=)))
+  (is (thrown? :default (<= 1)))
+  (is (thrown? :default (<= "a" 1))))

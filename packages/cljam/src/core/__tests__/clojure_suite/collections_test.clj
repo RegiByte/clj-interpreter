@@ -20,7 +20,14 @@
   (is (nil? (:missing {:a 1})))
   (is (= :default (:missing {:a 1} :default)))
   (is (= 1 ({:a 1} :a)))
-  (is (nil? ({:a 1} :missing))))
+  (is (nil? ({:a 1} :missing)))
+  (is (= 99 ({:a 1} :missing 99)))
+  (is (= 1 ({:a 1} :a 99)))
+  (is (= 1 ({"x" 1 "y" 2} "x")))
+  (is (= :one ({1 :one 2 :two} 1)))
+  (is (= [1 3] (map {:a 1 :b 2 :c 3} [:a :c])))
+  (is (= [1 nil nil] (map {:a 1} [:a :b :c])))
+  (is (thrown? :default ({:a 1}))))
 
 (deftest map-get-in
   (is (= 42 (get-in {:a {:b 42}} [:a :b])))
@@ -127,7 +134,15 @@
   (is (nil? (get [1 2 3] 5)))
   (is (= :nope (get [1 2 3] 5 :nope)))
   (is (= 1 (nth [1 2 3] 0)))
-  (is (= 2 ([1 2 3] 1))))
+  (is (= 2 ([1 2 3] 1)))
+  (is (= 30 ([10 20 30] 2)))
+  (is (= [10 30] (map [10 20 30] [0 2])))
+  (is (= 20 ((comp [10 20 30]) 1)))
+  (is (not (fn? [10 20 30])))
+  (is (thrown? :default ([10 20 30])))
+  (is (thrown? :default ([10 20 30] 3 0)))
+  (is (thrown? :default ([10 20 30] :x)))
+  (is (thrown? :default ([10 20 30] 3))))
 
 (deftest vector-conj
   (is (= [1 2 3 4] (conj [1 2 3] 4)))
@@ -141,6 +156,25 @@
 (deftest vector-subvec
   (is (= [2 3] (subvec [1 2 3 4] 1 3)))
   (is (= [3 4] (subvec [1 2 3 4] 2))))
+
+(deftest empty-and-not-empty
+  (is (= [] (empty [1 2 3])))
+  (is (= '() (empty '(1 2 3))))
+  (is (= {} (empty {:a 1})))
+  (is (= #{} (empty #{1 2})))
+  (is (nil? (not-empty [])))
+  (is (= [1] (not-empty [1])))
+  (is (nil? (not-empty {})))
+  (is (= {:a 1} (not-empty {:a 1}))))
+
+(deftest map-merge-with-and-update-keys-values
+  (is (= {:a 1 :b 5 :c 4} (merge-with + {:a 1 :b 2} {:b 3 :c 4})))
+  (is (= {:x/a 1 :x/b 2} (update-keys {:a 1 :b 2} #(keyword "x" (name %)))))
+  (is (= {:a 2 :b 3} (update-vals {:a 1 :b 2} inc))))
+
+(deftest reduce-kv-semantics
+  (is (= 6 (reduce-kv (fn [acc _ v] (+ acc v)) 0 {:a 1 :b 2 :c 3})))
+  (is (= [[0 :a] [1 :b]] (reduce-kv (fn [acc k v] (conj acc [k v])) [] [:a :b]))))
 
 (deftest vector-peek-pop
   (is (= 3 (peek [1 2 3])))
