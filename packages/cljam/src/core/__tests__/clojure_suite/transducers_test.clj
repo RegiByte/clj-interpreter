@@ -49,6 +49,35 @@
   (is (= [1 3 5] (into [] (filter odd?) [1 2 3 4 5])))
   (is (= [2 4] (into [] (comp (map inc) (filter even?)) [1 2 3 4]))))
 
+(deftest sequence-lazy-contract
+  ;; 1-arg: must not force a lazy-seq
+  (let [realized (atom false)
+        lz (lazy-seq (do (reset! realized true) [1 2 3]))]
+    (sequence lz)
+    (is (false? @realized) "sequence 1-arg must not force lazy body"))
+  ;; 1-arg: result is seq? for non-seq inputs
+  (is (seq? (sequence [1 2 3])))
+  (is (seq? (sequence {:a 1})))
+  ;; 1-arg: nil/empty → ()
+  (is (= '() (sequence nil)))
+  (is (= '() (sequence [])))
+  ;; 2-arg: finite source, correct values (regression)
+  (is (= '(2 3 4) (sequence (map inc) [1 2 3])))
+  ;; 2-arg: empty and nil source → ()
+  (is (= '() (sequence (map inc) [])))
+  (is (= '() (sequence (map inc) nil)))
+  ;; 2-arg: result is seq?
+  (is (seq? (sequence (map inc) [1 2 3])))
+  ;; 2-arg: infinite source with filtering transducer
+  (is (= '(1 3 5 7 9) (take 5 (sequence (filter odd?) (range)))))
+  ;; 2-arg: early-termination transducer on infinite source
+  (is (= '(0 1 2) (sequence (take 3) (range))))
+  ;; 2-arg: stateful transducer (partition-all) on infinite source
+  (is (= '([0 1] [2 3] [4 5]) (take 3 (sequence (partition-all 2) (range)))))
+  ;; 2-arg: composed transducer on infinite source
+  (is (= '(2 6 10 14 18)
+         (take 5 (sequence (comp (filter odd?) (map #(* % 2))) (range))))))
+
 (deftest transducer-producing-arities
   (testing "single-arity calls return transducers that compose with into"
     (is (= [1 2] (into [] (take-while pos?) [1 2 0 3])))

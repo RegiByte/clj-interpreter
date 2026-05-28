@@ -657,16 +657,50 @@
   ([to from] (reduce conj to from))
   ([to xf from] (transduce xf conj to from)))
 
-;; sequence: materialise a transducer over a collection into a seq (list)
 (defn
   ^{:doc-group "Sequences"}
   sequence
   "Coerces coll to a (possibly empty) sequence, if it is not already
-  one. Will not force a seq. (sequence nil) yields (), When a
+  one. Will not force a lazy seq. (sequence nil) yields (). When a
   transducer is supplied, returns a lazy sequence of applications of
-  the transform to the items in coll"
-  ([coll] (apply list (into [] coll)))
-  ([xf coll] (apply list (into [] xf coll))))
+  the transform to the items in coll."
+  ([coll]
+   (if (seq? coll)
+     coll
+     (or (seq coll) '())))
+  ([xf coll]
+   ;; Pull/push adapter: pulls source items one at a time, pushes through xf,
+   ;; and yields outputs lazily. Handles stateful transducers (partition-all),
+   ;; early termination (take), and infinite sources.
+   ;;
+   ;; After finalization, (step nil) drains the pending buffer naturally:
+   ;; (when-not @finalized) blocks further source pulling, so we only yield
+   ;; remaining buffered items and then return nil.
+   (let [pending   (volatile! [])
+         finalized (volatile! false)
+         xrf (xf (fn
+                   ([] nil)
+                   ([_] nil)
+                   ([_ x] (vswap! pending conj x) nil)))
+         step (fn step [s]
+                (lazy-seq
+                  (if (seq @pending)
+                    (let [item (first @pending)]
+                      (vswap! pending (fn [v] (subvec v 1)))
+                      (cons item (step s)))
+                    (when-not @finalized
+                      (if-let [s (seq s)]
+                        (let [res (xrf nil (first s))]
+                          (if (reduced? res)
+                            (do (vreset! finalized true)
+                                (xrf (unreduced res))
+                                (step nil))
+                            (step (rest s))))
+                        (do (vreset! finalized true)
+                            (xrf nil)
+                            (step nil)))))))]
+     (or (seq (step coll)) '()))))
+
 
 (defn
   ^{:doc-group "Sequences"}
@@ -961,7 +995,12 @@
                 (vreset! buf nb)
                 result))))))))
   ([n coll]
-   (sequence (partition-all n) coll)))
+   (partition-all n n coll))
+  ([n step coll]
+   (lazy-seq
+     (when-let [s (seq coll)]
+       (let [seg (vec (take n s))]
+         (cons seg (partition-all n step (nthrest s step))))))))
 
 ;; ── Documentation ────────────────────────────────────────────────────────────
 
@@ -1321,7 +1360,9 @@
               (rf result input)
               result)))))))
   ([n coll]
-   (sequence (take-nth n) coll)))
+   (lazy-seq
+     (when-let [s (seq coll)]
+       (cons (first s) (take-nth n (drop n s)))))))
 
 (defn
   ^{:doc-group "Sequences"}

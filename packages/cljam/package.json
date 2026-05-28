@@ -24,6 +24,7 @@
     "prepublishOnly": "bun run gen:core-source && node scripts/gen-version.mjs && node scripts/build-npm-library.mjs && node scripts/build-npm-bin.mjs && node scripts/build-nrepl.mjs && node scripts/build-vite-plugin.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest",
+    "release-blockers": "bun run scripts/release-blockers/run-repros.ts",
     "gen:core-source": "bun run scripts/gen-core-source.mjs",
     "gen:version": "node scripts/gen-version.mjs"
   },

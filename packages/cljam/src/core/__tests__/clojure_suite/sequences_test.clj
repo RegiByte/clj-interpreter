@@ -161,8 +161,24 @@
 (deftest iterate-unfolds
   (is (= [0 1 2 3 4] (vec (take 5 (iterate inc 0)))))
   (is (= [1 2 4 8 16] (vec (take 5 (iterate #(* 2 %) 1)))))
-  ;; cljam's take-nth currently realizes too eagerly for an unbounded range.
   (is (= [0 3 6 9] (vec (take-nth 3 (range 12))))))
+
+(deftest take-nth-over-infinite-source
+  (is (= [0 3 6 9]   (vec (take 4 (take-nth 3 (range))))))
+  (is (= [0 2 4 6]   (vec (take 4 (take-nth 2 (range))))))
+  (is (= [0 1 2 3 4] (vec (take 5 (take-nth 1 (range))))))
+  (is (= [0 5 10]    (vec (take 3 (take-nth 5 (range)))))))
+
+(deftest partition-all-over-infinite-source
+  (is (= '([0 1] [2 3] [4 5])   (take 3 (partition-all 2 (range)))))
+  (is (= '([0 1 2] [3 4 5])     (take 2 (partition-all 3 (range)))))
+  (is (= '([1 2] [3 4] [5])     (partition-all 2 [1 2 3 4 5])))
+  (is (= '([1 2 3] [4])         (partition-all 3 [1 2 3 4]))))
+
+(deftest dedupe-over-infinite-source
+  (is (= '(0 1 2 3 4) (take 5 (dedupe (range)))))
+  (is (= '(1 2 3 1)   (dedupe [1 1 2 2 3 1 1])))
+  (is (= '(nil 1 nil) (dedupe [nil nil 1 nil]))))
 
 (deftest lazy-seq-is-lazy
   ;; lazy-seq must not realize elements until forced
