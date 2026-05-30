@@ -31,6 +31,7 @@ import type {
   EvaluationMeasurementStage,
   VmFallbackReason,
 } from '../../../types'
+import { analyzeToClj, analyzeToLines } from '../../../analyzer'
 import { emitToOut } from './print'
 
 /**
@@ -360,6 +361,44 @@ export const utilFunctions: Record<string, CljValue> = {
     .withMeta([
       ...docMeta({
         doc: 'Implementation detail for disassemble*. Returns formatted VM bytecode lines for quoted forms and bytecode-backed values.',
+        arglists: [['form']],
+        docGroup: DocGroups.runtime,
+      }),
+    ]),
+  'analyze*-impl': v
+    .nativeFnCtx(
+      'analyze*-impl',
+      function analyzeImpl(
+        ctx: EvaluationContext,
+        callEnv: Env,
+        form: CljValue | undefined
+      ) {
+        if (form === undefined) return v.nil()
+        return v.vector(analyzeToLines(form, callEnv, ctx).map(v.string))
+      }
+    )
+    .withMeta([
+      ...docMeta({
+        doc: 'Implementation detail for analyze*. Returns the human-readable analyzer AST printout for a quoted form. Does not evaluate the form.',
+        arglists: [['form']],
+        docGroup: DocGroups.runtime,
+      }),
+    ]),
+  'ast*-impl': v
+    .nativeFnCtx(
+      'ast*-impl',
+      function astImpl(
+        ctx: EvaluationContext,
+        callEnv: Env,
+        form: CljValue | undefined
+      ) {
+        if (form === undefined) return v.nil()
+        return analyzeToClj(form, callEnv, ctx)
+      }
+    )
+    .withMeta([
+      ...docMeta({
+        doc: 'Implementation detail for ast*. Returns the faithful analyzer AST as cljam data for a quoted form. Does not evaluate the form.',
         arglists: [['form']],
         docGroup: DocGroups.runtime,
       }),

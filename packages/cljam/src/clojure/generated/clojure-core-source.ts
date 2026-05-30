@@ -79,6 +79,8 @@ export const clojure_coreSource = `\
 (declare hierarchy-ancestors-global)
 (declare describe*)
 (declare disassemble*-impl)
+(declare analyze*-impl)
+(declare ast*-impl)
 
 (defmacro
   ^{:doc-group "Runtime"}
@@ -100,6 +102,20 @@ export const clojure_coreSource = `\
   "Returns formatted VM bytecode disassembly lines for form or a bytecode-backed function, var, or macro target. Does not evaluate the target form."
   [form]
   \`(disassemble*-impl '~form))
+
+(defmacro
+  ^{:doc-group "Runtime"}
+  analyze*
+  "Returns the human-readable analyzer AST printout for form. Does not evaluate the form."
+  [form]
+  \`(analyze*-impl '~form))
+
+(defmacro
+  ^{:doc-group "Runtime"}
+  ast*
+  "Returns the faithful analyzer AST as cljam data for form. Does not evaluate the form."
+  [form]
+  \`(ast*-impl '~form))
 
 (defmacro
   ^{:doc-group "Functions"}
@@ -155,7 +171,7 @@ export const clojure_coreSource = `\
   lazy-seq
   "Takes a body of expressions that returns a seq or nil, and yields a LazySeq that will invoke the body only the first time it is realized."
   [& body]
-  \`(make-lazy-seq (fn* [] ~@body)))
+  \`(make-lazy-seq (fn* lazy-seq-thunk [] ~@body)))
 
 
 (defn
