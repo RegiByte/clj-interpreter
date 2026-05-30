@@ -19,18 +19,29 @@
  *   - finally bodies are `statement` (their value is discarded)
  */
 
-import type { Context } from './env'
+import { getPos } from '../positions'
+import type { AnalysisError, Context } from './env'
 import type { AstNode } from './nodes'
 
-export type ContextResult = { errors: string[] }
-
+/**
+ * Stamps tail/statement/expr context and validates `recur`, pushing any problems
+ * into the shared `errors` sink (the same channel the resolve pass uses).
+ */
 export function markContext(
   root: AstNode,
+  errors: AnalysisError[],
   context: Context = 'expr'
-): ContextResult {
-  const errors: string[] = []
+): void {
   walk(root, context, errors)
-  return { errors }
+}
+
+function recordError(node: AstNode, message: string): AnalysisError {
+  return {
+    message,
+    form: node.form,
+    pos: node.pos ?? getPos(node.form) ?? null,
+    kind: 'malformed',
+  }
 }
 
 function setCtx(node: AstNode, context: Context): void {
@@ -39,7 +50,7 @@ function setCtx(node: AstNode, context: Context): void {
   node.env = { ...node.env, context }
 }
 
-function walk(node: AstNode, context: Context, errors: string[]): void {
+function walk(node: AstNode, context: Context, errors: AnalysisError[]): void {
   setCtx(node, context)
 
   switch (node.op) {
@@ -48,7 +59,7 @@ function walk(node: AstNode, context: Context, errors: string[]): void {
     case 'var':
     case 'the-var':
     case 'js-var':
-    case 'unsupported':
+    case 'invalid':
       return
 
     case 'quote':
@@ -109,10 +120,10 @@ function walk(node: AstNode, context: Context, errors: string[]): void {
 
     case 'recur':
       if (context !== 'return') {
-        errors.push('recur must be in tail (return) position')
+        errors.push(recordError(node, 'recur must be in tail (return) position'))
       }
       if (node.targetKind === null) {
-        errors.push('recur used outside of a loop or fn')
+        errors.push(recordError(node, 'recur used outside of a loop or fn'))
       } else if (node.targetArity !== null) {
         // Variadic targets accept the fixed args plus one rest collection.
         const target = node.env.recur
@@ -120,7 +131,10 @@ function walk(node: AstNode, context: Context, errors: string[]): void {
           target && target.variadic ? node.targetArity + 1 : node.targetArity
         if (node.exprs.length !== expected) {
           errors.push(
-            `recur expects ${expected} argument(s) but got ${node.exprs.length}`
+            recordError(
+              node,
+              `recur expects ${expected} argument(s) but got ${node.exprs.length}`
+            )
           )
         }
       }

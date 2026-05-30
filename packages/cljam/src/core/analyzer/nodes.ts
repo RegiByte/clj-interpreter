@@ -32,7 +32,12 @@
  */
 
 import type { CljValue, Pos } from '../types'
-import type { LocalBinding, NodeEnv, Upvalue } from './env'
+import type {
+  AnalysisErrorKind,
+  LocalBinding,
+  NodeEnv,
+  Upvalue,
+} from './env'
 
 export type ConstType =
   | 'nil'
@@ -269,13 +274,15 @@ export interface SetBangNode extends NodeBase {
 }
 
 /**
- * Escape hatch for forms Phase 0 does not yet model. Lets the coverage gate
- * traverse the whole suite without throwing, surfacing gaps as visible nodes
- * instead of crashes.
+ * Placeholder for a subform that could not be analyzed. Always paired with an
+ * accumulated `AnalysisError` (see env.ts). `kind` distinguishes a real user
+ * error (`malformed`) from a not-yet-modeled op (`unsupported`). Keeps the tree
+ * structurally complete and walkable so tooling can render the problem in place.
  */
-export interface UnsupportedNode extends NodeBase {
-  op: 'unsupported'
-  reason: string
+export interface InvalidNode extends NodeBase {
+  op: 'invalid'
+  message: string
+  kind: AnalysisErrorKind
 }
 
 export type AstNode =
@@ -307,4 +314,4 @@ export type AstNode =
   | BindingNode
   | DynamicNode
   | SetBangNode
-  | UnsupportedNode
+  | InvalidNode

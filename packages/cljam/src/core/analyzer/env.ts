@@ -21,10 +21,42 @@
  * definition site too (the RB-007 signal).
  */
 
-import type { CljNamespace } from '../types'
+import type {
+  CljNamespace,
+  CljValue,
+  Env,
+  EvaluationContext,
+  Pos,
+} from '../types'
 import type { LocalKind } from './nodes'
 
 export type Context = 'statement' | 'expr' | 'return'
+
+/**
+ * A single analysis problem, accumulated as data (never thrown in the recursive
+ * hot path). `malformed` = a real user error; `unsupported` = a form the
+ * analyzer does not yet model (reserved; unused by current call sites).
+ */
+export type AnalysisErrorKind = 'malformed' | 'unsupported'
+
+export type AnalysisError = {
+  message: string
+  form: CljValue
+  pos: Pos | null
+  kind: AnalysisErrorKind
+}
+
+/**
+ * The analysis-constant state threaded through the resolve pass: the live
+ * runtime env + evaluation context (for macroexpansion / var resolution) and
+ * the shared error sink. `NodeEnv` is kept separate because it changes per
+ * scope; this bundle is constant for the whole analysis except its `errors`.
+ */
+export type AnalyzeState = {
+  cljEnv: Env
+  ctx: EvaluationContext
+  errors: AnalysisError[]
+}
 
 /** Mutable cell shared between a binding's definition node and its env entry. */
 export type CaptureCell = { captured: boolean }

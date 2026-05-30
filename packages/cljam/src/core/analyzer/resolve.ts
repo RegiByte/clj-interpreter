@@ -9,6 +9,11 @@
  * Context (statement/expr/return) is intentionally NOT decided here — every node
  * is created with the threaded env's default context and a separate pass
  * (context.ts) refines it.
+ *
+ * Errors are accumulated into the shared `AnalyzeState.errors` sink rather than
+ * thrown, so analysis never unwinds the JS stack for control flow and so
+ * tooling (`analyze*`) can show partially-broken trees. A structurally broken
+ * subform becomes an `:invalid` placeholder node paired with an `AnalysisError`.
  */
 
 import { is } from '../assertions'
@@ -26,12 +31,13 @@ import type {
   CljSet,
   CljSymbol,
   CljValue,
+  CljVar,
   CljVector,
-  Env,
-  EvaluationContext,
   Pos,
 } from '../types'
 import {
+  type AnalysisErrorKind,
+  type AnalyzeState,
   declareLocal,
   enterFn,
   type LocalBinding,
@@ -50,25 +56,36 @@ import type {
   VarNode,
 } from './nodes'
 
-// ─── macro lookup + expand-as-descend ───────────────────────────────────────
+// ─── var / macro resolution ──────────────────────────────────────────────────
 
-function lookupMacro(
-  name: string,
-  cljEnv: Env,
-  ctx: EvaluationContext
-): CljValue | undefined {
+/**
+ * Resolves a symbol name to its Var, handling qualified (`ns/name`,
+ * alias-qualified) and unqualified names. One env-chain walk; the caller derives
+ * both `resolved` and the Var's namespace from the result. Mirrors the qualified
+ * resolution `lookupMacro` and the evaluator already use.
+ */
+function resolveVar(name: string, st: AnalyzeState): CljVar | undefined {
   const slashIdx = name.indexOf('/')
   if (slashIdx > 0 && slashIdx < name.length - 1) {
     const nsPrefix = name.slice(0, slashIdx)
     const localName = name.slice(slashIdx + 1)
-    const nsEnv = getNamespaceEnv(cljEnv)
+    const nsEnv = getNamespaceEnv(st.cljEnv)
     const targetNs =
-      nsEnv.ns?.aliases.get(nsPrefix) ?? ctx.resolveNs(nsPrefix) ?? null
-    if (!targetNs) return undefined
-    const varEntry = targetNs.vars.get(localName)
-    return varEntry !== undefined ? derefValue(varEntry) : undefined
+      nsEnv.ns?.aliases.get(nsPrefix) ?? st.ctx.resolveNs(nsPrefix) ?? null
+    return targetNs?.vars.get(localName)
   }
-  return tryLookup(name, cljEnv)
+  return lookupVar(name, st.cljEnv)
+}
+
+function lookupMacro(name: string, st: AnalyzeState): CljValue | undefined {
+  const slashIdx = name.indexOf('/')
+  if (slashIdx > 0 && slashIdx < name.length - 1) {
+    const theVar = resolveVar(name, st)
+    return theVar !== undefined ? derefValue(theVar) : undefined
+  }
+  // Unqualified: tryLookup also surfaces values stored directly in env bindings
+  // (not only ns Vars), which is what macro detection needs.
+  return tryLookup(name, st.cljEnv)
 }
 
 type Expansion = { expanded: CljValue; chain: CljValue[] | null }
@@ -83,11 +100,7 @@ function toListIfSeq(form: CljValue): CljValue {
   return form
 }
 
-function expandHead(
-  form: CljValue,
-  cljEnv: Env,
-  ctx: EvaluationContext
-): Expansion {
+function expandHead(form: CljValue, st: AnalyzeState): Expansion {
   let current = toListIfSeq(form)
   const chain: CljValue[] = []
   // Bound the loop defensively; runaway macros would otherwise hang analysis.
@@ -100,19 +113,26 @@ function expandHead(
     if (name === 'quote') break
     try {
       if (name === 'quasiquote') {
-        const ex = ctx.expandAll(current, cljEnv)
+        const ex = st.ctx.expandAll(current, st.cljEnv)
         if (ex === current) break
         chain.push(current)
         current = ex
         continue
       }
-      const macro = lookupMacro(name, cljEnv, ctx)
+      const macro = lookupMacro(name, st)
       if (macro === undefined || !is.macro(macro)) break
       chain.push(current)
-      current = ctx.applyMacro(macro, current.value.slice(1))
-    } catch {
-      // A macro that throws on (deliberately) malformed args must not abort
-      // analysis — stop expanding and analyze what we have. Maybe capture the error and report it on a later design pass.
+      current = st.ctx.applyMacro(macro, current.value.slice(1))
+    } catch (e) {
+      // A macro that throws (e.g. on malformed args) is a real user error:
+      // record it and stop expanding so the partially-resolved tree is still
+      // inspectable, rather than silently swallowing the failure.
+      st.errors.push({
+        message: `macro expansion of (${name} ...) failed: ${(e as Error).message}`,
+        form: current,
+        pos: getPos(current) ?? null,
+        kind: 'malformed',
+      })
       break
     }
   }
@@ -180,6 +200,33 @@ function nilConst(env: NodeEnv): ConstNode {
   return constNode(nilVal, env, null)
 }
 
+/**
+ * Records an analysis error and returns an `:invalid` placeholder node so the
+ * surrounding tree stays structurally complete and walkable. The boundary
+ * (`analyzeForm`) decides policy: tooling renders the errors; a compiler treats
+ * any error as fatal.
+ */
+function invalid(
+  form: CljValue,
+  env: NodeEnv,
+  pos: Pos | null,
+  message: string,
+  kind: AnalysisErrorKind,
+  st: AnalyzeState
+): AstNode {
+  st.errors.push({ message, form, pos, kind })
+  return {
+    op: 'invalid',
+    form,
+    env,
+    children: [],
+    pos,
+    tag: null,
+    message,
+    kind,
+  }
+}
+
 function bindingNode(
   sym: CljSymbol,
   binding: LocalBinding,
@@ -208,11 +255,10 @@ function bindingNode(
 function analyzeBody(
   forms: CljValue[],
   env: NodeEnv,
-  cljEnv: Env,
-  ctx: EvaluationContext,
+  st: AnalyzeState,
   formForPos: CljValue
 ): DoNode {
-  const analyzed = forms.map((f) => analyze(f, env, cljEnv, ctx))
+  const analyzed = forms.map((f) => analyze(f, env, st))
   const statements = analyzed.slice(0, -1)
   const ret =
     analyzed.length > 0 ? analyzed[analyzed.length - 1] : nilConst(env)
@@ -234,11 +280,10 @@ function analyzeBody(
 export function analyze(
   form: CljValue,
   env: NodeEnv,
-  cljEnv: Env,
-  ctx: EvaluationContext
+  st: AnalyzeState
 ): AstNode {
-  const { expanded, chain } = expandHead(form, cljEnv, ctx)
-  const node = analyzeExpanded(expanded, env, cljEnv, ctx, form)
+  const { expanded, chain } = expandHead(form, st)
+  const node = analyzeExpanded(expanded, env, st, form)
   if (chain !== null) node.rawForms = chain
   return node
 }
@@ -246,15 +291,14 @@ export function analyze(
 function analyzeExpanded(
   form: CljValue,
   env: NodeEnv,
-  cljEnv: Env,
-  ctx: EvaluationContext,
+  st: AnalyzeState,
   orig: CljValue
 ): AstNode {
-  if (is.symbol(form)) return analyzeSymbol(form, env, cljEnv, orig)
-  if (is.vector(form)) return analyzeVector(form, env, cljEnv, ctx, orig)
-  if (is.map(form)) return analyzeMap(form, env, cljEnv, ctx, orig)
-  if (is.set(form)) return analyzeSet(form, env, cljEnv, ctx, orig)
-  if (is.list(form)) return analyzeList(form, env, cljEnv, ctx, orig)
+  if (is.symbol(form)) return analyzeSymbol(form, env, st, orig)
+  if (is.vector(form)) return analyzeVector(form, env, st, orig)
+  if (is.map(form)) return analyzeMap(form, env, st, orig)
+  if (is.set(form)) return analyzeSet(form, env, st, orig)
+  if (is.list(form)) return analyzeList(form, env, st, orig)
   // Everything else is a literal constant.
   return constNode(form, env, posOf(orig, form))
 }
@@ -264,7 +308,7 @@ function analyzeExpanded(
 function analyzeSymbol(
   sym: CljSymbol,
   env: NodeEnv,
-  cljEnv: Env,
+  st: AnalyzeState,
   orig: CljValue
 ): AstNode {
   const name = sym.name
@@ -307,7 +351,8 @@ function analyzeSymbol(
     }
   }
 
-  // Var reference (qualified or resolved through the namespace).
+  // Var reference (qualified or resolved through the namespace). One lookup
+  // yields both `resolved` and the Var's namespace.
   const slashIdx = name.indexOf('/')
   let ns: string | null = null
   let localName = name
@@ -315,8 +360,7 @@ function analyzeSymbol(
     ns = name.slice(0, slashIdx)
     localName = name.slice(slashIdx + 1)
   }
-  const resolved = tryLookup(name, cljEnv) !== undefined
-  const theVar = lookupVar(name, cljEnv)
+  const theVar = resolveVar(name, st)
   return {
     op: 'var',
     form: sym,
@@ -325,9 +369,8 @@ function analyzeSymbol(
     pos,
     tag: null,
     name: localName,
-    ns:
-      ns ?? (theVar ? ((theVar as { nsName?: string }).nsName ?? null) : null),
-    resolved,
+    ns: ns ?? theVar?.ns ?? null,
+    resolved: theVar !== undefined,
   }
 }
 
@@ -336,8 +379,7 @@ function analyzeSymbol(
 function analyzeVector(
   vec: CljVector,
   env: NodeEnv,
-  cljEnv: Env,
-  ctx: EvaluationContext,
+  st: AnalyzeState,
   orig: CljValue
 ): AstNode {
   return {
@@ -347,22 +389,21 @@ function analyzeVector(
     children: ['items'],
     pos: posOf(orig, vec),
     tag: null,
-    items: vec.value.map((x) => analyze(x, env, cljEnv, ctx)),
+    items: vec.value.map((x) => analyze(x, env, st)),
   }
 }
 
 function analyzeMap(
   map: CljMap,
   env: NodeEnv,
-  cljEnv: Env,
-  ctx: EvaluationContext,
+  st: AnalyzeState,
   orig: CljValue
 ): AstNode {
   const keys: AstNode[] = []
   const vals: AstNode[] = []
   for (const [k, val] of map.entries) {
-    keys.push(analyze(k, env, cljEnv, ctx))
-    vals.push(analyze(val, env, cljEnv, ctx))
+    keys.push(analyze(k, env, st))
+    vals.push(analyze(val, env, st))
   }
   return {
     op: 'map',
@@ -379,8 +420,7 @@ function analyzeMap(
 function analyzeSet(
   set: CljSet,
   env: NodeEnv,
-  cljEnv: Env,
-  ctx: EvaluationContext,
+  st: AnalyzeState,
   orig: CljValue
 ): AstNode {
   return {
@@ -390,7 +430,7 @@ function analyzeSet(
     children: ['items'],
     pos: posOf(orig, set),
     tag: null,
-    items: setValues(set).map((x) => analyze(x, env, cljEnv, ctx)),
+    items: setValues(set).map((x) => analyze(x, env, st)),
   }
 }
 
@@ -399,8 +439,7 @@ function analyzeSet(
 function analyzeList(
   list: CljList,
   env: NodeEnv,
-  cljEnv: Env,
-  ctx: EvaluationContext,
+  st: AnalyzeState,
   orig: CljValue
 ): AstNode {
   if (list.value.length === 0) {
@@ -410,74 +449,58 @@ function analyzeList(
   if (is.symbol(head)) {
     switch (head.name) {
       case 'if':
-        return analyzeIf(list, env, cljEnv, ctx, orig)
+        return analyzeIf(list, env, st, orig)
       case 'do':
-        return analyzeDo(list, env, cljEnv, ctx, orig)
+        return analyzeDo(list, env, st, orig)
       case 'quote':
         return analyzeQuote(list, env, orig)
       case 'let*':
-        return analyzeLet(list, env, cljEnv, ctx, orig, 'let')
+        return analyzeLet(list, env, st, orig, 'let')
       case 'loop*':
-        return analyzeLoop(list, env, cljEnv, ctx, orig)
+        return analyzeLoop(list, env, st, orig)
       case 'letfn*':
-        return analyzeLetfn(list, env, cljEnv, ctx, orig)
+        return analyzeLetfn(list, env, st, orig)
       case 'fn*':
-        return analyzeFn(list, env, cljEnv, ctx, orig)
+        return analyzeFn(list, env, st, orig)
       case 'def':
-        return analyzeDef(list, env, cljEnv, ctx, orig)
+        return analyzeDef(list, env, st, orig)
       case 'recur':
-        return analyzeRecur(list, env, cljEnv, ctx, orig)
+        return analyzeRecur(list, env, st, orig)
       case 'throw':
-        return analyzeThrow(list, env, cljEnv, ctx, orig)
+        return analyzeThrow(list, env, st, orig)
       case 'try':
-        return analyzeTry(list, env, cljEnv, ctx, orig)
+        return analyzeTry(list, env, st, orig)
       case 'var':
-        return analyzeTheVar(list, env, cljEnv, orig)
+        return analyzeTheVar(list, env, st, orig)
       case 'set!':
-        return analyzeSetBang(list, env, cljEnv, ctx, orig)
+        return analyzeSetBang(list, env, st, orig)
       case 'binding':
-        return analyzeDynamic(list, env, cljEnv, ctx, orig)
+        return analyzeDynamic(list, env, st, orig)
       case '.':
-        return analyzeDot(list, env, cljEnv, ctx, orig)
+        return analyzeDot(list, env, st, orig)
       case 'js/new':
-        return analyzeNew(list, env, cljEnv, ctx, orig)
+        return analyzeNew(list, env, st, orig)
       case 'quasiquote':
         // Could not be expanded (no ctx change); surface rather than crash.
-        return unsupported(
+        return invalid(
           list,
           env,
           posOf(orig, list),
-          'unexpanded quasiquote'
+          'unexpanded quasiquote',
+          'malformed',
+          st
         )
       default:
         break
     }
   }
-  return analyzeInvoke(list, env, cljEnv, ctx, orig)
-}
-
-function unsupported(
-  form: CljValue,
-  env: NodeEnv,
-  pos: Pos | null,
-  reason: string
-): AstNode {
-  return {
-    op: 'unsupported',
-    form,
-    env,
-    children: [],
-    pos,
-    tag: null,
-    reason,
-  }
+  return analyzeInvoke(list, env, st, orig)
 }
 
 function analyzeIf(
   list: CljList,
   env: NodeEnv,
-  cljEnv: Env,
-  ctx: EvaluationContext,
+  st: AnalyzeState,
   orig: CljValue
 ): AstNode {
   const [, test, then, els] = list.value
@@ -488,20 +511,19 @@ function analyzeIf(
     children: ['test', 'then', 'else'],
     pos: posOf(orig, list),
     tag: null,
-    test: analyze(test, env, cljEnv, ctx),
-    then: analyze(then, env, cljEnv, ctx),
-    else: els !== undefined ? analyze(els, env, cljEnv, ctx) : nilConst(env),
+    test: analyze(test, env, st),
+    then: analyze(then, env, st),
+    else: els !== undefined ? analyze(els, env, st) : nilConst(env),
   }
 }
 
 function analyzeDo(
   list: CljList,
   env: NodeEnv,
-  cljEnv: Env,
-  ctx: EvaluationContext,
+  st: AnalyzeState,
   orig: CljValue
 ): AstNode {
-  const body = analyzeBody(list.value.slice(1), env, cljEnv, ctx, list)
+  const body = analyzeBody(list.value.slice(1), env, st, list)
   // A top-level do is not a synthetic body.
   return { ...body, form: list, body: false, pos: posOf(orig, list) }
 }
@@ -524,8 +546,7 @@ function analyzeQuote(list: CljList, env: NodeEnv, orig: CljValue): AstNode {
 function analyzeLet(
   list: CljList,
   env: NodeEnv,
-  cljEnv: Env,
-  ctx: EvaluationContext,
+  st: AnalyzeState,
   orig: CljValue,
   kind: 'let'
 ): AstNode {
@@ -537,12 +558,12 @@ function analyzeLet(
     const sym = pairs[i]
     const initForm = pairs[i + 1]
     if (!is.symbol(sym)) continue
-    const initNode = analyze(initForm, curEnv, cljEnv, ctx)
+    const initNode = analyze(initForm, curEnv, st)
     const binding = declareLocal(curEnv, sym.name, kind)
     bindings.push(bindingNode(sym, binding, initNode, curEnv))
     curEnv = withLocals(curEnv, [[sym.name, binding]])
   }
-  const body = analyzeBody(list.value.slice(2), curEnv, cljEnv, ctx, list)
+  const body = analyzeBody(list.value.slice(2), curEnv, st, list)
   return {
     op: 'let',
     form: list,
@@ -558,8 +579,7 @@ function analyzeLet(
 function analyzeLoop(
   list: CljList,
   env: NodeEnv,
-  cljEnv: Env,
-  ctx: EvaluationContext,
+  st: AnalyzeState,
   orig: CljValue
 ): AstNode {
   const bindingVec = list.value[1]
@@ -570,7 +590,7 @@ function analyzeLoop(
     const sym = pairs[i]
     const initForm = pairs[i + 1]
     if (!is.symbol(sym)) continue
-    const initNode = analyze(initForm, curEnv, cljEnv, ctx)
+    const initNode = analyze(initForm, curEnv, st)
     const binding = declareLocal(curEnv, sym.name, 'loop')
     bindings.push(bindingNode(sym, binding, initNode, curEnv))
     curEnv = withLocals(curEnv, [[sym.name, binding]])
@@ -580,7 +600,7 @@ function analyzeLoop(
     arity: bindings.length,
     variadic: false,
   })
-  const body = analyzeBody(list.value.slice(2), bodyEnv, cljEnv, ctx, list)
+  const body = analyzeBody(list.value.slice(2), bodyEnv, st, list)
   return {
     op: 'loop',
     form: list,
@@ -597,8 +617,7 @@ function analyzeLoop(
 function analyzeLetfn(
   list: CljList,
   env: NodeEnv,
-  cljEnv: Env,
-  ctx: EvaluationContext,
+  st: AnalyzeState,
   orig: CljValue
 ): AstNode {
   const bindingVec = list.value[1]
@@ -624,9 +643,9 @@ function analyzeLetfn(
     )
   )
   const bindings: BindingNode[] = names.map(({ sym, binding, init }) =>
-    bindingNode(sym, binding, analyze(init, curEnv, cljEnv, ctx), curEnv)
+    bindingNode(sym, binding, analyze(init, curEnv, st), curEnv)
   )
-  const body = analyzeBody(list.value.slice(2), curEnv, cljEnv, ctx, list)
+  const body = analyzeBody(list.value.slice(2), curEnv, st, list)
   return {
     op: 'letfn',
     form: list,
@@ -642,8 +661,7 @@ function analyzeLetfn(
 function analyzeFn(
   list: CljList,
   env: NodeEnv,
-  cljEnv: Env,
-  ctx: EvaluationContext,
+  st: AnalyzeState,
   orig: CljValue
 ): AstNode {
   let rest = list.value.slice(1)
@@ -654,13 +672,15 @@ function analyzeFn(
   }
   let arities: Arity[]
   try {
-    arities = parseArities(rest, cljEnv)
+    arities = parseArities(rest, st.cljEnv)
   } catch (e) {
-    return unsupported(
+    return invalid(
       list,
       env,
       posOf(orig, list),
-      `invalid fn*: ${(e as Error).message}`
+      `invalid fn*: ${(e as Error).message}`,
+      'malformed',
+      st
     )
   }
 
@@ -674,7 +694,7 @@ function analyzeFn(
   }
 
   const methods: FnMethodNode[] = arities.map((arity) =>
-    analyzeFnMethod(arity, methodBaseEnv, cljEnv, ctx, list)
+    analyzeFnMethod(arity, methodBaseEnv, st, list)
   )
 
   const variadic = arities.some((a) => a.restParam !== null)
@@ -704,8 +724,7 @@ function analyzeFn(
 function analyzeFnMethod(
   arity: Arity,
   fnEnv: NodeEnv,
-  cljEnv: Env,
-  ctx: EvaluationContext,
+  st: AnalyzeState,
   formForPos: CljValue
 ): FnMethodNode {
   const params: BindingNode[] = []
@@ -731,7 +750,7 @@ function analyzeFnMethod(
     arity: arity.params.length,
     variadic: arity.restParam !== null,
   })
-  const body = analyzeBody(arity.body, recurEnv, cljEnv, ctx, formForPos)
+  const body = analyzeBody(arity.body, recurEnv, st, formForPos)
 
   return {
     op: 'fn-method',
@@ -750,8 +769,7 @@ function analyzeFnMethod(
 function analyzeDef(
   list: CljList,
   env: NodeEnv,
-  cljEnv: Env,
-  ctx: EvaluationContext,
+  st: AnalyzeState,
   orig: CljValue
 ): AstNode {
   const nameSym = list.value[1]
@@ -774,7 +792,7 @@ function analyzeDef(
     tag: null,
     name,
     ns: env.nsName,
-    init: initForm !== undefined ? analyze(initForm, env, cljEnv, ctx) : null,
+    init: initForm !== undefined ? analyze(initForm, env, st) : null,
     doc,
     metaNode: null,
   }
@@ -783,11 +801,10 @@ function analyzeDef(
 function analyzeRecur(
   list: CljList,
   env: NodeEnv,
-  cljEnv: Env,
-  ctx: EvaluationContext,
+  st: AnalyzeState,
   orig: CljValue
 ): AstNode {
-  const exprs = list.value.slice(1).map((x) => analyze(x, env, cljEnv, ctx))
+  const exprs = list.value.slice(1).map((x) => analyze(x, env, st))
   return {
     op: 'recur',
     form: list,
@@ -804,8 +821,7 @@ function analyzeRecur(
 function analyzeThrow(
   list: CljList,
   env: NodeEnv,
-  cljEnv: Env,
-  ctx: EvaluationContext,
+  st: AnalyzeState,
   orig: CljValue
 ): AstNode {
   const exprForm = list.value[1]
@@ -817,38 +833,37 @@ function analyzeThrow(
     pos: posOf(orig, list),
     tag: null,
     exception:
-      exprForm !== undefined
-        ? analyze(exprForm, env, cljEnv, ctx)
-        : nilConst(env),
+      exprForm !== undefined ? analyze(exprForm, env, st) : nilConst(env),
   }
 }
 
 function analyzeTry(
   list: CljList,
   env: NodeEnv,
-  cljEnv: Env,
-  ctx: EvaluationContext,
+  st: AnalyzeState,
   orig: CljValue
 ): AstNode {
   let parsed: ReturnType<typeof parseTryStructure>
   try {
-    parsed = parseTryStructure(list, cljEnv)
+    parsed = parseTryStructure(list, st.cljEnv)
   } catch (e) {
-    return unsupported(
+    return invalid(
       list,
       env,
       posOf(orig, list),
-      `invalid try: ${(e as Error).message}`
+      `invalid try: ${(e as Error).message}`,
+      'malformed',
+      st
     )
   }
   const { bodyForms, catchClauses, finallyForms } = parsed
-  const body = analyzeBody(bodyForms, env, cljEnv, ctx, list)
+  const body = analyzeBody(bodyForms, env, st, list)
   const catches = catchClauses.map((clause) => {
-    const discriminator = analyze(clause.discriminator, env, cljEnv, ctx)
+    const discriminator = analyze(clause.discriminator, env, st)
     const binding = declareLocal(env, clause.binding, 'catch')
     const sym: CljSymbol = { kind: 'symbol', name: clause.binding }
     const catchEnv = withLocals(env, [[clause.binding, binding]])
-    const catchBody = analyzeBody(clause.body, catchEnv, cljEnv, ctx, list)
+    const catchBody = analyzeBody(clause.body, catchEnv, st, list)
     const local = bindingNode(sym, binding, null, catchEnv)
     return {
       op: 'catch' as const,
@@ -864,7 +879,7 @@ function analyzeTry(
   })
   const finallyBody =
     finallyForms !== null
-      ? analyzeBody(finallyForms, env, cljEnv, ctx, list)
+      ? analyzeBody(finallyForms, env, st, list)
       : null
   return {
     op: 'try',
@@ -885,7 +900,7 @@ function analyzeTry(
 function analyzeTheVar(
   list: CljList,
   env: NodeEnv,
-  cljEnv: Env,
+  st: AnalyzeState,
   orig: CljValue
 ): AstNode {
   const sym = list.value[1]
@@ -897,6 +912,7 @@ function analyzeTheVar(
     ns = name.slice(0, slashIdx)
     localName = name.slice(slashIdx + 1)
   }
+  const theVar = is.symbol(sym) ? resolveVar(name, st) : undefined
   return {
     op: 'the-var',
     form: list,
@@ -905,16 +921,15 @@ function analyzeTheVar(
     pos: posOf(orig, list),
     tag: null,
     name: localName,
-    ns,
-    resolved: is.symbol(sym) && tryLookup(name, cljEnv) !== undefined,
+    ns: ns ?? theVar?.ns ?? null,
+    resolved: theVar !== undefined,
   }
 }
 
 function analyzeSetBang(
   list: CljList,
   env: NodeEnv,
-  cljEnv: Env,
-  ctx: EvaluationContext,
+  st: AnalyzeState,
   orig: CljValue
 ): AstNode {
   const target = list.value[1]
@@ -926,17 +941,15 @@ function analyzeSetBang(
     children: ['target', 'val'],
     pos: posOf(orig, list),
     tag: null,
-    target:
-      target !== undefined ? analyze(target, env, cljEnv, ctx) : nilConst(env),
-    val: val !== undefined ? analyze(val, env, cljEnv, ctx) : nilConst(env),
+    target: target !== undefined ? analyze(target, env, st) : nilConst(env),
+    val: val !== undefined ? analyze(val, env, st) : nilConst(env),
   }
 }
 
 function analyzeDynamic(
   list: CljList,
   env: NodeEnv,
-  cljEnv: Env,
-  ctx: EvaluationContext,
+  st: AnalyzeState,
   orig: CljValue
 ): AstNode {
   const bindingVec = list.value[1]
@@ -946,12 +959,12 @@ function analyzeDynamic(
   for (let i = 0; i + 1 < pairs.length; i += 2) {
     const sym = pairs[i]
     if (is.symbol(sym)) {
-      const varRef = analyzeSymbol(sym, env, cljEnv, sym)
+      const varRef = analyzeSymbol(sym, env, st, sym)
       if (varRef.op === 'var') bindingVars.push(varRef)
     }
-    inits.push(analyze(pairs[i + 1], env, cljEnv, ctx))
+    inits.push(analyze(pairs[i + 1], env, st))
   }
-  const body = analyzeBody(list.value.slice(2), env, cljEnv, ctx, list)
+  const body = analyzeBody(list.value.slice(2), env, st, list)
   return {
     op: 'dynamic',
     form: list,
@@ -968,15 +981,21 @@ function analyzeDynamic(
 function analyzeDot(
   list: CljList,
   env: NodeEnv,
-  cljEnv: Env,
-  ctx: EvaluationContext,
+  st: AnalyzeState,
   orig: CljValue
 ): AstNode {
   const pos = posOf(orig, list)
   if (list.value.length < 3) {
-    return unsupported(list, env, pos, '. requires (. target member)')
+    return invalid(
+      list,
+      env,
+      pos,
+      '. requires (. target member)',
+      'malformed',
+      st
+    )
   }
-  const target = analyze(list.value[1], env, cljEnv, ctx)
+  const target = analyze(list.value[1], env, st)
   const member = list.value[2]
 
   // (. target (method args...))
@@ -994,25 +1013,13 @@ function analyzeDot(
       tag: null,
       method: member.value[0].name,
       target,
-      args: member.value.slice(1).map((a) => analyze(a, env, cljEnv, ctx)),
+      args: member.value.slice(1).map((a) => analyze(a, env, st)),
     }
   }
 
   if (is.symbol(member)) {
-    // (. target -field) -> field access
-    if (member.name.startsWith('-')) {
-      return {
-        op: 'host-field',
-        form: list,
-        env,
-        children: ['target'],
-        pos,
-        tag: null,
-        field: member.name.slice(1),
-        target,
-        assignable: true,
-      }
-    }
+    // Property access: (. target prop) with zero extra args. cljam uses bare
+    // property names (not the ClojureScript `-prop` convention).
     const args = list.value.slice(3)
     if (args.length === 0) {
       return {
@@ -1036,18 +1043,24 @@ function analyzeDot(
       tag: null,
       method: member.name,
       target,
-      args: args.map((a) => analyze(a, env, cljEnv, ctx)),
+      args: args.map((a) => analyze(a, env, st)),
     }
   }
 
-  return unsupported(list, env, pos, '. member must be a symbol or method call')
+  return invalid(
+    list,
+    env,
+    pos,
+    '. member must be a symbol or method call',
+    'malformed',
+    st
+  )
 }
 
 function analyzeNew(
   list: CljList,
   env: NodeEnv,
-  cljEnv: Env,
-  ctx: EvaluationContext,
+  st: AnalyzeState,
   orig: CljValue
 ): AstNode {
   const classForm = list.value[1]
@@ -1059,18 +1072,15 @@ function analyzeNew(
     pos: posOf(orig, list),
     tag: null,
     className:
-      classForm !== undefined
-        ? analyze(classForm, env, cljEnv, ctx)
-        : nilConst(env),
-    args: list.value.slice(2).map((a) => analyze(a, env, cljEnv, ctx)),
+      classForm !== undefined ? analyze(classForm, env, st) : nilConst(env),
+    args: list.value.slice(2).map((a) => analyze(a, env, st)),
   }
 }
 
 function analyzeInvoke(
   list: CljList,
   env: NodeEnv,
-  cljEnv: Env,
-  ctx: EvaluationContext,
+  st: AnalyzeState,
   orig: CljValue
 ): AstNode {
   return {
@@ -1080,7 +1090,7 @@ function analyzeInvoke(
     children: ['fn', 'args'],
     pos: posOf(orig, list),
     tag: null,
-    fn: analyze(list.value[0], env, cljEnv, ctx),
-    args: list.value.slice(1).map((a) => analyze(a, env, cljEnv, ctx)),
+    fn: analyze(list.value[0], env, st),
+    args: list.value.slice(1).map((a) => analyze(a, env, st)),
   }
 }

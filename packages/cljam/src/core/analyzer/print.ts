@@ -98,8 +98,8 @@ function header(node: AstNode): string {
       return ':dynamic'
     case 'set!':
       return ':set!'
-    case 'unsupported':
-      return `:unsupported ${node.reason}`
+    case 'invalid':
+      return `:invalid (${node.kind}) ${node.message}`
   }
 }
 

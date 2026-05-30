@@ -14,7 +14,12 @@
 import { getNamespaceEnv } from '../env'
 import type { CljValue, Env, EvaluationContext } from '../types'
 import { astToClj } from './ast-to-clj'
-import { type Context, makeRootEnv } from './env'
+import {
+  type AnalysisError,
+  type AnalyzeState,
+  type Context,
+  makeRootEnv,
+} from './env'
 import { markContext } from './context'
 import type { AstNode } from './nodes'
 import { printAst } from './print'
@@ -22,7 +27,7 @@ import { analyze } from './resolve'
 
 export type AnalyzeResult = {
   node: AstNode
-  errors: string[]
+  errors: AnalysisError[]
 }
 
 export function analyzeForm(
@@ -35,9 +40,10 @@ export function analyzeForm(
   const ns = nsEnv.ns ?? null
   const nsName = ns?.name ?? 'user'
   const env = makeRootEnv(nsName, ns)
-  const node = analyze(form, env, cljEnv, ctx)
-  const { errors } = markContext(node, context)
-  return { node, errors }
+  const st: AnalyzeState = { cljEnv, ctx, errors: [] }
+  const node = analyze(form, env, st)
+  markContext(node, st.errors, context)
+  return { node, errors: st.errors }
 }
 
 /** Human-readable line view (the `analyze*` surface). Errors are appended. */
@@ -48,7 +54,7 @@ export function analyzeToLines(
 ): string[] {
   const { node, errors } = analyzeForm(form, cljEnv, ctx)
   const lines = printAst(node)
-  for (const e of errors) lines.push(`; error: ${e}`)
+  for (const e of errors) lines.push(`; error: ${e.message}`)
   return lines
 }
 

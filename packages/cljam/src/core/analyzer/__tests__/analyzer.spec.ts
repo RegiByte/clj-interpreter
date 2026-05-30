@@ -130,8 +130,21 @@ describe('analyzer Phase 0 — recur validation', () => {
   })
 })
 
-// Coverage gate: every top-level form across the .clj suite must analyze and
-// print without throwing.
+// Coverage gate: every top-level form across the .clj suite analyzes, and only
+// genuinely-malformed negative-test forms produce errors. An unexpected
+// `; error:` means the analyzer wrongly rejected valid code (a false positive).
+//
+// Intentionally-malformed forms the analyzer correctly rejects pre-execution
+// (e.g. a fn with two variadic arities, wrapped in `(thrown? ...)`):
+const EXPECTED_ANALYSIS_ERRORS: Record<string, string[]> = {
+  'higher_order_test.clj': [
+    'invalid fn*: At most one variadic arity is allowed per function',
+  ],
+  'error_handling_test.clj': [
+    'invalid try: finally clause must be the last in try expression',
+  ],
+}
+
 describe('analyzer Phase 0 — suite coverage gate', () => {
   const suiteDir = join(process.cwd(), 'src/core/__tests__/clojure_suite')
   const files = readdirSync(suiteDir).filter((f) => f.endsWith('_test.clj'))
@@ -145,10 +158,20 @@ describe('analyzer Phase 0 — suite coverage gate', () => {
       const source = readFileSync(join(suiteDir, file), 'utf-8')
       const forms = readForms(tokenize(source))
       const session = createSession()
+      const errors: string[] = []
       for (const form of forms) {
         const wrapped = v.list([v.symbol('analyze*'), form])
-        expect(() => session.evaluateForms([wrapped])).not.toThrow()
+        const result = session.evaluateForms([wrapped])
+        if (!is.vector(result)) {
+          throw new Error(`expected vector of lines, got ${result.kind}`)
+        }
+        for (const x of result.value) {
+          if (is.string(x) && x.value.startsWith('; error:')) {
+            errors.push(x.value.replace(/^; error:\s*/, ''))
+          }
+        }
       }
+      expect(errors).toEqual(EXPECTED_ANALYSIS_ERRORS[file] ?? [])
     })
   }
 })

@@ -163,8 +163,11 @@ function opFields(node: AstNode): [string, CljValue][] {
     }
     case 'quote':
       return [['literal?', v.boolean(true)]]
-    case 'unsupported':
-      return [['reason', v.string(node.reason)]]
+    case 'invalid':
+      return [
+        ['message', v.string(node.message)],
+        ['kind', kw(node.kind)],
+      ]
     default:
       return []
   }
