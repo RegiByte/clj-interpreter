@@ -9,12 +9,19 @@
  *     the same scope share it by reference (cheap in JS). `context` defaults to
  *     'expr' during resolve and is refined per-node by the context pass.
  *
- *   - `FnScope` is the mutable accumulation cell for ONE function: its slot
- *     counter and its upvalue table. It is shared by reference across all nodes
- *     of that function, which is exactly what we want — after analysis the table
- *     holds the function's capture set. This mirrors `VmCompileEnv`'s
- *     `upvalueDescriptors` + `resolveUpvalue` in `vm/compiler.ts`, so the
- *     descriptors map 1:1 onto `VmUpvalueDescriptor` for Phase 1.
+ *   - `ClosureScope` is the mutable accumulation cell for ONE function's upvalue
+ *     table. It is shared by reference across all arity-methods of that function,
+ *     which is exactly what we want — after analysis the table holds the
+ *     function's capture set, and a closure object has ONE upvalue array read by
+ *     every arity chunk. This mirrors `VmCompileEnv`'s `upvalueDescriptors` +
+ *     `resolveUpvalue` in `vm/compiler.ts`, so the descriptors map 1:1 onto
+ *     `VmUpvalueDescriptor` for Phase 1.
+ *
+ *   - `SlotCounter` is the per-arity slot space. It is deliberately NOT shared
+ *     across arities: the runtime calling convention puts call args in slots
+ *     `0..n-1` of a fresh frame for whichever arity is invoked, and `FnRecur`
+ *     reuses those slots, so each arity-method must number its locals from 0.
+ *     This mirrors the VM compiling each arity with a fresh `nextLocalSlot`.
  *
  * `LocalBinding.cell.captured` is a mutable cell so that when a deeply nested
  * thunk captures a binding, the capture becomes visible at the binding's
@@ -89,28 +96,34 @@ export type RecurTarget = {
   variadic: boolean
 }
 
-export type FnScope = {
+/**
+ * Per-closure scope: the upvalue table, shared by reference across all
+ * arity-methods of one function. Holds NO slot counter — slots are per-arity.
+ */
+export type ClosureScope = {
   depth: number
-  nextSlot: number
   upvalues: Upvalue[]
   /** Dedup key "isLocal:index" -> upvalue table index. */
   upvalueKey: Map<string, number>
-  parent: FnScope | null
+  parent: ClosureScope | null
 }
+
+/** Per-arity slot space. Reset to 0 for each arity-method (see module doc). */
+export type SlotCounter = { next: number }
 
 export type NodeEnv = {
   context: Context
   nsName: string
   ns: CljNamespace | null
   locals: ReadonlyMap<string, LocalBinding>
-  fnScope: FnScope
+  closure: ClosureScope
+  slots: SlotCounter
   recur: RecurTarget | null
 }
 
-export function makeFnScope(parent: FnScope | null): FnScope {
+export function makeClosureScope(parent: ClosureScope | null): ClosureScope {
   return {
     depth: parent === null ? 0 : parent.depth + 1,
-    nextSlot: 0,
     upvalues: [],
     upvalueKey: new Map(),
     parent,
@@ -126,7 +139,8 @@ export function makeRootEnv(
     nsName,
     ns,
     locals: new Map(),
-    fnScope: makeFnScope(null),
+    closure: makeClosureScope(null),
+    slots: { next: 0 },
     recur: null,
   }
 }
@@ -150,19 +164,26 @@ export function withRecur(env: NodeEnv, recur: RecurTarget | null): NodeEnv {
 /**
  * Enters a new function scope. Locals from the enclosing function remain visible
  * (so capture can be detected) but anything declared from here on belongs to the
- * new, deeper scope. Recur does not cross fn boundaries, so it is cleared.
+ * new, deeper closure. Recur does not cross fn boundaries, so it is cleared. The
+ * slot counter is NOT created here — each arity-method gets its own via
+ * `enterArity`, because the runtime numbers each arity's locals from 0.
  */
 export function enterFn(env: NodeEnv): NodeEnv {
   return {
     ...env,
-    fnScope: makeFnScope(env.fnScope),
+    closure: makeClosureScope(env.closure),
     recur: null,
   }
 }
 
-/** Allocates the next local slot in the given function scope. */
-export function allocSlot(fnScope: FnScope): number {
-  return fnScope.nextSlot++
+/** Starts a fresh per-arity slot space within the current closure. */
+export function enterArity(env: NodeEnv): NodeEnv {
+  return { ...env, slots: { next: 0 } }
+}
+
+/** Allocates the next local slot in the given per-arity slot space. */
+export function allocSlot(slots: SlotCounter): number {
+  return slots.next++
 }
 
 export function declareLocal(
@@ -174,8 +195,8 @@ export function declareLocal(
   return {
     name,
     kind,
-    slot: allocSlot(env.fnScope),
-    fnDepth: env.fnScope.depth,
+    slot: allocSlot(env.slots),
+    fnDepth: env.closure.depth,
     argId: opts.argId,
     variadic: opts.variadic,
     cell: { captured: false },
@@ -183,37 +204,37 @@ export function declareLocal(
 }
 
 function addUpvalue(
-  fnScope: FnScope,
+  closure: ClosureScope,
   name: string,
   isLocal: boolean,
   index: number
 ): number {
   const key = `${isLocal ? 1 : 0}:${index}`
-  const existing = fnScope.upvalueKey.get(key)
+  const existing = closure.upvalueKey.get(key)
   if (existing !== undefined) return existing
-  const idx = fnScope.upvalues.length
-  fnScope.upvalues.push({ name, isLocal, index })
-  fnScope.upvalueKey.set(key, idx)
+  const idx = closure.upvalues.length
+  closure.upvalues.push({ name, isLocal, index })
+  closure.upvalueKey.set(key, idx)
   return idx
 }
 
 /**
- * Threads an upvalue from its owning function down to `fnScope`, adding a
+ * Threads an upvalue from its owning closure down to `closure`, adding a
  * descriptor at every intervening level. Returns the upvalue index within
- * `fnScope`. Mirrors `resolveUpvalueFromEnv` in `vm/compiler.ts`.
+ * `closure`. Mirrors `resolveUpvalueFromEnv` in `vm/compiler.ts`.
  */
 function captureUpvalue(
-  fnScope: FnScope,
+  closure: ClosureScope,
   ownerDepth: number,
   ownerSlot: number,
   name: string
 ): number {
-  const parent = fnScope.parent!
+  const parent = closure.parent!
   if (parent.depth === ownerDepth) {
-    return addUpvalue(fnScope, name, true, ownerSlot)
+    return addUpvalue(closure, name, true, ownerSlot)
   }
   const parentIndex = captureUpvalue(parent, ownerDepth, ownerSlot, name)
-  return addUpvalue(fnScope, name, false, parentIndex)
+  return addUpvalue(closure, name, false, parentIndex)
 }
 
 export type ResolvedLocal =
@@ -231,12 +252,12 @@ export function resolveLocal(
 ): ResolvedLocal | undefined {
   const binding = env.locals.get(name)
   if (binding === undefined) return undefined
-  if (binding.fnDepth === env.fnScope.depth) {
+  if (binding.fnDepth === env.closure.depth) {
     return { resolved: 'local', binding }
   }
   binding.cell.captured = true
   const upvalueIndex = captureUpvalue(
-    env.fnScope,
+    env.closure,
     binding.fnDepth,
     binding.slot,
     name

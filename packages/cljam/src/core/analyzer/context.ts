@@ -105,12 +105,12 @@ function walk(node: AstNode, context: Context, errors: AnalysisError[]): void {
       return
 
     case 'fn':
-      if (node.local !== null) walk(node.local, 'expr', errors)
       for (const m of node.methods) walk(m, context, errors)
       return
 
     case 'fn-method':
       for (const p of node.params) walk(p, 'expr', errors)
+      if (node.self !== null) walk(node.self, 'expr', errors)
       walk(node.body, 'return', errors)
       return
 

@@ -39,6 +39,7 @@ import {
   type AnalysisErrorKind,
   type AnalyzeState,
   declareLocal,
+  enterArity,
   enterFn,
   type LocalBinding,
   type NodeEnv,
@@ -685,16 +686,10 @@ function analyzeFn(
   }
 
   const fnEnv = enterFn(env)
-  let selfBinding: BindingNode | null = null
-  let methodBaseEnv = fnEnv
-  if (nameSym !== null) {
-    const b = declareLocal(fnEnv, nameSym.name, 'fn')
-    selfBinding = bindingNode(nameSym, b, null, fnEnv)
-    methodBaseEnv = withLocals(fnEnv, [[nameSym.name, b]])
-  }
+  const selfName = nameSym?.name ?? null
 
   const methods: FnMethodNode[] = arities.map((arity) =>
-    analyzeFnMethod(arity, methodBaseEnv, st, list)
+    analyzeFnMethod(arity, fnEnv, st, list, selfName)
   )
 
   const variadic = arities.some((a) => a.restParam !== null)
@@ -707,17 +702,16 @@ function analyzeFn(
     op: 'fn',
     form: list,
     env,
-    children: selfBinding !== null ? ['local', 'methods'] : ['methods'],
+    children: ['methods'],
     pos: posOf(orig, list),
     tag: null,
-    name: nameSym?.name ?? null,
-    local: selfBinding,
+    name: selfName,
     methods,
     variadic,
     maxFixedArity,
     // Shared upvalue table for the whole closure (matches the VM's per-closure
     // upvalueDescriptors). Captured names visible here pre-execution.
-    captures: fnEnv.fnScope.upvalues,
+    captures: fnEnv.closure.upvalues,
   }
 }
 
@@ -725,10 +719,12 @@ function analyzeFnMethod(
   arity: Arity,
   fnEnv: NodeEnv,
   st: AnalyzeState,
-  formForPos: CljValue
+  formForPos: CljValue,
+  selfName: string | null
 ): FnMethodNode {
+  // Fresh slot space per arity: the runtime numbers each arity's frame from 0.
   const params: BindingNode[] = []
-  let curEnv = fnEnv
+  let curEnv = enterArity(fnEnv)
   let argId = 0
   for (const p of arity.params) {
     const binding = declareLocal(curEnv, p.name, 'arg', { argId })
@@ -745,6 +741,17 @@ function analyzeFnMethod(
     curEnv = withLocals(curEnv, [[arity.restParam.name, binding]])
   }
 
+  // Self-name comes AFTER params (slot = paramSlotCount) and only if no param
+  // already claimed the name — a param shadows the self-name (matches the VM's
+  // `!compileEnv.locals.has(selfName)` guard).
+  let self: BindingNode | null = null
+  if (selfName !== null && !curEnv.locals.has(selfName)) {
+    const selfBinding = declareLocal(curEnv, selfName, 'fn')
+    const selfSym: CljSymbol = { kind: 'symbol', name: selfName }
+    self = bindingNode(selfSym, selfBinding, null, curEnv)
+    curEnv = withLocals(curEnv, [[selfName, selfBinding]])
+  }
+
   const recurEnv = withRecur(curEnv, {
     kind: 'fn',
     arity: arity.params.length,
@@ -756,10 +763,11 @@ function analyzeFnMethod(
     op: 'fn-method',
     form: formForPos,
     env: fnEnv,
-    children: ['params', 'body'],
+    children: self !== null ? ['params', 'self', 'body'] : ['params', 'body'],
     pos: getPos(formForPos) ?? null,
     tag: null,
     params,
+    self,
     variadic: arity.restParam !== null,
     fixedArity: arity.params.length,
     body,
@@ -878,9 +886,7 @@ function analyzeTry(
     }
   })
   const finallyBody =
-    finallyForms !== null
-      ? analyzeBody(finallyForms, env, st, list)
-      : null
+    finallyForms !== null ? analyzeBody(finallyForms, env, st, list) : null
   return {
     op: 'try',
     form: list,

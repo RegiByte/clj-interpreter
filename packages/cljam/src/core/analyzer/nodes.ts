@@ -190,7 +190,6 @@ export interface LetfnNode extends NodeBase {
 export interface FnNode extends NodeBase {
   op: 'fn'
   name: string | null
-  local: BindingNode | null
   methods: FnMethodNode[]
   variadic: boolean
   maxFixedArity: number
@@ -201,6 +200,13 @@ export interface FnNode extends NodeBase {
 export interface FnMethodNode extends NodeBase {
   op: 'fn-method'
   params: BindingNode[]
+  /**
+   * The self-name binding for a named fn, declared AFTER this method's params
+   * (slot = paramSlotCount). Per-arity because each arity numbers its own frame
+   * from 0, so the self slot differs per arity (matches the VM's `selfSlot`).
+   * Null for anonymous fns and when a param shadows the self-name.
+   */
+  self: BindingNode | null
   variadic: boolean
   fixedArity: number
   body: DoNode
