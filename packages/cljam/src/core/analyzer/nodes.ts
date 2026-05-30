@@ -125,6 +125,13 @@ export interface TheVarNode extends NodeBase {
   name: string
   ns: string | null
   resolved: boolean
+  /**
+   * Lexical candidates for `(var x)` where `x` is an unqualified symbol in
+   * scope. Innermost-first. Each entry mirrors `VmLexicalVarCandidate` and is
+   * used by the bytecode emitter to emit `LoadLexicalVar` instead of `LoadVar`.
+   * Empty when the symbol is qualified or has no in-scope lexical bindings.
+   */
+  lexicalCandidates: Array<{ kind: 'local' | 'upvalue'; slot: number }>
 }
 
 export interface HostCallNode extends NodeBase {
@@ -251,6 +258,8 @@ export interface DefNode extends NodeBase {
   init: AstNode | null
   doc: string | null
   metaNode: AstNode | null
+  /** True when produced by a `defmacro` form. The VM emitter uses this to emit DefMacro instead of Def. */
+  isMacro?: boolean
 }
 
 export interface BindingNode extends NodeBase {

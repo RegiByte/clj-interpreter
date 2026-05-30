@@ -100,6 +100,17 @@ function opFields(node: AstNode): [string, CljValue][] {
         ['name', v.symbol(node.name)],
         ['ns', node.ns !== null ? v.symbol(node.ns) : v.nil()],
         ['resolved?', v.boolean(node.resolved)],
+        [
+          'lexical-candidates',
+          v.vector(
+            node.lexicalCandidates.map((c) =>
+              v.map([
+                [kw('kind'), kw(c.kind)],
+                [kw('slot'), v.number(c.slot)],
+              ])
+            )
+          ),
+        ],
       ]
     case 'js-var':
       return [
@@ -146,6 +157,7 @@ function opFields(node: AstNode): [string, CljValue][] {
         ['ns', node.ns !== null ? v.symbol(node.ns) : v.nil()],
       ]
       if (node.doc !== null) fields.push(['doc', v.string(node.doc)])
+      if (node.isMacro) fields.push(['macro?', v.boolean(true)])
       return fields
     }
     case 'binding': {

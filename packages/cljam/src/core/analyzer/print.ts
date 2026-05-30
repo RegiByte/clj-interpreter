@@ -47,8 +47,13 @@ function header(node: AstNode): string {
     }
     case 'var':
       return `:var ${node.ns ? `${node.ns}/` : ''}${node.name} ${node.resolved ? 'resolved' : 'unresolved'}`
-    case 'the-var':
-      return `:the-var ${node.ns ? `${node.ns}/` : ''}${node.name}`
+    case 'the-var': {
+      const cands =
+        node.lexicalCandidates.length > 0
+          ? ` lexical=[${node.lexicalCandidates.map((c) => `${c.kind}#${c.slot}`).join(' ')}]`
+          : ''
+      return `:the-var ${node.ns ? `${node.ns}/` : ''}${node.name}${cands}`
+    }
     case 'js-var':
       return `:js-var ${node.name}`
     case 'host-call':
@@ -89,7 +94,7 @@ function header(node: AstNode): string {
     case 'catch':
       return ':catch'
     case 'def':
-      return `:def ${node.name}`
+      return `:def ${node.name}${node.isMacro ? ' <macro>' : ''}`
     case 'binding': {
       const captured = node.binding.cell.captured ? ' captured' : ''
       return `:binding ${node.name} :${node.localKind} slot=${node.slot}${captured}`

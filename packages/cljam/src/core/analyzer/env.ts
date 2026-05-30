@@ -116,6 +116,13 @@ export type NodeEnv = {
   nsName: string
   ns: CljNamespace | null
   locals: ReadonlyMap<string, LocalBinding>
+  /**
+   * All in-scope bindings per name, in declaration order (outermost-first).
+   * Unlike `locals` (which is innermost-wins), this retains shadowed bindings
+   * so `resolveVarLexicalCandidates` can build the full candidate list for
+   * `(var x)` when multiple same-name bindings are in scope.
+   */
+  lexicalStack: ReadonlyMap<string, readonly LocalBinding[]>
   closure: ClosureScope
   slots: SlotCounter
   recur: RecurTarget | null
@@ -139,6 +146,7 @@ export function makeRootEnv(
     nsName,
     ns,
     locals: new Map(),
+    lexicalStack: new Map<string, readonly LocalBinding[]>(),
     closure: makeClosureScope(null),
     slots: { next: 0 },
     recur: null,
@@ -152,8 +160,16 @@ export function withLocals(
 ): NodeEnv {
   if (bindings.length === 0) return env
   const locals = new Map(env.locals)
-  for (const [name, binding] of bindings) locals.set(name, binding)
-  return { ...env, locals }
+  const lexicalStack = new Map(env.lexicalStack)
+  for (const [name, binding] of bindings) {
+    locals.set(name, binding)
+    const existing = lexicalStack.get(name)
+    lexicalStack.set(
+      name,
+      existing !== undefined ? [...existing, binding] : [binding]
+    )
+  }
+  return { ...env, locals, lexicalStack }
 }
 
 /** Returns a new env that sets the current recur target. */
@@ -263,4 +279,40 @@ export function resolveLocal(
     name
   )
   return { resolved: 'upvalue', binding, upvalueIndex }
+}
+
+/**
+ * Computes the full lexical candidate list for `(var name)` where `name` is
+ * unqualified. Mirrors `lexicalVarCandidates` in `vm/compiler.ts`.
+ *
+ * Walks every in-scope binding for `name` innermost-first. Bindings in the
+ * current closure frame become `{kind:'local', slot}` candidates. Bindings in
+ * enclosing frames are threaded through the upvalue machinery (marking the
+ * definition site as captured) and become `{kind:'upvalue', slot}` candidates.
+ * Returns `[]` when no lexical bindings exist for `name`.
+ */
+export function resolveVarLexicalCandidates(
+  env: NodeEnv,
+  name: string
+): Array<{ kind: 'local' | 'upvalue'; slot: number }> {
+  const stack = env.lexicalStack.get(name)
+  if (stack === undefined || stack.length === 0) return []
+
+  const candidates: Array<{ kind: 'local' | 'upvalue'; slot: number }> = []
+  for (let i = stack.length - 1; i >= 0; i--) {
+    const binding = stack[i]
+    if (binding.fnDepth === env.closure.depth) {
+      candidates.push({ kind: 'local', slot: binding.slot })
+    } else {
+      binding.cell.captured = true
+      const upvalueIndex = captureUpvalue(
+        env.closure,
+        binding.fnDepth,
+        binding.slot,
+        name
+      )
+      candidates.push({ kind: 'upvalue', slot: upvalueIndex })
+    }
+  }
+  return candidates
 }

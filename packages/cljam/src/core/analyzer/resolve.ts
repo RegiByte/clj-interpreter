@@ -44,6 +44,7 @@ import {
   type LocalBinding,
   type NodeEnv,
   resolveLocal,
+  resolveVarLexicalCandidates,
   withLocals,
   withRecur,
 } from './env'
@@ -465,6 +466,8 @@ function analyzeList(
         return analyzeFn(list, env, st, orig)
       case 'def':
         return analyzeDef(list, env, st, orig)
+      case 'defmacro':
+        return analyzeDefmacro(list, env, st, orig)
       case 'recur':
         return analyzeRecur(list, env, st, orig)
       case 'throw':
@@ -742,10 +745,13 @@ function analyzeFnMethod(
   }
 
   // Self-name comes AFTER params (slot = paramSlotCount) and only if no param
-  // already claimed the name — a param shadows the self-name (matches the VM's
-  // `!compileEnv.locals.has(selfName)` guard).
+  // of THIS arity already claimed the name — a param shadows the self-name. We
+  // check this arity's params (not curEnv.locals, which also carries enclosing
+  // bindings) to mirror the VM's per-frame `!compileEnv.locals.has(selfName)`:
+  // an enclosing same-name binding (e.g. a letfn sibling) must NOT suppress it.
   let self: BindingNode | null = null
-  if (selfName !== null && !curEnv.locals.has(selfName)) {
+  const paramNames = new Set(params.map((p) => p.name))
+  if (selfName !== null && !paramNames.has(selfName)) {
     const selfBinding = declareLocal(curEnv, selfName, 'fn')
     const selfSym: CljSymbol = { kind: 'symbol', name: selfName }
     self = bindingNode(selfSym, selfBinding, null, curEnv)
@@ -803,6 +809,52 @@ function analyzeDef(
     init: initForm !== undefined ? analyze(initForm, env, st) : null,
     doc,
     metaNode: null,
+  }
+}
+
+function analyzeDefmacro(
+  list: CljList,
+  env: NodeEnv,
+  st: AnalyzeState,
+  orig: CljValue
+): AstNode {
+  const nameSym = list.value[1]
+  if (!is.symbol(nameSym)) {
+    return invalid(
+      list,
+      env,
+      posOf(orig, list),
+      'defmacro: name must be a symbol',
+      'malformed',
+      st
+    )
+  }
+
+  let rest = list.value.slice(2)
+  let doc: string | null = null
+  if (rest.length > 0 && is.string(rest[0])) {
+    doc = rest[0].value
+    rest = rest.slice(1)
+  }
+
+  // Synthesize anonymous (fn* <arityForms>) — no self-name, matching the VM's
+  // emitDefMacro which builds the closure without a name binding.
+  const fnStarForm: CljList = { kind: 'list', value: [v.symbol('fn*'), ...rest] }
+  const init = analyze(fnStarForm, env, st)
+
+  return {
+    op: 'def',
+    form: list,
+    env,
+    children: ['init'],
+    pos: posOf(orig, list),
+    tag: null,
+    name: nameSym.name,
+    ns: env.nsName,
+    init,
+    doc,
+    metaNode: null,
+    isMacro: true,
   }
 }
 
@@ -919,6 +971,11 @@ function analyzeTheVar(
     localName = name.slice(slashIdx + 1)
   }
   const theVar = is.symbol(sym) ? resolveVar(name, st) : undefined
+  const isQualified = ns !== null
+  const lexicalCandidates =
+    is.symbol(sym) && !isQualified
+      ? resolveVarLexicalCandidates(env, name)
+      : []
   return {
     op: 'the-var',
     form: list,
@@ -929,6 +986,7 @@ function analyzeTheVar(
     name: localName,
     ns: ns ?? theVar?.ns ?? null,
     resolved: theVar !== undefined,
+    lexicalCandidates,
   }
 }
 
