@@ -19,7 +19,7 @@ import type {
   EvaluationContext,
   VmExecutionMode,
 } from '../types'
-import { tryCompileVm } from '../vm/compiler'
+import { tryCompileVmFromIr } from '../vm/ir-compiler'
 import { assignChunkIds } from '../vm/chunk'
 import { executeChunk } from '../vm/vm'
 import { makeTopLevelVmCacheKey } from '../vm/cache'
@@ -112,8 +112,8 @@ function evaluateTopLevelWithVm(
   const compileMeasurement =
     ctx.measurement === undefined
       ? null
-      : measureSync(() => tryCompileVm(expr))
-  const result = compileMeasurement?.value ?? tryCompileVm(expr)
+      : measureSync(() => tryCompileVmFromIr(expr, env, ctx))
+  const result = compileMeasurement?.value ?? tryCompileVmFromIr(expr, env, ctx)
   if (compileMeasurement !== null) {
     recordMeasurementStage(ctx, ':vm/compile', compileMeasurement.elapsedMs)
   }

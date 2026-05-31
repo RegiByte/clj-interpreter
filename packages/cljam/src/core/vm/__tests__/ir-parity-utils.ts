@@ -34,8 +34,9 @@ import type {
   VmChunk,
   VmCompileResult,
 } from '../../types'
-import { tryCompileVm } from '../compiler'
-import { tryCompileVmFromIr } from '../ir-compiler'
+import { v } from '../../factories'
+import { tryCompileVm, tryCompileVmFnBody } from '../compiler'
+import { tryCompileVmFromIr, tryCompileVmFnBodyFromIr } from '../ir-compiler'
 import { executeChunk } from '../vm'
 
 const baseline = snapshotSession(createSession())
@@ -178,4 +179,50 @@ export function expectIrVmMatchesInterpreter(code: string): void {
   ctx.vmExecutionMode = 'off'
   const interpValue = ctx.evaluate(form, env)
   expect(vmValue).toEqual(interpValue)
+}
+
+export type FnBodySpec = {
+  params: string[]
+  rest?: string | null
+  body: string[]
+  self?: string | null
+}
+
+/**
+ * Byte-parity for the fn-body entry point (the `special-forms.ts` swap site),
+ * which the top-level `(fn ...)` parity tests only exercise indirectly. Builds
+ * the arity pieces the live path passes to `tryCompileVmFnBody*` (params, rest,
+ * expanded body forms, self-name) and diffs the bare arity chunk produced by the
+ * legacy compiler against the IR compiler.
+ */
+export function expectFnBodyChunkParity(spec: FnBodySpec): void {
+  const session = freshSession()
+  const ctx = makeTestContext(session)
+  const env = session.runtime.getNamespaceEnv(session.currentNs)
+  if (!env) throw new Error(`Missing namespace env: ${session.currentNs}`)
+
+  const params = spec.params.map((p) => v.symbol(p))
+  const rest = spec.rest ? v.symbol(spec.rest) : null
+  const self = spec.self ?? null
+  const body = spec.body.map((code) => {
+    const forms = readForms(tokenize(code), session.currentNs, new Map(), code)
+    if (forms.length !== 1) {
+      throw new Error(`fn-body parity expects one form per body entry, got ${forms.length}`)
+    }
+    return ctx.expandAll(forms[0], env)
+  })
+
+  const legacy = tryCompileVmFnBody(params, rest, body, self)
+  const ir = tryCompileVmFnBodyFromIr(params, rest, body, self, env, ctx)
+  if (!legacy.ok) {
+    throw new Error(
+      `legacy fn-body compiler fell back (${legacy.reason.category}: ${legacy.reason.detail})`
+    )
+  }
+  if (!ir.ok) {
+    throw new Error(
+      `IR fn-body compiler fell back (${ir.reason.category}: ${ir.reason.detail})`
+    )
+  }
+  expect(normalizeChunk(ir.chunk)).toEqual(normalizeChunk(legacy.chunk))
 }

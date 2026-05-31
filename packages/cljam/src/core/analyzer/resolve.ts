@@ -471,7 +471,13 @@ function analyzeList(
       case 'recur':
         return analyzeRecur(list, env, st, orig)
       case 'throw':
-        return analyzeThrow(list, env, st, orig)
+        // Mirror legacy `canEmitDirectThrow`: `throw` is the special form only
+        // as a 2-element `(throw x)` with `throw` not shadowed by a local.
+        // A shadowed or wrong-arity `throw` is an ordinary call.
+        if (list.value.length === 2 && resolveLocal(env, 'throw') === undefined) {
+          return analyzeThrow(list, env, st, orig)
+        }
+        break
       case 'try':
         return analyzeTry(list, env, st, orig)
       case 'var':

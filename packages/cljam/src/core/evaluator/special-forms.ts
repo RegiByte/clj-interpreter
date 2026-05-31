@@ -26,7 +26,7 @@ import { evaluateDot, evaluateNew } from './js-interop'
 import { assertRecurInTailPosition } from './recur-check'
 
 import { assignChunkIds } from '../vm/chunk.ts'
-import { tryCompileVmFnBody } from '../vm/compiler.ts'
+import { tryCompileVmFnBodyFromIr } from '../vm/ir-compiler.ts'
 
 function evaluateTry(
   list: CljList,
@@ -202,11 +202,13 @@ function evaluateFnStar(
     assertRecurInTailPosition(arity.body)
 
     if (canUseVmBody) {
-      const vmResult = tryCompileVmFnBody(
+      const vmResult = tryCompileVmFnBodyFromIr(
         arity.params,
         arity.restParam,
         arity.body,
-        fnName
+        fnName ?? null,
+        env,
+        ctx
       )
       if (vmResult.ok) {
         assignChunkIds(vmResult.chunk, ctx)

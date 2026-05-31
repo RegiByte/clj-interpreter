@@ -31,6 +31,7 @@ import { is } from '../assertions'
 import { parseArities } from '../evaluator/arity'
 import { mergeDocIntoMeta } from '../evaluator/defs'
 import { v } from '../factories'
+import { specialFormKeywords } from '../keywords.ts'
 import type {
   CljBoolean,
   CljList,
@@ -91,6 +92,47 @@ function unsupported(st: EmitState, node: AstNode): false {
     category: 'unsupported-special-form',
     detail: `ir-compiler: no lowering for op '${node.op}'`,
   })
+}
+
+/**
+ * The legacy VM compiler refuses `async`/`ns` by head symbol (compiler.ts
+ * `unsupportedVmSpecialForms`), even though the analyzer models both as plain
+ * invoke nodes. Mirror that here so the live IR path falls back exactly where
+ * legacy does, with the same `reason.category` (the probe suites assert it).
+ */
+const unsupportedVmSpecialForms = new Set<string>([
+  specialFormKeywords['async'],
+  specialFormKeywords['ns'],
+])
+
+function unsupportedInvokeReason(node: InvokeNode): VmFallbackReason | null {
+  const form = node.form
+  if (!is.list(form) || form.value.length === 0) return null
+  const head = form.value[0]
+  if (!is.symbol(head) || !unsupportedVmSpecialForms.has(head.name)) return null
+  return head.name === specialFormKeywords['ns']
+    ? {
+        category: 'unsupported-top-level-mutation',
+        detail: `VM does not support top-level mutation form ${head.name}`,
+      }
+    : {
+        category: 'unsupported-special-form',
+        detail: `VM does not support special form ${head.name}`,
+      }
+}
+
+/**
+ * The analyzer is lenient on `let*`/`loop*` binding vectors: `analyzeLet`
+ * silently skips a non-symbol binding pair rather than erroring, so a malformed
+ * `(let* [[x] [1]] x)` would otherwise emit as a valid empty-binding let. Legacy
+ * rejects it as `unsupported-binding-form`; mirror that by inspecting the raw
+ * binding vector on the node's form. Matches `fallbackReasonForNode`.
+ */
+function hasNonSymbolBinding(form: CljValue): boolean {
+  if (!is.list(form) || form.value.length < 2) return false
+  const bindings = form.value[1]
+  if (!is.vector(bindings)) return false
+  return bindings.value.some((b, i) => i % 2 === 0 && !is.symbol(b))
 }
 
 /** Widen the chunk's local-array size to include `slot`. */
@@ -424,6 +466,15 @@ export function emitNode(node: AstNode, st: EmitState): boolean {
 
     case 'if': {
       const { chunk } = st
+      if (
+        is.list(node.form) &&
+        (node.form.value.length < 3 || node.form.value.length > 4)
+      ) {
+        return fail(st, {
+          category: 'compile-error',
+          detail: 'VM could not compile malformed if (wrong arity)',
+        })
+      }
       if (!emitNode(node.test, st)) return false
       const elseJump = emitJump(chunk, Op.JumpIfFalsy, node.pos)
       if (!emitNode(node.then, st)) return false
@@ -445,6 +496,8 @@ export function emitNode(node: AstNode, st: EmitState): boolean {
 
     case 'invoke': {
       const { chunk } = st
+      const unsupportedReason = unsupportedInvokeReason(node)
+      if (unsupportedReason !== null) return fail(st, unsupportedReason)
       if (shouldEmitTailSelfCall(node, st)) {
         for (const arg of node.args) {
           if (!emitNode(arg, st)) return false
@@ -481,6 +534,12 @@ export function emitNode(node: AstNode, st: EmitState): boolean {
 
     case 'let': {
       const { chunk } = st
+      if (hasNonSymbolBinding(node.form)) {
+        return fail(st, {
+          category: 'unsupported-binding-form',
+          detail: 'VM only supports simple symbol bindings in let*',
+        })
+      }
       for (const binding of node.bindings) {
         if (binding.init === null) {
           return fail(st, { category: 'compile-error', detail: 'let* binding missing init' })
@@ -495,6 +554,12 @@ export function emitNode(node: AstNode, st: EmitState): boolean {
 
     case 'loop': {
       const { chunk } = st
+      if (hasNonSymbolBinding(node.form)) {
+        return fail(st, {
+          category: 'unsupported-binding-form',
+          detail: 'VM only supports simple symbol bindings in loop*',
+        })
+      }
       for (const binding of node.bindings) {
         if (binding.init === null) {
           return fail(st, { category: 'compile-error', detail: 'loop* binding missing init' })
@@ -778,6 +843,14 @@ export function emitNode(node: AstNode, st: EmitState): boolean {
     }
 
     case 'set!': {
+      // Mirror legacy `emitSetBang`: only `(set! sym expr)` compiles; any other
+      // arity falls back so the interpreter raises the canonical arity error.
+      if (is.list(node.form) && node.form.value.length !== 3) {
+        return fail(st, {
+          category: 'compile-error',
+          detail: 'set! requires exactly 2 arguments',
+        })
+      }
       if (node.target.op !== 'var') return unsupported(st, node)
       if (!emitNode(node.val, st)) return false
       const sym = node.target.form as CljSymbol
@@ -865,29 +938,41 @@ export function tryCompileVmFromIr(
   env: Env,
   ctx: EvaluationContext
 ): VmCompileResult {
-  const { node, errors } = analyzeForm(form, env, ctx)
-  if (errors.length > 0) {
-    return { ok: false, reason: { category: 'compile-error', detail: errors[0].message } }
-  }
-  const chunk = makeChunk('vm-expression')
-  const st: EmitState = {
-    chunk,
-    loopRecur: null,
-    fnRecur: null,
-    selfSlot: -1,
-    reason: null,
-  }
-  if (!emitNode(node, st)) {
+  try {
+    const { node, errors } = analyzeForm(form, env, ctx)
+    if (errors.length > 0) {
+      return { ok: false, reason: { category: 'compile-error', detail: errors[0].message } }
+    }
+    const chunk = makeChunk('vm-expression')
+    const st: EmitState = {
+      chunk,
+      loopRecur: null,
+      fnRecur: null,
+      selfSlot: -1,
+      reason: null,
+    }
+    if (!emitNode(node, st)) {
+      return {
+        ok: false,
+        reason: st.reason ?? {
+          category: 'compile-error',
+          detail: 'ir-compiler: could not compile top-level form',
+        },
+      }
+    }
+    emit(chunk, Op.Return)
+    return { ok: true, chunk }
+  } catch (error) {
+    // Mirror the legacy compiler's safety net: an analyzer/emit throw on a wild
+    // form becomes a clean fallback to the interpreter, never a crashed eval.
     return {
       ok: false,
-      reason: st.reason ?? {
+      reason: {
         category: 'compile-error',
-        detail: 'ir-compiler: could not compile top-level form',
+        detail: error instanceof Error ? error.message : String(error),
       },
     }
   }
-  emit(chunk, Op.Return)
-  return { ok: true, chunk }
 }
 
 /** Build a synthetic anonymous-or-named `(fn* ...)` form for one arity. */
@@ -918,24 +1003,44 @@ export function tryCompileVmFnBodyFromIr(
   env: Env,
   ctx: EvaluationContext
 ): VmCompileResult {
-  const fnForm = synthFnStar(params, restParam, body, selfName)
-  const { node, errors } = analyzeForm(fnForm, env, ctx)
-  if (errors.length > 0) {
-    return { ok: false, reason: { category: 'compile-error', detail: errors[0].message } }
-  }
-  if (node.op !== 'fn' || node.methods.length !== 1) {
+  try {
+    const fnForm = synthFnStar(params, restParam, body, selfName)
+    const { node, errors } = analyzeForm(fnForm, env, ctx)
+    if (errors.length > 0) {
+      // A non-tail recur is a hard error: legacy makes it fatal so the fn
+      // definition throws immediately rather than silently using an interpreter
+      // body. Mirror that (and the legacy message) for parity.
+      if (errors.some((e) => e.message.includes('tail (return) position'))) {
+        return {
+          ok: false,
+          fatal: true,
+          reason: { category: 'compile-error', detail: 'Can only recur from tail position' },
+        }
+      }
+      return { ok: false, reason: { category: 'compile-error', detail: errors[0].message } }
+    }
+    if (node.op !== 'fn' || node.methods.length !== 1) {
+      return {
+        ok: false,
+        reason: { category: 'compile-error', detail: 'ir-compiler: fn-body synthesis did not yield a single-arity fn' },
+      }
+    }
+    const out: { reason: VmFallbackReason | null } = { reason: null }
+    const chunk = emitMethodBodyToChunk(node.methods[0], out)
+    if (chunk === null) {
+      return {
+        ok: false,
+        reason: out.reason ?? { category: 'compile-error', detail: 'ir-compiler: could not compile fn body' },
+      }
+    }
+    return { ok: true, chunk }
+  } catch (error) {
     return {
       ok: false,
-      reason: { category: 'compile-error', detail: 'ir-compiler: fn-body synthesis did not yield a single-arity fn' },
+      reason: {
+        category: 'compile-error',
+        detail: error instanceof Error ? error.message : String(error),
+      },
     }
   }
-  const out: { reason: VmFallbackReason | null } = { reason: null }
-  const chunk = emitMethodBodyToChunk(node.methods[0], out)
-  if (chunk === null) {
-    return {
-      ok: false,
-      reason: out.reason ?? { category: 'compile-error', detail: 'ir-compiler: could not compile fn body' },
-    }
-  }
-  return { ok: true, chunk }
 }
