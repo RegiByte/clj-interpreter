@@ -21,6 +21,7 @@
  */
 
 import { analyzeForm } from '../analyzer'
+import type { AnalysisError } from '../analyzer/env'
 import type {
   AstNode,
   FnMethodNode,
@@ -89,9 +90,46 @@ export type EmitState = {
   reason: VmFallbackReason | null
 }
 
+const PORTED_MALFORMED_ANALYSIS_CODES = new Set([
+  'malformed/if-arity',
+  'malformed/binding-vector',
+  'malformed/binding-even',
+  'malformed/let-binding-symbol',
+  'malformed/loop-binding-symbol',
+  'malformed/letfn-bindings-vector',
+  'malformed/letfn-bindings-even',
+  'malformed/letfn-name-symbol',
+])
+
 function fail(st: EmitState, reason: VmFallbackReason): false {
   if (st.reason === null) st.reason = reason
   return false
+}
+
+function compileResultForAnalysisErrors(
+  errors: AnalysisError[]
+): VmCompileResult {
+  const error = errors[0]
+  const reason: VmFallbackReason = {
+    category: 'compile-error',
+    detail: error.message,
+  }
+  const analysisError = {
+    message: error.message,
+    pos: error.pos,
+    kind: error.kind,
+    code: error.code,
+  }
+
+  if (
+    error.kind === 'malformed' &&
+    error.code !== undefined &&
+    PORTED_MALFORMED_ANALYSIS_CODES.has(error.code)
+  ) {
+    return { ok: false, fatal: true, reason, analysisError }
+  }
+
+  return { ok: false, reason, analysisError }
 }
 
 function unsupported(st: EmitState, node: AstNode): false {
@@ -126,20 +164,6 @@ function unsupportedInvokeReason(node: InvokeNode): VmFallbackReason | null {
         category: 'unsupported-special-form',
         detail: `VM does not support special form ${head.name}`,
       }
-}
-
-/**
- * The analyzer is lenient on `let*`/`loop*` binding vectors: `analyzeLet`
- * silently skips a non-symbol binding pair rather than erroring, so a malformed
- * `(let* [[x] [1]] x)` would otherwise emit as a valid empty-binding let. Legacy
- * rejects it as `unsupported-binding-form`; mirror that by inspecting the raw
- * binding vector on the node's form. Matches `fallbackReasonForNode`.
- */
-function hasNonSymbolBinding(form: CljValue): boolean {
-  if (!is.list(form) || form.value.length < 2) return false
-  const bindings = form.value[1]
-  if (!is.vector(bindings)) return false
-  return bindings.value.some((b, i) => i % 2 === 0 && !is.symbol(b))
 }
 
 /** Widen the chunk's local-array size to include `slot`. */
@@ -476,15 +500,6 @@ export function emitNode(node: AstNode, st: EmitState): boolean {
 
     case 'if': {
       const { chunk } = st
-      if (
-        is.list(node.form) &&
-        (node.form.value.length < 3 || node.form.value.length > 4)
-      ) {
-        return fail(st, {
-          category: 'compile-error',
-          detail: 'VM could not compile malformed if (wrong arity)',
-        })
-      }
       if (!emitNode(node.test, st)) return false
       const elseJump = emitJump(chunk, Op.JumpIfFalsy, node.pos)
       if (!emitNode(node.then, st)) return false
@@ -556,12 +571,6 @@ export function emitNode(node: AstNode, st: EmitState): boolean {
 
     case 'let': {
       const { chunk } = st
-      if (hasNonSymbolBinding(node.form)) {
-        return fail(st, {
-          category: 'unsupported-binding-form',
-          detail: 'VM only supports simple symbol bindings in let*',
-        })
-      }
       for (const binding of node.bindings) {
         if (binding.init === null) {
           return fail(st, { category: 'compile-error', detail: 'let* binding missing init' })
@@ -576,12 +585,6 @@ export function emitNode(node: AstNode, st: EmitState): boolean {
 
     case 'loop': {
       const { chunk } = st
-      if (hasNonSymbolBinding(node.form)) {
-        return fail(st, {
-          category: 'unsupported-binding-form',
-          detail: 'VM only supports simple symbol bindings in loop*',
-        })
-      }
       for (const binding of node.bindings) {
         if (binding.init === null) {
           return fail(st, { category: 'compile-error', detail: 'loop* binding missing init' })
@@ -963,7 +966,7 @@ export function tryCompileVmFromIr(
   try {
     const { node, errors } = analyzeForm(form, env, ctx)
     if (errors.length > 0) {
-      return { ok: false, reason: { category: 'compile-error', detail: errors[0].message } }
+      return compileResultForAnalysisErrors(errors)
     }
     const chunk = makeChunk('vm-expression')
     const st: EmitState = {
@@ -1029,6 +1032,10 @@ export function tryCompileVmFnBodyFromIr(
     const fnForm = synthFnStar(params, restParam, body, selfName)
     const { node, errors } = analyzeForm(fnForm, env, ctx)
     if (errors.length > 0) {
+      const analysisResult = compileResultForAnalysisErrors(errors)
+      if (!analysisResult.ok && analysisResult.fatal === true) {
+        return analysisResult
+      }
       // A non-tail recur is a hard error: legacy makes it fatal so the fn
       // definition throws immediately rather than silently using an interpreter
       // body. Mirror that (and the legacy message) for parity.
@@ -1037,9 +1044,12 @@ export function tryCompileVmFnBodyFromIr(
           ok: false,
           fatal: true,
           reason: { category: 'compile-error', detail: 'Can only recur from tail position' },
+          analysisError: !analysisResult.ok
+            ? analysisResult.analysisError
+            : undefined,
         }
       }
-      return { ok: false, reason: { category: 'compile-error', detail: errors[0].message } }
+      return analysisResult
     }
     if (node.op !== 'fn' || node.methods.length !== 1) {
       return {

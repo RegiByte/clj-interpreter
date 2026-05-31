@@ -441,13 +441,21 @@ describe('VM loop and recur integration', () => {
     )
   })
 
-  it('does not store bytecodeBody for loop* destructuring until VM destructuring exists', () => {
-    const fn = createSession().evaluate('(fn [] (loop* [[a b] [1 2]] a))')
+  it('raises analyzer-owned loop* binding-shape errors', () => {
+    let thrown: unknown
+    try {
+      createSession().evaluate('(fn [] (loop* [[a b] [1 2]] a))')
+    } catch (error) {
+      thrown = error
+    }
 
-    expect(fn.kind).toBe('function')
-    if (fn.kind !== 'function') return
-
-    expect(fn.arities[0].bytecodeBody).toBeUndefined()
+    expect(thrown).toBeInstanceOf(Error)
+    expect((thrown as Error).message).toContain(
+      'loop* only supports simple symbol bindings; use loop for destructuring'
+    )
+    expect((thrown as { code?: string }).code).toBe(
+      'malformed/loop-binding-symbol'
+    )
   })
 
   it('throws like the interpreter for non-tail recur in a loop* body', () => {

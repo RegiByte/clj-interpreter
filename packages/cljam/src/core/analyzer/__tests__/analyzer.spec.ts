@@ -38,6 +38,48 @@ describe('analyzer Phase 0 — analyze*', () => {
     expect(lines[0]).toContain(':invoke')
   })
 
+  it.each([
+    ['(if)', 'if requires 2 or 3 arguments, got 0'],
+    ['(if true)', 'if requires 2 or 3 arguments, got 1'],
+    ['(if true 1 2 3)', 'if requires 2 or 3 arguments, got 4'],
+  ])('reports malformed if arity for %s', (code, message) => {
+    const out = analyzeLines(code).join('\n')
+    expect(out).toContain(`; error: ${message}`)
+  })
+
+  it.each([
+    ['(let* :not-a-vector 1)', 'let* bindings must be a vector'],
+    [
+      '(let* [x 1 y] x)',
+      'let* bindings must have an even number of forms',
+    ],
+    [
+      '(let* [[x] [1]] x)',
+      'let* only supports simple symbol bindings; use let for destructuring',
+    ],
+    ['(loop* :not-a-vector 1)', 'loop* bindings must be a vector'],
+    [
+      '(loop* [i 0 acc] acc)',
+      'loop* bindings must have an even number of forms',
+    ],
+    [
+      '(loop* [:i 0] :i)',
+      'loop* only supports simple symbol bindings; use loop for destructuring',
+    ],
+    ['(letfn* :bad nil)', 'letfn* bindings must be a vector'],
+    [
+      '(letfn* [f (fn* [] 1) g] (f))',
+      'letfn* bindings must have an even number of forms',
+    ],
+    [
+      '(letfn* [1 (fn* [] 1)] 1)',
+      'letfn* binding names must be symbols',
+    ],
+  ])('reports malformed binding shape for %s', (code, message) => {
+    const out = analyzeLines(code).join('\n')
+    expect(out).toContain(`; error: ${message}`)
+  })
+
   it('analyzes nested arithmetic into invoke/const nodes', () => {
     const out = analyzeLines('(+ 1 (* 2 3))').join('\n')
     expect(out).toContain(':invoke')

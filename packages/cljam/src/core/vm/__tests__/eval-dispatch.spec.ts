@@ -40,7 +40,7 @@ describe('VM evaluation dispatch instrumentation', () => {
     expect(events[0].ast).toBe(node)
   })
 
-  it('reports a structured fallback reason before failing in vm-required mode', () => {
+  it('reports a structured analyzer error before failing in vm-required mode', () => {
     const ctx = createEvaluationContext()
     const env = makeCallTestEnv()
     const events: EvalEvent[] = []
@@ -49,15 +49,25 @@ describe('VM evaluation dispatch instrumentation', () => {
     ctx.vmExecutionMode = 'vm-required'
     ctx.instrumentation = { onEvent: (event) => events.push(event) }
 
-    expect(() => ctx.evaluate(node, env)).toThrow(
-      'VM required but cannot compile: VM only supports simple symbol bindings in let*'
+    let thrown: unknown
+    try {
+      ctx.evaluate(node, env)
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBeInstanceOf(Error)
+    expect((thrown as Error).message).toContain(
+      'let* only supports simple symbol bindings; use let for destructuring'
+    )
+    expect((thrown as { code?: string }).code).toBe(
+      'malformed/let-binding-symbol'
     )
     expect(events[0]).toMatchObject({
-      path: 'fallback',
+      path: 'analyzer-error',
       mode: 'vm-required',
       formKind: 'list:let*',
       reason: {
-        category: 'unsupported-binding-form',
+        category: 'compile-error',
       },
     })
     expect(events[0].ast).toBe(node)
@@ -146,7 +156,7 @@ describe('VM evaluation dispatch instrumentation', () => {
     )
   })
 
-  it('keeps public session vm-required failures loud and structured', () => {
+  it('keeps public session vm-required analyzer failures loud and structured', () => {
     const baseline = snapshotSession(createSession())
     const events: EvalEvent[] = []
     const session = createSessionFromSnapshot(baseline, {
@@ -156,16 +166,26 @@ describe('VM evaluation dispatch instrumentation', () => {
 
     events.length = 0
 
-    expect(() => session.evaluate('(let* [[x] [1]] x)')).toThrow(
-      'VM required but cannot compile: VM only supports simple symbol bindings in let*'
+    let thrown: unknown
+    try {
+      session.evaluate('(let* [[x] [1]] x)')
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBeInstanceOf(Error)
+    expect((thrown as Error).message).toContain(
+      'let* only supports simple symbol bindings; use let for destructuring'
+    )
+    expect((thrown as { code?: string }).code).toBe(
+      'malformed/let-binding-symbol'
     )
     expect(events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          path: 'fallback',
+          path: 'analyzer-error',
           mode: 'vm-required',
           reason: expect.objectContaining({
-            category: 'unsupported-binding-form',
+            category: 'compile-error',
           }),
         }),
       ])

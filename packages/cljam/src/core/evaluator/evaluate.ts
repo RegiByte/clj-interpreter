@@ -17,6 +17,7 @@ import type {
   Env,
   EvalEvent,
   EvaluationContext,
+  VmCompileResult,
   VmExecutionMode,
 } from '../types'
 import { tryCompileVmFromIr } from '../vm/ir-compiler'
@@ -61,6 +62,22 @@ function recordMeasurementStage(
   }
 ): void {
   ctx.measurement?.recordStage({ stage, elapsedMs, ...extra })
+}
+
+function throwFatalVmCompileError(
+  result: Extract<VmCompileResult, { ok: false }>,
+  expr: CljValue,
+  env: Env
+): never {
+  const err = new EvaluationError(
+    result.reason.detail,
+    { reason: result.reason, expr, env, analysisError: result.analysisError },
+    result.analysisError?.pos ?? getPos(expr)
+  )
+  if (result.analysisError?.code !== undefined) {
+    err.code = result.analysisError.code
+  }
+  throw err
 }
 
 function evaluateTopLevelWithVm(
@@ -141,6 +158,16 @@ function evaluateTopLevelWithVm(
       path: 'vm:top-level',
     })
     return value
+  }
+
+  if (result.fatal === true) {
+    emitEvalEvent(ctx, {
+      path: 'analyzer-error',
+      reason: result.reason,
+      formKind: formKind(expr),
+      ast: expr,
+    })
+    throwFatalVmCompileError(result, expr, env)
   }
 
   if (mode === 'vm-required') {

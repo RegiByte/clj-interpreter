@@ -26,6 +26,13 @@ type FallbackCase = {
   opportunisticThrows?: string
 }
 
+type MalformedCase = {
+  name: string
+  code: string
+  message: string
+  errorCode: string
+}
+
 type RunOutcome =
   | { ok: true; value: CljValue; events: EvalEvent[] }
   | { ok: false; error: Error; events: EvalEvent[] }
@@ -242,20 +249,72 @@ const fallbackCases: FallbackCase[] = [
     category: 'unsupported-special-form',
   },
   {
-    name: 'direct destructuring let*',
-    code: '(let* [[x] [1]] x)',
-    category: 'unsupported-binding-form',
-    opportunisticThrows: 'let* only supports simple symbol bindings',
-  },
-  {
-    name: 'malformed if',
-    code: '(if true 1 2 3)',
-    category: 'compile-error',
-  },
-  {
     name: 'top-level fn literal with unsupported body',
     code: '(fn [] (letfn* [f (fn* [] (async 1))] (f)))',
     category: 'unsupported-special-form',
+  },
+]
+
+const malformedCases: MalformedCase[] = [
+  {
+    name: 'malformed if',
+    code: '(if true 1 2 3)',
+    message: 'if requires 2 or 3 arguments, got 4',
+    errorCode: 'malformed/if-arity',
+  },
+  {
+    name: 'let* bindings must be vector',
+    code: '(let* :not-a-vector 1)',
+    message: 'let* bindings must be a vector',
+    errorCode: 'malformed/binding-vector',
+  },
+  {
+    name: 'let* bindings must be even',
+    code: '(let* [x 1 y] x)',
+    message: 'let* bindings must have an even number of forms',
+    errorCode: 'malformed/binding-even',
+  },
+  {
+    name: 'let* binding names must be symbols',
+    code: '(let* [[x] [1]] x)',
+    message: 'let* only supports simple symbol bindings; use let for destructuring',
+    errorCode: 'malformed/let-binding-symbol',
+  },
+  {
+    name: 'loop* bindings must be vector',
+    code: '(loop* :not-a-vector 1)',
+    message: 'loop* bindings must be a vector',
+    errorCode: 'malformed/binding-vector',
+  },
+  {
+    name: 'loop* bindings must be even',
+    code: '(loop* [i 0 acc] acc)',
+    message: 'loop* bindings must have an even number of forms',
+    errorCode: 'malformed/binding-even',
+  },
+  {
+    name: 'loop* binding names must be symbols',
+    code: '(loop* [:i 0] :i)',
+    message: 'loop* only supports simple symbol bindings; use loop for destructuring',
+    errorCode: 'malformed/loop-binding-symbol',
+  },
+  {
+    name: 'letfn* bindings must be vector',
+    code: '(letfn* :bad nil)',
+    message: 'letfn* bindings must be a vector',
+    errorCode: 'malformed/letfn-bindings-vector',
+  },
+  {
+    name: 'letfn* bindings must be even',
+    code: '(letfn* [f (fn* [] 1) g] (f))',
+    message: 'letfn* bindings must have an even number of forms',
+    errorCode: 'malformed/letfn-bindings-even',
+  },
+  {
+    name: 'letfn* binding names must be symbols',
+    code: '(letfn* [1 (fn* [] 1)] 1)',
+    message: 'letfn* binding names must be symbols',
+    errorCode: 'malformed/letfn-name-symbol',
   },
 ]
 
@@ -307,6 +366,20 @@ function expectFallbackCategory(
     expect.arrayContaining([
       expect.objectContaining({
         path: 'fallback',
+        reason: expect.objectContaining({ category }),
+      }),
+    ])
+  )
+}
+
+function expectAnalyzerErrorCategory(
+  events: EvalEvent[],
+  category: VmFallbackReason['category']
+): void {
+  expect(events).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        path: 'analyzer-error',
         reason: expect.objectContaining({ category }),
       }),
     ])
@@ -368,6 +441,31 @@ describe('VM top-level readiness harness', () => {
     }
   )
 
+  it.each(malformedCases)(
+    'raises analyzer-owned malformed form: $name',
+    (testCase) => {
+      const snapshot = prepareSnapshot()
+      const opportunistic = runFromSnapshot(
+        snapshot,
+        testCase.code,
+        'opportunistic'
+      )
+      const required = runFromSnapshot(snapshot, testCase.code, 'vm-required')
+
+      for (const outcome of [opportunistic, required]) {
+        expect(outcome.ok).toBe(false)
+        expectAnalyzerErrorCategory(outcome.events, 'compile-error')
+        if (!outcome.ok) {
+          expect(outcome.error.message).toContain(testCase.message)
+          expect(outcome.error.message).toContain('^')
+          expect((outcome.error as { code?: string }).code).toBe(
+            testCase.errorCode
+          )
+        }
+      }
+    }
+  )
+
   it('keeps the curated fallback histogram stable', () => {
     const histogram = new Map<VmFallbackReason['category'], number>()
 
@@ -388,8 +486,6 @@ describe('VM top-level readiness harness', () => {
       new Map([
         ['unsupported-top-level-mutation', 1],
         ['unsupported-special-form', 2],
-        ['compile-error', 1],
-        ['unsupported-binding-form', 1],
       ])
     )
   })

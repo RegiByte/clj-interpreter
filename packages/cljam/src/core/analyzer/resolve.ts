@@ -36,6 +36,7 @@ import type {
   Pos,
 } from '../types'
 import {
+  type AnalysisErrorCode,
   type AnalysisErrorKind,
   type AnalyzeState,
   declareLocal,
@@ -214,9 +215,10 @@ function invalid(
   pos: Pos | null,
   message: string,
   kind: AnalysisErrorKind,
-  st: AnalyzeState
+  st: AnalyzeState,
+  code?: AnalysisErrorCode
 ): AstNode {
-  st.errors.push({ message, form, pos, kind })
+  st.errors.push({ message, form, pos, kind, code })
   return {
     op: 'invalid',
     form,
@@ -227,6 +229,16 @@ function invalid(
     message,
     kind,
   }
+}
+
+function recordMalformed(
+  form: CljValue,
+  pos: Pos | null,
+  message: string,
+  st: AnalyzeState,
+  code: AnalysisErrorCode
+): void {
+  st.errors.push({ message, form, pos, kind: 'malformed', code })
 }
 
 function bindingNode(
@@ -250,6 +262,71 @@ function bindingNode(
     argId: binding.argId,
     variadic: binding.variadic,
   }
+}
+
+function validateBindingVector(
+  list: CljList,
+  env: NodeEnv,
+  st: AnalyzeState,
+  orig: CljValue,
+  formName: 'let*' | 'loop*'
+): CljVector | AstNode {
+  const bindingVec = list.value[1]
+  if (!is.vector(bindingVec)) {
+    return invalid(
+      bindingVec ?? list,
+      env,
+      bindingVec !== undefined ? getPos(bindingVec) ?? null : posOf(orig, list),
+      `${formName} bindings must be a vector`,
+      'malformed',
+      st,
+      'malformed/binding-vector'
+    )
+  }
+  if (bindingVec.value.length % 2 !== 0) {
+    return invalid(
+      bindingVec,
+      env,
+      getPos(bindingVec) ?? null,
+      `${formName} bindings must have an even number of forms`,
+      'malformed',
+      st,
+      'malformed/binding-even'
+    )
+  }
+  return bindingVec
+}
+
+function validateLetfnBindingVector(
+  list: CljList,
+  env: NodeEnv,
+  st: AnalyzeState,
+  orig: CljValue
+): CljVector | AstNode {
+  const bindingVec = list.value[1]
+  if (!is.vector(bindingVec)) {
+    return invalid(
+      bindingVec ?? list,
+      env,
+      posOf(orig, list),
+      'letfn* bindings must be a vector',
+      'malformed',
+      st,
+      'malformed/letfn-bindings-vector'
+    )
+  }
+  if (bindingVec.value.length % 2 !== 0) {
+    return invalid(
+      bindingVec,
+      env,
+      getPos(bindingVec) ?? posOf(orig, list),
+      'letfn* bindings must have an even number of forms',
+      'malformed',
+      st,
+      'malformed/letfn-bindings-even'
+    )
+  }
+  return bindingVec
 }
 
 // ─── body / do ────────────────────────────────────────────────────────────────
@@ -513,6 +590,18 @@ function analyzeIf(
   st: AnalyzeState,
   orig: CljValue
 ): AstNode {
+  if (list.value.length < 3 || list.value.length > 4) {
+    const argCount = list.value.length - 1
+    return invalid(
+      list,
+      env,
+      posOf(orig, list),
+      `if requires 2 or 3 arguments, got ${argCount}`,
+      'malformed',
+      st,
+      'malformed/if-arity'
+    )
+  }
   const [, test, then, els] = list.value
   return {
     op: 'if',
@@ -560,14 +649,24 @@ function analyzeLet(
   orig: CljValue,
   kind: 'let'
 ): AstNode {
-  const bindingVec = list.value[1]
-  const pairs = is.vector(bindingVec) ? bindingVec.value : ([] as CljValue[])
+  const bindingVec = validateBindingVector(list, env, st, orig, 'let*')
+  if ('op' in bindingVec) return bindingVec
+  const pairs = bindingVec.value
   const bindings: BindingNode[] = []
   let curEnv = env
   for (let i = 0; i + 1 < pairs.length; i += 2) {
     const sym = pairs[i]
     const initForm = pairs[i + 1]
-    if (!is.symbol(sym)) continue
+    if (!is.symbol(sym)) {
+      recordMalformed(
+        sym,
+        getPos(sym) ?? posOf(orig, list),
+        'let* only supports simple symbol bindings; use let for destructuring',
+        st,
+        'malformed/let-binding-symbol'
+      )
+      continue
+    }
     const initNode = analyze(initForm, curEnv, st)
     const binding = declareLocal(curEnv, sym.name, kind)
     bindings.push(bindingNode(sym, binding, initNode, curEnv))
@@ -592,14 +691,24 @@ function analyzeLoop(
   st: AnalyzeState,
   orig: CljValue
 ): AstNode {
-  const bindingVec = list.value[1]
-  const pairs = is.vector(bindingVec) ? bindingVec.value : ([] as CljValue[])
+  const bindingVec = validateBindingVector(list, env, st, orig, 'loop*')
+  if ('op' in bindingVec) return bindingVec
+  const pairs = bindingVec.value
   const bindings: BindingNode[] = []
   let curEnv = env
   for (let i = 0; i + 1 < pairs.length; i += 2) {
     const sym = pairs[i]
     const initForm = pairs[i + 1]
-    if (!is.symbol(sym)) continue
+    if (!is.symbol(sym)) {
+      recordMalformed(
+        sym,
+        getPos(sym) ?? posOf(orig, list),
+        'loop* only supports simple symbol bindings; use loop for destructuring',
+        st,
+        'malformed/loop-binding-symbol'
+      )
+      continue
+    }
     const initNode = analyze(initForm, curEnv, st)
     const binding = declareLocal(curEnv, sym.name, 'loop')
     bindings.push(bindingNode(sym, binding, initNode, curEnv))
@@ -630,8 +739,9 @@ function analyzeLetfn(
   st: AnalyzeState,
   orig: CljValue
 ): AstNode {
-  const bindingVec = list.value[1]
-  const pairs = is.vector(bindingVec) ? bindingVec.value : ([] as CljValue[])
+  const bindingVec = validateLetfnBindingVector(list, env, st, orig)
+  if ('op' in bindingVec) return bindingVec
+  const pairs = bindingVec.value
   // RB-007 fix: declare ALL letfn names before analyzing any init body, so
   // siblings (and self) are visible and capturable across fn/lazy-seq thunks.
   const names: Array<{
@@ -642,7 +752,16 @@ function analyzeLetfn(
   let curEnv = env
   for (let i = 0; i + 1 < pairs.length; i += 2) {
     const sym = pairs[i]
-    if (!is.symbol(sym)) continue
+    if (!is.symbol(sym)) {
+      recordMalformed(
+        sym,
+        getPos(sym) ?? posOf(orig, list),
+        'letfn* binding names must be symbols',
+        st,
+        'malformed/letfn-name-symbol'
+      )
+      continue
+    }
     const binding = declareLocal(curEnv, sym.name, 'letfn')
     names.push({ sym, binding, init: pairs[i + 1] })
   }

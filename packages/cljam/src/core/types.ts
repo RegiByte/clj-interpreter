@@ -548,10 +548,27 @@ export type VmFallbackReason =
   | { category: 'unsupported-js-interop'; detail: string }
   | { category: 'compile-error'; detail: string }
 
+export type VmCompileAnalysisError = {
+  message: string
+  pos: Pos | null
+  kind: 'malformed' | 'unsupported'
+  code?: string
+}
+
 export type VmCompileResult =
   | { ok: true; chunk: VmChunk }
-  | { ok: false; reason: VmFallbackReason; fatal?: false }
-  | { ok: false; reason: VmFallbackReason; fatal: true }
+  | {
+      ok: false
+      reason: VmFallbackReason
+      fatal?: false
+      analysisError?: VmCompileAnalysisError
+    }
+  | {
+      ok: false
+      reason: VmFallbackReason
+      fatal: true
+      analysisError?: VmCompileAnalysisError
+    }
 
 export type EvalEvent = {
   path:
@@ -560,6 +577,7 @@ export type EvalEvent = {
     | 'vm:function-body'
     | 'vm:macro-body'
     | 'vm:top-level'
+    | 'analyzer-error'
     | 'fallback'
   mode: VmExecutionMode
   reason?: VmFallbackReason

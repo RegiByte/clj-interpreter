@@ -45,12 +45,22 @@ export type Context = 'statement' | 'expr' | 'return'
  * analyzer does not yet model (reserved; unused by current call sites).
  */
 export type AnalysisErrorKind = 'malformed' | 'unsupported'
+export type AnalysisErrorCode =
+  | 'malformed/if-arity'
+  | 'malformed/binding-vector'
+  | 'malformed/binding-even'
+  | 'malformed/let-binding-symbol'
+  | 'malformed/loop-binding-symbol'
+  | 'malformed/letfn-bindings-vector'
+  | 'malformed/letfn-bindings-even'
+  | 'malformed/letfn-name-symbol'
 
 export type AnalysisError = {
   message: string
   form: CljValue
   pos: Pos | null
   kind: AnalysisErrorKind
+  code?: AnalysisErrorCode
 }
 
 /**

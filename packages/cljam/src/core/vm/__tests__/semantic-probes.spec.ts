@@ -179,13 +179,6 @@ const throwProbes: ThrowProbe[] = [
 const fallbackProbes: FallbackProbe[] = [
   { domain: 'known-unsupported', name: 'namespace declaration boundary', code: '(ns probe.boundary)', category: 'unsupported-top-level-mutation' },
   { domain: 'known-unsupported', name: 'async special form', code: '(async 42)', category: 'unsupported-special-form' },
-  {
-    domain: 'known-unsupported',
-    name: 'raw let* destructuring',
-    code: '(let* [[x] [1]] x)',
-    category: 'unsupported-binding-form',
-    opportunisticThrows: 'let* only supports simple symbol bindings',
-  },
 ]
 
 function prepareSnapshot(setup: string[] = []): SessionSnapshot {

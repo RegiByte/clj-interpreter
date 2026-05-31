@@ -227,8 +227,35 @@ function evaluateFnStar(
           },
         })
       } else {
+        const path =
+          vmResult.fatal === true ? 'analyzer-error' : 'fallback'
+        if (vmResult.fatal === true) {
+          ctx.instrumentation?.onEvent({
+            path,
+            mode: ctx.vmExecutionMode ?? 'function-body',
+            reason: vmResult.reason,
+            formKind: 'fn*',
+            ast: list,
+            details: {
+              functionName: fnName ?? null,
+              fixedParamCount: arity.params.length,
+              hasRestParam: arity.restParam !== null,
+              phase: 'vm:function-body-compile',
+            },
+          })
+          const err = new EvaluationError(vmResult.reason.detail, {
+            reason: vmResult.reason,
+            list,
+            env,
+            analysisError: vmResult.analysisError,
+          }, vmResult.analysisError?.pos ?? getPos(list))
+          if (vmResult.analysisError?.code !== undefined) {
+            err.code = vmResult.analysisError.code
+          }
+          throw err
+        }
         ctx.instrumentation?.onEvent({
-          path: 'fallback',
+          path,
           mode: ctx.vmExecutionMode ?? 'function-body',
           reason: vmResult.reason,
           formKind: 'fn*',
@@ -240,13 +267,6 @@ function evaluateFnStar(
             phase: 'vm:function-body-compile',
           },
         })
-        if (vmResult.fatal === true) {
-          throw new EvaluationError(vmResult.reason.detail, {
-            reason: vmResult.reason,
-            list,
-            env,
-          }, getPos(list))
-        }
       }
     }
   }
