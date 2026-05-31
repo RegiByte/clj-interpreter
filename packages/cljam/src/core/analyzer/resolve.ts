@@ -1121,8 +1121,28 @@ function analyzeSetBang(
   st: AnalyzeState,
   orig: CljValue
 ): AstNode {
+  if (list.value.length !== 3) {
+    return invalid(
+      list,
+      env,
+      posOf(orig, list),
+      `set! requires exactly 2 arguments, got ${list.value.length - 1}`,
+      'malformed',
+      st,
+      'malformed/set-arity'
+    )
+  }
   const target = list.value[1]
   const val = list.value[2]
+  if (!is.symbol(target)) {
+    recordMalformed(
+      target,
+      getPos(target) ?? posOf(orig, list),
+      `set! first argument must be a symbol, got ${target.kind}`,
+      st,
+      'malformed/set-target-symbol'
+    )
+  }
   return {
     op: 'set!',
     form: list,

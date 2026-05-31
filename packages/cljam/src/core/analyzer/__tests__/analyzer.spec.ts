@@ -80,6 +80,16 @@ describe('analyzer Phase 0 — analyze*', () => {
     expect(out).toContain(`; error: ${message}`)
   })
 
+  it.each([
+    ['(set!)', 'set! requires exactly 2 arguments, got 0'],
+    ['(set! x)', 'set! requires exactly 2 arguments, got 1'],
+    ['(set! x 1 2)', 'set! requires exactly 2 arguments, got 3'],
+    ['(set! 42 1)', 'set! first argument must be a symbol, got number'],
+  ])('reports malformed set! shape for %s', (code, message) => {
+    const out = analyzeLines(code).join('\n')
+    expect(out).toContain(`; error: ${message}`)
+  })
+
   it('analyzes nested arithmetic into invoke/const nodes', () => {
     const out = analyzeLines('(+ 1 (* 2 3))').join('\n')
     expect(out).toContain(':invoke')

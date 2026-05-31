@@ -316,6 +316,18 @@ const malformedCases: MalformedCase[] = [
     message: 'letfn* binding names must be symbols',
     errorCode: 'malformed/letfn-name-symbol',
   },
+  {
+    name: 'set! requires two arguments',
+    code: '(set! x)',
+    message: 'set! requires exactly 2 arguments, got 1',
+    errorCode: 'malformed/set-arity',
+  },
+  {
+    name: 'set! target must be a symbol',
+    code: '(set! 42 1)',
+    message: 'set! first argument must be a symbol, got number',
+    errorCode: 'malformed/set-target-symbol',
+  },
 ]
 
 function prepareSnapshot(setup: string[] = []): SessionSnapshot {

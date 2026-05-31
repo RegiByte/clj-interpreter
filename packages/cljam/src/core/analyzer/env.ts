@@ -54,6 +54,8 @@ export type AnalysisErrorCode =
   | 'malformed/letfn-bindings-vector'
   | 'malformed/letfn-bindings-even'
   | 'malformed/letfn-name-symbol'
+  | 'malformed/set-arity'
+  | 'malformed/set-target-symbol'
 
 export type AnalysisError = {
   message: string

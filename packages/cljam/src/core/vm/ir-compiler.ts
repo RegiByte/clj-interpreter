@@ -99,6 +99,8 @@ const PORTED_MALFORMED_ANALYSIS_CODES = new Set([
   'malformed/letfn-bindings-vector',
   'malformed/letfn-bindings-even',
   'malformed/letfn-name-symbol',
+  'malformed/set-arity',
+  'malformed/set-target-symbol',
 ])
 
 function fail(st: EmitState, reason: VmFallbackReason): false {
@@ -868,14 +870,6 @@ export function emitNode(node: AstNode, st: EmitState): boolean {
     }
 
     case 'set!': {
-      // Mirror legacy `emitSetBang`: only `(set! sym expr)` compiles; any other
-      // arity falls back so the interpreter raises the canonical arity error.
-      if (is.list(node.form) && node.form.value.length !== 3) {
-        return fail(st, {
-          category: 'compile-error',
-          detail: 'set! requires exactly 2 arguments',
-        })
-      }
       if (node.target.op !== 'var') return unsupported(st, node)
       if (!emitNode(node.val, st)) return false
       const sym = node.target.form as CljSymbol
