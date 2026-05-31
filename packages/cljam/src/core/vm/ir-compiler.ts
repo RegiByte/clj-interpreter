@@ -32,6 +32,7 @@ import { parseArities } from '../evaluator/arity'
 import { mergeDocIntoMeta } from '../evaluator/defs'
 import { v } from '../factories'
 import { specialFormKeywords } from '../keywords.ts'
+import { getPos, setPos } from '../positions'
 import type {
   CljBoolean,
   CljList,
@@ -51,7 +52,13 @@ import type {
   VmFunctionTemplate,
   VmLexicalVarLookup,
 } from '../types'
-import { addConstant, emit, emitOperand, makeChunk } from './chunk'
+import {
+  addConstant,
+  emit,
+  emitOperand,
+  makeChunk,
+  recordCallArgPositions,
+} from './chunk'
 import { Op } from './opcodes'
 
 /** Recur target for an enclosing `loop*` (emission facts the IR cannot carry). */
@@ -277,7 +284,10 @@ function shouldEmitTailSelfCall(node: InvokeNode, st: EmitState): boolean {
 
 function symbolWithMeta(sym: CljSymbol, meta: CljMap | undefined): CljSymbol {
   if (meta === sym.meta) return sym
-  return { ...sym, meta }
+  const copy: CljSymbol = { ...sym, meta }
+  const pos = getPos(sym)
+  if (pos) setPos(copy, pos)
+  return copy
 }
 
 /**
@@ -518,8 +528,14 @@ export function emitNode(node: AstNode, st: EmitState): boolean {
         for (const arg of node.args) {
           if (!emitNode(arg, st)) return false
         }
+        const instructionOffset = chunk.code.length
         emit(chunk, intrinsic, node.pos)
         emitOperand(chunk, node.args.length, node.pos)
+        recordCallArgPositions(
+          chunk,
+          instructionOffset,
+          node.args.map((arg) => arg.pos ?? null)
+        )
         return true
       }
 
@@ -527,8 +543,14 @@ export function emitNode(node: AstNode, st: EmitState): boolean {
       for (const arg of node.args) {
         if (!emitNode(arg, st)) return false
       }
+      const instructionOffset = chunk.code.length
       emit(chunk, Op.Call, node.pos)
       emitOperand(chunk, node.args.length, node.pos)
+      recordCallArgPositions(
+        chunk,
+        instructionOffset,
+        node.args.map((arg) => arg.pos ?? null)
+      )
       return true
     }
 
