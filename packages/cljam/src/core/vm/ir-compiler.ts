@@ -104,6 +104,15 @@ const PORTED_MALFORMED_ANALYSIS_CODES = new Set([
   'malformed/def-name-symbol',
   'malformed/defmacro-name-symbol',
   'malformed/var-arg-symbol',
+  'malformed/amp-once',
+  'malformed/amp-position',
+  'malformed/param-symbol',
+  'malformed/rest-symbol',
+  'malformed/fn-needs-params',
+  'malformed/arity-clause-list',
+  'malformed/arity-clause-vector',
+  'malformed/single-variadic',
+  'malformed/fn-shape',
 ])
 
 function fail(st: EmitState, reason: VmFallbackReason): false {

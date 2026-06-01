@@ -346,6 +346,66 @@ const malformedCases: MalformedCase[] = [
     message: 'var expects a symbol',
     errorCode: 'malformed/var-arg-symbol',
   },
+  {
+    name: 'fn* requires params',
+    code: '(fn*)',
+    message: 'fn/defmacro requires at least a parameter vector',
+    errorCode: 'malformed/fn-needs-params',
+  },
+  {
+    name: 'fn* ampersand may appear once',
+    code: '(fn* [a & b & c] a)',
+    message: '& can only appear once',
+    errorCode: 'malformed/amp-once',
+  },
+  {
+    name: 'fn* ampersand must introduce final rest param',
+    code: '(fn* [a &] a)',
+    message: '& must be second-to-last argument',
+    errorCode: 'malformed/amp-position',
+  },
+  {
+    name: 'fn* params must be symbols',
+    code: '(fn* [[x]] x)',
+    message: 'fn* only supports simple symbol params; use fn for destructuring',
+    errorCode: 'malformed/param-symbol',
+  },
+  {
+    name: 'fn* rest param must be a symbol',
+    code: '(fn* [x & [more]] x)',
+    message: 'fn* only supports simple symbol rest param; use fn for destructuring',
+    errorCode: 'malformed/rest-symbol',
+  },
+  {
+    name: 'fn* multi-arity clauses must be lists',
+    code: '(fn* ([x] x) [y])',
+    message: 'Multi-arity clause must be a list starting with a parameter vector',
+    errorCode: 'malformed/arity-clause-list',
+  },
+  {
+    name: 'fn* arity clause head must be a vector',
+    code: '(fn* (:bad 1))',
+    message: 'First element of arity clause must be a parameter vector',
+    errorCode: 'malformed/arity-clause-vector',
+  },
+  {
+    name: 'fn* allows only one variadic arity',
+    code: '(fn* ([x & xs] x) ([y & ys] y))',
+    message: 'At most one variadic arity is allowed per function',
+    errorCode: 'malformed/single-variadic',
+  },
+  {
+    name: 'fn* shape requires params or arity clauses',
+    code: '(fn* :bad)',
+    message: 'fn/defmacro expects a parameter vector or arity clauses',
+    errorCode: 'malformed/fn-shape',
+  },
+  {
+    name: 'defmacro requires params',
+    code: '(defmacro m)',
+    message: 'fn/defmacro requires at least a parameter vector',
+    errorCode: 'malformed/fn-needs-params',
+  },
 ]
 
 function prepareSnapshot(setup: string[] = []): SessionSnapshot {

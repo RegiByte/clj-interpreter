@@ -102,6 +102,44 @@ describe('analyzer Phase 0 — analyze*', () => {
     expect(out).toContain(`; error: ${message}`)
   })
 
+  it.each([
+    ['(fn*)', 'fn/defmacro requires at least a parameter vector'],
+    ['(fn* [a & b & c] a)', '& can only appear once'],
+    ['(fn* [a &] a)', '& must be second-to-last argument'],
+    [
+      '(fn* [[x]] x)',
+      'fn* only supports simple symbol params; use fn for destructuring',
+    ],
+    [
+      '(fn* [x & [more]] x)',
+      'fn* only supports simple symbol rest param; use fn for destructuring',
+    ],
+    [
+      '(fn* ([x] x) [y])',
+      'Multi-arity clause must be a list starting with a parameter vector',
+    ],
+    [
+      '(fn* (:bad 1))',
+      'First element of arity clause must be a parameter vector',
+    ],
+    [
+      '(fn* ([x & xs] x) ([y & ys] y))',
+      'At most one variadic arity is allowed per function',
+    ],
+    ['(fn* :bad)', 'fn/defmacro expects a parameter vector or arity clauses'],
+    [
+      '(defmacro m)',
+      'fn/defmacro requires at least a parameter vector',
+    ],
+    [
+      '(defmacro m [x & [more]] x)',
+      'fn* only supports simple symbol rest param; use fn for destructuring',
+    ],
+  ])('reports malformed fn*/defmacro arity shape for %s', (code, message) => {
+    const out = analyzeLines(code).join('\n')
+    expect(out).toContain(`; error: ${message}`)
+  })
+
   it('analyzes nested arithmetic into invoke/const nodes', () => {
     const out = analyzeLines('(+ 1 (* 2 3))').join('\n')
     expect(out).toContain(':invoke')
@@ -201,9 +239,6 @@ describe('analyzer Phase 0 — recur validation', () => {
 // Intentionally-malformed forms the analyzer correctly rejects pre-execution
 // (e.g. a fn with two variadic arities, wrapped in `(thrown? ...)`):
 const EXPECTED_ANALYSIS_ERRORS: Record<string, string[]> = {
-  'higher_order_test.clj': [
-    'invalid fn*: At most one variadic arity is allowed per function',
-  ],
   'error_handling_test.clj': [
     'invalid try: finally clause must be the last in try expression',
   ],

@@ -18,7 +18,6 @@
 
 import { is } from '../assertions'
 import { derefValue, getNamespaceEnv, lookupVar, tryLookup } from '../env'
-import { parseArities } from '../evaluator/arity'
 import { parseTryStructure } from '../evaluator/form-parsers'
 import { v } from '../factories'
 import { setValues } from '../persistent/map-helpers'
@@ -327,6 +326,186 @@ function validateLetfnBindingVector(
     )
   }
   return bindingVec
+}
+
+function parseAnalyzerParamVector(
+  args: CljVector
+):
+  | { ok: true; arity: Pick<Arity, 'params' | 'restParam'> }
+  | {
+      ok: false
+      form: CljValue
+      pos: Pos | null
+      message: string
+      code: AnalysisErrorCode
+    } {
+  const ampIdx = args.value.findIndex(
+    (a) => is.symbol(a) && a.name === '&'
+  )
+  let rawParams: CljValue[] = []
+  let rawRestParam: CljValue | null = null
+
+  if (ampIdx === -1) {
+    rawParams = args.value
+  } else {
+    const ampsCount = args.value.filter(
+      (a) => is.symbol(a) && a.name === '&'
+    ).length
+    if (ampsCount > 1) {
+      return {
+        ok: false,
+        form: args,
+        pos: getPos(args) ?? null,
+        message: '& can only appear once',
+        code: 'malformed/amp-once',
+      }
+    }
+    if (ampIdx !== args.value.length - 2) {
+      return {
+        ok: false,
+        form: args,
+        pos: getPos(args) ?? null,
+        message: '& must be second-to-last argument',
+        code: 'malformed/amp-position',
+      }
+    }
+    rawParams = args.value.slice(0, ampIdx)
+    rawRestParam = args.value[ampIdx + 1]
+  }
+
+  const params: CljSymbol[] = []
+  for (const param of rawParams) {
+    if (!is.symbol(param)) {
+      return {
+        ok: false,
+        form: param,
+        pos: getPos(param) ?? getPos(args) ?? null,
+        message: 'fn* only supports simple symbol params; use fn for destructuring',
+        code: 'malformed/param-symbol',
+      }
+    }
+    params.push(param)
+  }
+
+  let restParam: CljSymbol | null = null
+  if (rawRestParam !== null) {
+    if (!is.symbol(rawRestParam)) {
+      return {
+        ok: false,
+        form: rawRestParam,
+        pos: getPos(rawRestParam) ?? getPos(args) ?? null,
+        message: 'fn* only supports simple symbol rest param; use fn for destructuring',
+        code: 'malformed/rest-symbol',
+      }
+    }
+    restParam = rawRestParam
+  }
+
+  return { ok: true, arity: { params, restParam } }
+}
+
+function parseAnalyzerArities(
+  forms: CljValue[],
+  list: CljList,
+  env: NodeEnv,
+  st: AnalyzeState,
+  orig: CljValue
+): Arity[] | AstNode {
+  if (forms.length === 0) {
+    return invalid(
+      list,
+      env,
+      posOf(orig, list),
+      'fn/defmacro requires at least a parameter vector',
+      'malformed',
+      st,
+      'malformed/fn-needs-params'
+    )
+  }
+
+  if (is.vector(forms[0])) {
+    const paramVec = forms[0]
+    const parsed = parseAnalyzerParamVector(paramVec)
+    if (!parsed.ok) {
+      return invalid(
+        parsed.form,
+        env,
+        parsed.pos ?? posOf(orig, list),
+        parsed.message,
+        'malformed',
+        st,
+        parsed.code
+      )
+    }
+    return [{ ...parsed.arity, body: forms.slice(1) }]
+  }
+
+  if (is.list(forms[0])) {
+    const arities: Arity[] = []
+    for (const form of forms) {
+      if (!is.list(form) || form.value.length === 0) {
+        return invalid(
+          form,
+          env,
+          getPos(form) ?? posOf(orig, list),
+          'Multi-arity clause must be a list starting with a parameter vector',
+          'malformed',
+          st,
+          'malformed/arity-clause-list'
+        )
+      }
+      const paramVec = form.value[0]
+      if (!is.vector(paramVec)) {
+        return invalid(
+          paramVec,
+          env,
+          getPos(paramVec) ?? getPos(form) ?? posOf(orig, list),
+          'First element of arity clause must be a parameter vector',
+          'malformed',
+          st,
+          'malformed/arity-clause-vector'
+        )
+      }
+      const parsed = parseAnalyzerParamVector(paramVec)
+      if (!parsed.ok) {
+        return invalid(
+          parsed.form,
+          env,
+          parsed.pos ?? getPos(form) ?? posOf(orig, list),
+          parsed.message,
+          'malformed',
+          st,
+          parsed.code
+        )
+      }
+      arities.push({ ...parsed.arity, body: form.value.slice(1) })
+    }
+
+    const variadicCount = arities.filter((a) => a.restParam !== null).length
+    if (variadicCount > 1) {
+      return invalid(
+        list,
+        env,
+        posOf(orig, list),
+        'At most one variadic arity is allowed per function',
+        'malformed',
+        st,
+        'malformed/single-variadic'
+      )
+    }
+
+    return arities
+  }
+
+  return invalid(
+    forms[0],
+    env,
+    getPos(forms[0]) ?? posOf(orig, list),
+    'fn/defmacro expects a parameter vector or arity clauses',
+    'malformed',
+    st,
+    'malformed/fn-shape'
+  )
 }
 
 // ─── body / do ────────────────────────────────────────────────────────────────
@@ -799,19 +978,8 @@ function analyzeFn(
     nameSym = rest[0]
     rest = rest.slice(1)
   }
-  let arities: Arity[]
-  try {
-    arities = parseArities(rest, st.cljEnv)
-  } catch (e) {
-    return invalid(
-      list,
-      env,
-      posOf(orig, list),
-      `invalid fn*: ${(e as Error).message}`,
-      'malformed',
-      st
-    )
-  }
+  const arities = parseAnalyzerArities(rest, list, env, st, orig)
+  if ('op' in arities) return arities
 
   const fnEnv = enterFn(env)
   const selfName = nameSym?.name ?? null

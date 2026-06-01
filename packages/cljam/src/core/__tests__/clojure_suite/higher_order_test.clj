@@ -182,7 +182,7 @@
 
   (testing "arity mismatch and duplicate variadics throw"
     (is (thrown? :default ((fn ([] 0) ([x y] (+ x y))) 1)))
-    (is (thrown? :default (fn ([x & a] x) ([y & b] y)))))
+    (is (thrown? :default (eval '(fn ([x & a] x) ([y & b] y))))))
 
   (testing "defn multi arity"
     (defn local-greet
