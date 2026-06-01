@@ -328,6 +328,24 @@ const malformedCases: MalformedCase[] = [
     message: 'set! first argument must be a symbol, got number',
     errorCode: 'malformed/set-target-symbol',
   },
+  {
+    name: 'def name must be a symbol',
+    code: '(def 42 1)',
+    message: 'First element of list must be a symbol',
+    errorCode: 'malformed/def-name-symbol',
+  },
+  {
+    name: 'defmacro name must be a symbol',
+    code: '(defmacro 42 [] 1)',
+    message: 'First element of defmacro must be a symbol',
+    errorCode: 'malformed/defmacro-name-symbol',
+  },
+  {
+    name: 'var argument must be a symbol',
+    code: '(var 42)',
+    message: 'var expects a symbol',
+    errorCode: 'malformed/var-arg-symbol',
+  },
 ]
 
 function prepareSnapshot(setup: string[] = []): SessionSnapshot {

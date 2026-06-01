@@ -101,6 +101,9 @@ const PORTED_MALFORMED_ANALYSIS_CODES = new Set([
   'malformed/letfn-name-symbol',
   'malformed/set-arity',
   'malformed/set-target-symbol',
+  'malformed/def-name-symbol',
+  'malformed/defmacro-name-symbol',
+  'malformed/var-arg-symbol',
 ])
 
 function fail(st: EmitState, reason: VmFallbackReason): false {

@@ -56,6 +56,9 @@ export type AnalysisErrorCode =
   | 'malformed/letfn-name-symbol'
   | 'malformed/set-arity'
   | 'malformed/set-target-symbol'
+  | 'malformed/def-name-symbol'
+  | 'malformed/defmacro-name-symbol'
+  | 'malformed/var-arg-symbol'
 
 export type AnalysisError = {
   message: string

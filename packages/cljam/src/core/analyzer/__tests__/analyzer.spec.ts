@@ -90,6 +90,18 @@ describe('analyzer Phase 0 — analyze*', () => {
     expect(out).toContain(`; error: ${message}`)
   })
 
+  it.each([
+    ['(def)', 'First element of list must be a symbol'],
+    ['(def 42 1)', 'First element of list must be a symbol'],
+    ['(defmacro)', 'First element of defmacro must be a symbol'],
+    ['(defmacro 42 [] 1)', 'First element of defmacro must be a symbol'],
+    ['(var)', 'var expects a symbol'],
+    ['(var 42)', 'var expects a symbol'],
+  ])('reports malformed def/defmacro/var shape for %s', (code, message) => {
+    const out = analyzeLines(code).join('\n')
+    expect(out).toContain(`; error: ${message}`)
+  })
+
   it('analyzes nested arithmetic into invoke/const nodes', () => {
     const out = analyzeLines('(+ 1 (* 2 3))').join('\n')
     expect(out).toContain(':invoke')

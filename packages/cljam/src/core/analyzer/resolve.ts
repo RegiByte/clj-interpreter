@@ -912,7 +912,18 @@ function analyzeDef(
   orig: CljValue
 ): AstNode {
   const nameSym = list.value[1]
-  const name = is.symbol(nameSym) ? nameSym.name : '<invalid>'
+  if (nameSym === undefined || !is.symbol(nameSym)) {
+    return invalid(
+      list,
+      env,
+      posOf(orig, list),
+      'First element of list must be a symbol',
+      'malformed',
+      st,
+      'malformed/def-name-symbol'
+    )
+  }
+  const name = nameSym.name
   const rest = list.value.slice(2)
   let doc: string | null = null
   let initForm: CljValue | undefined
@@ -944,14 +955,15 @@ function analyzeDefmacro(
   orig: CljValue
 ): AstNode {
   const nameSym = list.value[1]
-  if (!is.symbol(nameSym)) {
+  if (nameSym === undefined || !is.symbol(nameSym)) {
     return invalid(
       list,
       env,
       posOf(orig, list),
-      'defmacro: name must be a symbol',
+      'First element of defmacro must be a symbol',
       'malformed',
-      st
+      st,
+      'malformed/defmacro-name-symbol'
     )
   }
 
@@ -1087,7 +1099,18 @@ function analyzeTheVar(
   orig: CljValue
 ): AstNode {
   const sym = list.value[1]
-  const name = is.symbol(sym) ? sym.name : '<invalid>'
+  if (sym === undefined || !is.symbol(sym)) {
+    return invalid(
+      list,
+      env,
+      posOf(orig, list),
+      'var expects a symbol',
+      'malformed',
+      st,
+      'malformed/var-arg-symbol'
+    )
+  }
+  const name = sym.name
   const slashIdx = name.indexOf('/')
   let ns: string | null = null
   let localName = name
@@ -1095,12 +1118,10 @@ function analyzeTheVar(
     ns = name.slice(0, slashIdx)
     localName = name.slice(slashIdx + 1)
   }
-  const theVar = is.symbol(sym) ? resolveVar(name, st) : undefined
+  const theVar = resolveVar(name, st)
   const isQualified = ns !== null
   const lexicalCandidates =
-    is.symbol(sym) && !isQualified
-      ? resolveVarLexicalCandidates(env, name)
-      : []
+    !isQualified ? resolveVarLexicalCandidates(env, name) : []
   return {
     op: 'the-var',
     form: list,
