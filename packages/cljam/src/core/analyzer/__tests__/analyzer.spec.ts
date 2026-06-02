@@ -220,7 +220,17 @@ describe('analyzer Phase 0 — ast* faithful data', () => {
 describe('analyzer Phase 0 — recur validation', () => {
   it('flags recur outside a loop/fn', () => {
     const out = analyzeLines('(recur 1)').join('\n')
-    expect(out).toContain('error:')
+    expect(out).toContain('; error: recur called outside of loop or fn')
+  })
+
+  it('flags non-tail recur with the interpreter message', () => {
+    const out = analyzeLines('(fn* [n] (+ 1 (recur n)))').join('\n')
+    expect(out).toContain('; error: Can only recur from tail position')
+  })
+
+  it('flags recur arity mismatch with the interpreter message', () => {
+    const out = analyzeLines('(loop* [a 1 b 2] (recur 10))').join('\n')
+    expect(out).toContain('; error: recur expects 2 arguments but got 1')
   })
 
   it('accepts recur in loop tail position with matching arity', () => {

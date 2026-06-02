@@ -20,7 +20,7 @@
  */
 
 import { getPos } from '../positions'
-import type { AnalysisError, Context } from './env'
+import type { AnalysisError, AnalysisErrorCode, Context } from './env'
 import type { AstNode } from './nodes'
 
 /**
@@ -35,12 +35,17 @@ export function markContext(
   walk(root, context, errors)
 }
 
-function recordError(node: AstNode, message: string): AnalysisError {
+function recordError(
+  node: AstNode,
+  message: string,
+  code: AnalysisErrorCode
+): AnalysisError {
   return {
     message,
     form: node.form,
     pos: node.pos ?? getPos(node.form) ?? null,
     kind: 'malformed',
+    code,
   }
 }
 
@@ -119,11 +124,22 @@ function walk(node: AstNode, context: Context, errors: AnalysisError[]): void {
       return
 
     case 'recur':
-      if (context !== 'return') {
-        errors.push(recordError(node, 'recur must be in tail (return) position'))
-      }
       if (node.targetKind === null) {
-        errors.push(recordError(node, 'recur used outside of a loop or fn'))
+        errors.push(
+          recordError(
+            node,
+            'recur called outside of loop or fn',
+            'malformed/recur-outside'
+          )
+        )
+      } else if (context !== 'return') {
+        errors.push(
+          recordError(
+            node,
+            'Can only recur from tail position',
+            'malformed/recur-tail'
+          )
+        )
       } else if (node.targetArity !== null) {
         // Variadic targets accept the fixed args plus one rest collection.
         const target = node.env.recur
@@ -133,7 +149,8 @@ function walk(node: AstNode, context: Context, errors: AnalysisError[]): void {
           errors.push(
             recordError(
               node,
-              `recur expects ${expected} argument(s) but got ${node.exprs.length}`
+              `recur expects ${expected} arguments but got ${node.exprs.length}`,
+              'malformed/recur-arity'
             )
           )
         }

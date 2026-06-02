@@ -417,28 +417,34 @@ describe('VM loop and recur integration', () => {
     expect(s.evaluate('(down 10005)')).toEqual(v.number(0))
   })
 
-  it('falls back and preserves runtime arity behavior for function-level recur mismatch', () => {
-    const fn = createSession().evaluate('(fn [n] (recur n n))')
+  it('raises analyzer-owned function-level recur arity mismatch', () => {
+    let thrown: unknown
+    try {
+      createSession().evaluate('(fn [n] (recur n n))')
+    } catch (error) {
+      thrown = error
+    }
 
-    expect(fn.kind).toBe('function')
-    if (fn.kind !== 'function') return
-
-    expect(fn.arities[0].bytecodeBody).toBeUndefined()
-    expect(() => createSession().evaluate('((fn [n] (recur n n)) 1)')).toThrow(
-      'Arguments length mismatch: fn accepts 1 arguments, but 2 were provided'
+    expect(thrown).toBeInstanceOf(Error)
+    expect((thrown as Error).message).toContain(
+      'recur expects 1 arguments but got 2'
     )
+    expect((thrown as { code?: string }).code).toBe('malformed/recur-arity')
   })
 
-  it('falls back and preserves runtime arity behavior for too few variadic recur args', () => {
-    const fn = createSession().evaluate('(fn [x & more] (recur))')
+  it('raises analyzer-owned too few variadic recur args', () => {
+    let thrown: unknown
+    try {
+      createSession().evaluate('(fn [x & more] (recur))')
+    } catch (error) {
+      thrown = error
+    }
 
-    expect(fn.kind).toBe('function')
-    if (fn.kind !== 'function') return
-
-    expect(fn.arities[0].bytecodeBody).toBeUndefined()
-    expect(() => createSession().evaluate('((fn [x & more] (recur)) 1)')).toThrow(
-      'Arguments length mismatch: fn expects at least 1 arguments, but 0 were provided'
+    expect(thrown).toBeInstanceOf(Error)
+    expect((thrown as Error).message).toContain(
+      'recur expects 2 arguments but got 0'
     )
+    expect((thrown as { code?: string }).code).toBe('malformed/recur-arity')
   })
 
   it('raises analyzer-owned loop* binding-shape errors', () => {

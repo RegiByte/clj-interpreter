@@ -406,6 +406,24 @@ const malformedCases: MalformedCase[] = [
     message: 'fn/defmacro requires at least a parameter vector',
     errorCode: 'malformed/fn-needs-params',
   },
+  {
+    name: 'recur outside loop or fn',
+    code: '(recur 1)',
+    message: 'recur called outside of loop or fn',
+    errorCode: 'malformed/recur-outside',
+  },
+  {
+    name: 'recur must be in tail position',
+    code: '(fn* [n] (+ 1 (recur n)))',
+    message: 'Can only recur from tail position',
+    errorCode: 'malformed/recur-tail',
+  },
+  {
+    name: 'recur arity must match target',
+    code: '(loop* [a 1 b 2] (recur 10))',
+    message: 'recur expects 2 arguments but got 1',
+    errorCode: 'malformed/recur-arity',
+  },
 ]
 
 function prepareSnapshot(setup: string[] = []): SessionSnapshot {

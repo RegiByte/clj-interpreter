@@ -68,6 +68,9 @@ export type AnalysisErrorCode =
   | 'malformed/arity-clause-vector'
   | 'malformed/single-variadic'
   | 'malformed/fn-shape'
+  | 'malformed/recur-outside'
+  | 'malformed/recur-tail'
+  | 'malformed/recur-arity'
 
 export type AnalysisError = {
   message: string

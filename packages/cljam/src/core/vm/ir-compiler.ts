@@ -113,6 +113,9 @@ const PORTED_MALFORMED_ANALYSIS_CODES = new Set([
   'malformed/arity-clause-vector',
   'malformed/single-variadic',
   'malformed/fn-shape',
+  'malformed/recur-outside',
+  'malformed/recur-tail',
+  'malformed/recur-arity',
 ])
 
 function fail(st: EmitState, reason: VmFallbackReason): false {
@@ -1038,24 +1041,7 @@ export function tryCompileVmFnBodyFromIr(
     const fnForm = synthFnStar(params, restParam, body, selfName)
     const { node, errors } = analyzeForm(fnForm, env, ctx)
     if (errors.length > 0) {
-      const analysisResult = compileResultForAnalysisErrors(errors)
-      if (!analysisResult.ok && analysisResult.fatal === true) {
-        return analysisResult
-      }
-      // A non-tail recur is a hard error: legacy makes it fatal so the fn
-      // definition throws immediately rather than silently using an interpreter
-      // body. Mirror that (and the legacy message) for parity.
-      if (errors.some((e) => e.message.includes('tail (return) position'))) {
-        return {
-          ok: false,
-          fatal: true,
-          reason: { category: 'compile-error', detail: 'Can only recur from tail position' },
-          analysisError: !analysisResult.ok
-            ? analysisResult.analysisError
-            : undefined,
-        }
-      }
-      return analysisResult
+      return compileResultForAnalysisErrors(errors)
     }
     if (node.op !== 'fn' || node.methods.length !== 1) {
       return {
