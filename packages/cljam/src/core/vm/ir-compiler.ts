@@ -29,7 +29,6 @@ import type {
   InvokeNode,
 } from '../analyzer/nodes'
 import { is } from '../assertions'
-import { parseArities } from '../evaluator/arity'
 import { mergeDocIntoMeta } from '../evaluator/defs'
 import { v } from '../factories'
 import { specialFormKeywords } from '../keywords.ts'
@@ -259,10 +258,6 @@ function isQualifiedName(name: string): boolean {
   return slashIdx > 0 && slashIdx < name.length - 1
 }
 
-function emptyEnvForParsing(): Env {
-  return { bindings: new Map(), outer: null }
-}
-
 /** The fixed set of intrinsic operators, keyed off the original (unqualified) callee symbol. */
 function intrinsicOpcodeForName(name: string): OpCode | null {
   switch (name) {
@@ -366,56 +361,39 @@ function emitJsGetPropIr(chunk: VmChunk, propName: string, pos: Pos | null): voi
   emitOperand(chunk, propIndex, pos)
 }
 
-/** Extract the arity forms from a `(fn* name? <arities>)` form (drops fn* and any self-name). */
-function fnArityForms(form: CljValue): CljValue[] {
-  const rest = (form as CljList).value.slice(1)
-  if (rest.length > 0 && is.symbol(rest[0])) return rest.slice(1)
-  return rest
-}
-
 /**
  * Builds a `VmFunctionTemplate` from a resolved `fn` node and pushes it onto the
  * current chunk's `innerFunctions`, returning its index. Per-arity bodies are
- * emitted via `emitMethodBodyToChunk`; the arity metadata (`params`/`restParam`/
- * `body`) is recovered from the original form via the shared `parseArities` so it
- * is byte-identical to the legacy compiler. `nameOverride` lets `defmacro` set the
- * template name from the def symbol (its synthetic fn is anonymous).
+ * emitted via `emitMethodBodyToChunk`. The arity metadata is taken straight from
+ * the analyzer IR — `params`/`restParam` are derived from the method's resolved
+ * param bindings (`fixedArity` splits fixed params from the rest binding), and
+ * `body` reuses the method's retained source forms. The analyzer already parsed
+ * and validated arity shape (`:malformed/*` codes raise at the boundary before
+ * we get here), so there is no `parseArities` re-derivation. `nameOverride` lets
+ * `defmacro` set the template name from the def symbol (its synthetic fn is
+ * anonymous).
  */
 function buildFnTemplate(
   node: FnNode,
   st: EmitState,
   nameOverride: string | null
 ): number | null {
-  let arities
-  try {
-    arities = parseArities(fnArityForms(node.form), emptyEnvForParsing())
-  } catch (error) {
-    fail(st, {
-      category: 'compile-error',
-      detail: error instanceof Error ? error.message : String(error),
-    })
-    return null
-  }
-  if (arities.length !== node.methods.length) {
-    fail(st, {
-      category: 'compile-error',
-      detail: 'ir-compiler: fn arity count mismatch between IR and parsed form',
-    })
-    return null
-  }
-
   const templateArities: VmArityTemplate[] = []
-  for (let i = 0; i < node.methods.length; i++) {
+  for (const method of node.methods) {
     const out: { reason: VmFallbackReason | null } = { reason: null }
-    const chunk = emitMethodBodyToChunk(node.methods[i], out)
+    const chunk = emitMethodBodyToChunk(method, out)
     if (chunk === null) {
       if (out.reason !== null) st.reason = out.reason
       return null
     }
     templateArities.push({
-      params: arities[i].params,
-      restParam: arities[i].restParam,
-      body: arities[i].body,
+      params: method.params
+        .slice(0, method.fixedArity)
+        .map((p) => p.form as CljSymbol),
+      restParam: method.variadic
+        ? (method.params[method.fixedArity].form as CljSymbol)
+        : null,
+      body: method.bodyForms,
       chunk,
     })
   }

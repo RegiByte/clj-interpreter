@@ -217,6 +217,16 @@ export interface FnMethodNode extends NodeBase {
   variadic: boolean
   fixedArity: number
   body: DoNode
+  /**
+   * The original (pre-analysis) body forms, exactly as the param vector was
+   * followed in source. Retained because the runtime `Arity.body` — used by the
+   * interpreter when `vmExecutionMode === 'off'` — needs un-analyzed forms, and
+   * they cannot be recovered from `body` (the `DoNode`): an empty body
+   * synthesizes a nil `ret` with no source form, and analysis macroexpands every
+   * child. `params`/`restParam` are derivable from `params`/`fixedArity`/
+   * `variadic`, so only the body forms are stored.
+   */
+  bodyForms: CljValue[]
 }
 
 export interface InvokeNode extends NodeBase {

@@ -39,6 +39,13 @@ export type {
   ModuleContext,
 } from './module'
 
+// clojure.test bridge (shared by codegen, bridge spec, and the differential harness)
+export {
+  installTestBridge,
+  composeEachFixture,
+  runDeftest,
+} from './testing/clojure-test-bridge'
+
 // Conversions
 export { cljToJs, jsToClj, ConversionError } from './conversions'
 export type { FunctionApplier } from './conversions'

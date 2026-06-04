@@ -1070,6 +1070,7 @@ function analyzeFnMethod(
     variadic: arity.restParam !== null,
     fixedArity: arity.params.length,
     body,
+    bodyForms: arity.body,
   }
 }
 

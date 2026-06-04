@@ -443,13 +443,13 @@ describe('generateTestModuleCode', () => {
     expect(code).not.toContain(', () => {')
   })
 
-  it('calls evaluateAsync for each deftest invocation', () => {
+  it('runs each deftest via the shared runDeftest helper', () => {
     const ctx = makeCodegenCtx()
     const source = '(ns t (:require [clojure.test :refer [deftest is]]))\n(deftest my-test (is true))'
     const code = generateTestModuleCode(ctx, 't', source)
 
-    // evaluateAsync handles both sync and async (CljPending) returns transparently
-    expect(code).toContain('await __session.evaluateAsync(')
+    // runDeftest (await'd) handles fixture wrapping + CljPending results internally
+    expect(code).toContain('await runDeftest(__session, "my-test")')
     expect(code).not.toContain('__session.evaluate("(my-test)")')
   })
 
@@ -471,34 +471,31 @@ describe('generateTestModuleCode', () => {
     expect(code).not.toContain("'vitest'")
   })
 
-  it('checks __vt_failures after awaiting the test invocation', () => {
+  it('checks failures after awaiting the test invocation', () => {
     const ctx = makeCodegenCtx()
     const source = '(ns t (:require [clojure.test :refer [deftest is]]))\n(deftest my-test (is true))'
     const code = generateTestModuleCode(ctx, 't', source)
 
-    // The await must come before the failure check
-    const awaitIdx = code.indexOf('await __session.evaluateAsync(')
-    const failIdx = code.indexOf('@__vt_failures')
+    // The await on runDeftest must come before the failure-length check
+    const awaitIdx = code.indexOf('await runDeftest(__session,')
+    const failIdx = code.indexOf('__failures.length > 0')
     expect(awaitIdx).toBeGreaterThan(-1)
     expect(failIdx).toBeGreaterThan(awaitIdx)
   })
 })
 
 describe('generateTestModuleCode — use-fixtures :each', () => {
-  it('emits __vt_each_fixture setup using join-fixtures and fixture-registry', () => {
+  it('composes the :each fixture chain for the namespace', () => {
     const ctx = makeCodegenCtx()
     const source = '(ns my.suite (:require [clojure.test :refer [deftest is]]))\n(deftest t (is true))'
     const code = generateTestModuleCode(ctx, 'my.suite', source)
 
-    // Must define __vt_each_fixture using join-fixtures and fixture-registry
-    expect(code).toContain('__vt_each_fixture')
-    expect(code).toContain('clojure.test/join-fixtures')
-    expect(code).toContain('clojure.test/fixture-registry')
-    // The ns name must appear in the fixture-registry lookup key
-    expect(code).toContain('"my.suite"')
+    // The fixture-registry/join-fixtures wiring lives in composeEachFixture now;
+    // codegen just calls it with the namespace name.
+    expect(code).toContain('composeEachFixture(__session, "my.suite")')
   })
 
-  it('wraps each test invocation with __vt_each_fixture', () => {
+  it('runs each test via runDeftest (which applies the :each fixtures)', () => {
     const ctx = makeCodegenCtx()
     const source = [
       '(ns t (:require [clojure.test :refer [deftest is]]))',
@@ -507,20 +504,19 @@ describe('generateTestModuleCode — use-fixtures :each', () => {
     ].join('\n')
     const code = generateTestModuleCode(ctx, 't', source)
 
-    // Each test is called via (__vt_each_fixture (fn [] (test-name)))
-    expect(code).toContain('(__vt_each_fixture (fn [] (first-test)))')
-    expect(code).toContain('(__vt_each_fixture (fn [] (second-test)))')
-    // The bare (test-name) form must NOT appear as the direct evaluateAsync argument
+    expect(code).toContain('await runDeftest(__session, "first-test")')
+    expect(code).toContain('await runDeftest(__session, "second-test")')
+    // The bare (test-name) form must NOT appear as a direct evaluate argument
     expect(code).not.toContain('evaluateAsync("(first-test)")')
   })
 
-  it('defines __vt_each_fixture before the first test() call', () => {
+  it('composes the fixture chain before the first test() call', () => {
     const ctx = makeCodegenCtx()
     const source = '(ns t (:require [clojure.test :refer [deftest is]]))\n(deftest my-test (is true))'
     const code = generateTestModuleCode(ctx, 't', source)
 
-    // fixture setup must precede the first test() registration
-    const fixtureIdx = code.indexOf('__vt_each_fixture')
+    // fixture composition must precede the first test() registration
+    const fixtureIdx = code.indexOf('composeEachFixture(__session,')
     const testCallIdx = code.indexOf('test("my-test"')
     expect(fixtureIdx).toBeGreaterThan(-1)
     expect(testCallIdx).toBeGreaterThan(fixtureIdx)

@@ -195,23 +195,6 @@ export function generateTestModuleCode(
     ? `import { test } from 'bun:test';`
     : `import { test } from 'vitest';`
 
-  // Clojure expressions used to install the test-framework failure bridge.
-  // JSON.stringify handles escaping for embedding in JS string literals.
-  const failOverride = [
-    '(defmethod clojure.test/report :fail [m]',
-    '  (swap! __vt_failures conj',
-    '    (str',
-    '      (when (:message m) (str (:message m) "\\n"))',
-    '      "expected: " (pr-str (:expected m)) "\\n"',
-    '      "  actual: " (pr-str (:actual m)))))',
-  ].join(' ')
-
-  const errorOverride = [
-    '(defmethod clojure.test/report :error [m]',
-    '  (swap! __vt_failures conj',
-    '    (str "error: " (pr-str (:actual m)))))',
-  ].join(' ')
-
   // --- session creation lines (optionally seeded from user factory) ----------
   const sessionLines: string[] = entrypointPath
     ? [
@@ -226,7 +209,7 @@ export function generateTestModuleCode(
 
   const lines: string[] = [
     testImport,
-    `import { createSession, cljToJs } from ${JSON.stringify(ctx.coreIndexPath)};`,
+    `import { createSession, installTestBridge, composeEachFixture, runDeftest } from ${JSON.stringify(ctx.coreIndexPath)};`,
     ...(entrypointPath
       ? [`import __sessionFactory from ${JSON.stringify(entrypointPath)};`]
       : []),
@@ -238,38 +221,21 @@ export function generateTestModuleCode(
     `const __loadedNs = ${loadCall.replace(/;$/, '')};`,
     `__session.setNs(__loadedNs);`,
     ``,
-    `// Ensure clojure.test is available for override installation.`,
-    `__session.evaluate("(require '[clojure.test])");`,
-    ``,
-    `// Test-framework failure bridge: override :fail/:error to accumulate strings in an atom.`,
-    `// All other report methods are silenced — the test runner controls the output.`,
-    `__session.evaluate("(def __vt_failures (atom []))");`,
-    `__session.evaluate(${JSON.stringify(failOverride)});`,
-    `__session.evaluate(${JSON.stringify(errorOverride)});`,
-    `__session.evaluate("(defmethod clojure.test/report :pass [_] nil)");`,
-    `__session.evaluate("(defmethod clojure.test/report :begin-test-var [_] nil)");`,
-    `__session.evaluate("(defmethod clojure.test/report :end-test-var [_] nil)");`,
-    `__session.evaluate("(defmethod clojure.test/report :begin-test-ns [_] nil)");`,
-    `__session.evaluate("(defmethod clojure.test/report :end-test-ns [_] nil)");`,
-    `__session.evaluate("(defmethod clojure.test/report :summary [_] nil)");`,
-    ``,
-    `// Compose the :each fixture chain once for this file.`,
-    `// join-fixtures of [] → default-fixture → (fn [f] (f)), so zero-fixture files pay no overhead.`,
-    `// use-fixtures calls populate fixture-registry at loadFile time, so this runs after registration.`,
-    `__session.evaluate(${JSON.stringify(`(def __vt_each_fixture (clojure.test/join-fixtures (get @clojure.test/fixture-registry [${JSON.stringify(nsName)} :each] [])))`)}); `,
+    `// Test-framework failure bridge + :each fixture chain. The wiring lives in a`,
+    `// shared runtime helper (core/testing/clojure-test-bridge) so codegen, the`,
+    `// bridge spec, and the differential harness stay in lockstep.`,
+    `installTestBridge(__session);`,
+    `composeEachFixture(__session, ${JSON.stringify(nsName)});`,
     ``,
   ]
 
   for (const testName of deftestNames) {
     lines.push(
       `test(${JSON.stringify(testName)}, async () => {`,
-      `  __session.evaluate("(reset! __vt_failures [])");`,
-      `  // evaluateAsync awaits CljPending results (returned by (async ...) blocks),`,
-      `  // and returns synchronously for ordinary deftests — no overhead either way.`,
-      `  // __vt_each_fixture applies any :each fixtures registered via (use-fixtures :each ...).`,
-      `  await __session.evaluateAsync(${JSON.stringify(`(__vt_each_fixture (fn [] (${testName})))`)});`,
-      `  const __failures = cljToJs(__session.evaluate("@__vt_failures"), __session);`,
-      `  if (Array.isArray(__failures) && __failures.length > 0) {`,
+      `  // runDeftest resets __vt_failures, runs the deftest through the :each fixture`,
+      `  // chain (awaiting any CljPending result), and returns the collected failures.`,
+      `  const __failures = await runDeftest(__session, ${JSON.stringify(testName)});`,
+      `  if (__failures.length > 0) {`,
       `    throw new Error(__failures.join('\\n\\n'));`,
       `  }`,
       `});`,
