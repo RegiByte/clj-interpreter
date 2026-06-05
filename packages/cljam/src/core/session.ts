@@ -9,6 +9,7 @@ import { is } from './assertions'
 import type { CljamLibrary } from './library'
 import type { RuntimeModule } from './module'
 import { extractAliasMapFromTokens, extractNsNameFromTokens } from './ns-forms'
+import { parseDescriptor } from './loader/ns-descriptor'
 import { formatErrorContext, formatFrames } from './positions'
 import { printString } from './printer'
 import { readForms } from './reader'
@@ -294,6 +295,9 @@ function buildSessionFacade(
       nsName?: string,
       filePath?: string
     ): Promise<string> {
+      // G1: reject more than one top-level ns form (namespace/multiple-ns-forms)
+      // before any namespace state is touched. Same parser as the sync path.
+      parseDescriptor(source, nsName, filePath)
       // If there is no ns declaration in the source, pre-set the namespace from
       // the hint so the forms evaluate in the right context.
       if (nsName) {

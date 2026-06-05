@@ -12,6 +12,7 @@ import {
 import { makeCoreModule } from './modules/core'
 import { makeJsModule } from './modules/js'
 import { makeVmModule } from './modules/vm'
+import { parseDescriptor } from './loader/ns-descriptor'
 import {
   extractAliasMapFromTokens,
   extractNsNameFromTokens,
@@ -137,11 +138,19 @@ function buildRuntime(
   // Updated via runtime.syncNsVar() which session.setNs calls.
   let currentNsRef = 'user'
 
-  // sourceLoadedNs: tracks namespaces whose .clj source has been evaluated.
-  // Distinct from the registry — a namespace can be pre-declared via declareNs
-  // (native vars only) without its source being loaded. resolveNamespace is
-  // idempotent against this set, so repeated require calls are no-ops.
-  const sourceLoadedNs = new Set<string>(initialSourceLoadedNs)
+  // Load-state model (S2, see .regibyte/S2_LINK_LOAD_DESIGN.md). Two DISTINCT
+  // structures — conflating them is the cycle-detection bug:
+  //   - loaded: terminal states per namespace. 'executed' = its .clj source ran
+  //     to completion; 'failed' = its load threw. Replaces the old sourceLoadedNs
+  //     Set (which only ever meant 'executed'). resolveNamespace is idempotent
+  //     against 'executed'; a 'failed' entry is cleared so a retry re-runs.
+  //   - loadingPath: the in-flight dependency stack. A namespace is `loading`
+  //     iff it is on this stack. A require for a namespace already on the stack
+  //     is a circular dependency (G11) — diagnosed by loadFile, not deadlocked.
+  // A namespace absent from both is `unloaded`.
+  const loaded = new Map<string, 'executed' | 'failed'>()
+  for (const nsName of initialSourceLoadedNs ?? []) loaded.set(nsName, 'executed')
+  const loadingPath: string[] = []
 
   // resolveNamespace: loads a namespace's .clj source if it hasn't been loaded
   // yet. Idempotent — returns true immediately if already source-loaded.
@@ -149,7 +158,10 @@ function buildRuntime(
   // call site. For loadFile calls, it's the file's ctx. For runtime require
   // native fn calls, it comes from the evaluator via cljNativeFunctionWithContext.
   function resolveNamespace(nsName: string, ctx: EvaluationContext): boolean {
-    if (sourceLoadedNs.has(nsName)) return true
+    if (loaded.get(nsName) === 'executed') return true
+    // A prior load failed: clear the terminal state so this attempt re-runs
+    // deterministically rather than replaying a stale error.
+    if (loaded.get(nsName) === 'failed') loaded.delete(nsName)
     // Priority 1: built-in namespaces (clojure.core, clojure.string, etc.)
     const builtInLoader = builtInNamespaceSources[nsName]
     if (builtInLoader) {
@@ -166,14 +178,21 @@ function buildRuntime(
     if (!options?.readFile || sourceRoots.size === 0) return false
     for (const root of sourceRoots) {
       const filePath = `${root.replace(/\/$/, '')}/${nsName.replace(/\./g, '/')}.clj`
+      // The catch scopes ONLY the readFile probe — "is this namespace's source
+      // in this root?". A miss continues to the next root. loadFile runs OUTSIDE
+      // the catch so a real load error (e.g. a circular dependency) propagates
+      // instead of being swallowed and mistaken for "not found". The broader
+      // transitive-async fail-fast (G2) is S3/S4; this is the narrow enabler the
+      // load-state model's cycle diagnostic needs to actually surface.
+      let source: string | undefined
       try {
-        const source = options.readFile(filePath)
-        if (source) {
-          runtime.loadFile(source, undefined, undefined, ctx)
-          return true
-        }
+        source = options.readFile(filePath)
       } catch {
         continue
+      }
+      if (source) {
+        runtime.loadFile(source, undefined, undefined, ctx)
+        return true
       }
     }
     return false
@@ -427,9 +446,28 @@ function buildRuntime(
       filePath: string | undefined,
       ctx: EvaluationContext
     ): string {
+      // G1: reject more than one top-level ns form (namespace/multiple-ns-forms).
+      // The check lives only in the descriptor parser — one implementation.
+      parseDescriptor(source, nsName, filePath)
       const tokens = tokenize(source)
       const targetNs = extractNsNameFromTokens(tokens) ?? nsName ?? 'user'
-      sourceLoadedNs.add(targetNs)
+
+      // G11: a require for a namespace already on the in-flight dependency stack
+      // is a circular dependency. Diagnose it here, BEFORE touching load state,
+      // so it surfaces as a clear cycle error instead of the old partial-load
+      // "symbol not found" (which happened because the ns was marked loaded
+      // before its requires were processed).
+      if (loadingPath.includes(targetNs)) {
+        const cyclePath = [...loadingPath, targetNs]
+        const err = new EvaluationError(
+          `Circular namespace dependency: ${cyclePath.join(' -> ')}`,
+          { cyclePath }
+        )
+        err.code = 'namespace/circular-dependency'
+        err.data = { cyclePath }
+        throw err
+      }
+
       const aliasMap = extractAliasMapFromTokens(tokens)
       const forms = readForms(tokens, targetNs, aliasMap, source)
       const env = this.ensureNamespace(targetNs)
@@ -437,8 +475,13 @@ function buildRuntime(
       ctx.currentFile = filePath
       ctx.currentLineOffset = 0
       ctx.currentColOffset = 0
-      this.processNsRequires(forms, env, ctx)
+      // Mark `loading` (push the path) before processing requires so a back-edge
+      // in the dependency graph is caught as a cycle. Mark `executed` only after
+      // the body runs; on any failure mark `failed` so retries are deterministic
+      // (resolveNamespace clears `failed` and re-runs).
+      loadingPath.push(targetNs)
       try {
+        this.processNsRequires(forms, env, ctx)
         for (const form of forms) {
           const evalIdentity = ctx.allocateEvalIdentity?.(targetNs)
           ctx.currentEvalIdentity = evalIdentity
@@ -449,7 +492,12 @@ function buildRuntime(
             ctx.currentEvalIdentity = undefined
           }
         }
+        loaded.set(targetNs, 'executed')
+      } catch (e) {
+        loaded.set(targetNs, 'failed')
+        throw e
       } finally {
+        loadingPath.pop()
         ctx.currentSource = undefined
         ctx.currentFile = undefined
       }
@@ -499,7 +547,13 @@ function buildRuntime(
       return {
         registry: cloneRegistry(registry),
         identity: { ...identity },
-        sourceLoadedNs: [...sourceLoadedNs],
+        // Snapshot seam: RuntimeSnapshot still carries the string[] of
+        // source-loaded namespaces. Derive it from the terminal 'executed'
+        // states — an in-flight `loading` ns is never serialized (loads do not
+        // pause across snapshots), and a `failed` ns is not loaded.
+        sourceLoadedNs: [...loaded]
+          .filter(([, state]) => state === 'executed')
+          .map(([nsName]) => nsName),
       }
     },
   }

@@ -457,15 +457,56 @@ export function ensureNamespaceInRegistry(
 }
 
 // ---------------------------------------------------------------------------
-// processRequireSpec — processes a single [ns.name :as alias :refer [...]] spec.
-// resolveNs is called when the target namespace isn't yet loaded.
+// assertNamespaceAllowed — the allowedPackages gate. Extracted so both the load
+// path (processRequireSpec, gating BEFORE a load runs code) and the link path
+// (applyRequireLink) share ONE implementation of the access-denied message.
 // ---------------------------------------------------------------------------
 
-export function processRequireSpec(
+function assertNamespaceAllowed(
+  nsName: string,
+  allowedPackages?: string[] | 'all',
+  isLibraryNamespace?: (nsName: string) => boolean
+): void {
+  // The gate only fires for library-registered namespaces. Filesystem
+  // namespaces (user-controlled source via sourceRoots) are always allowed — the
+  // user controls those files, not the allowedPackages gate. Built-ins
+  // (clojure.*) are always allowed via ALWAYS_ALLOWED in isNamespaceAllowed.
+  const isLibrary = isLibraryNamespace ? isLibraryNamespace(nsName) : true
+  if (
+    isLibrary &&
+    allowedPackages !== undefined &&
+    !isNamespaceAllowed(nsName, allowedPackages)
+  ) {
+    const allowedList = allowedPackages === 'all' ? [] : allowedPackages
+    const err = new EvaluationError(
+      `Access denied: namespace '${nsName}' is not in the allowed packages for this session.\n` +
+        `Allowed packages: ${JSON.stringify(allowedList)}\n` +
+        `To allow all packages, use: allowedPackages: 'all'`,
+      { nsName, allowedPackages }
+    )
+    err.code = 'namespace/access-denied'
+    throw err
+  }
+}
+
+// ---------------------------------------------------------------------------
+// applyRequireLink — LINK-ONLY application of a require spec. Installs :as
+// aliases, :refer vars, and :as-alias reader aliases into currentEnv, ASSUMING
+// the target namespace is already resident. It performs NO loading: no
+// resolveNs, no recursive source read. If the target is absent it throws
+// namespace/not-found.
+//
+// This is the S2 link/load split (see .regibyte/S2_LINK_LOAD_DESIGN.md). The
+// async graph loader (S3) will load the whole dependency closure first, then
+// call applyRequireLink to wire links without re-triggering a load. Every
+// validation error is the SAME one the combined processRequireSpec threw (G8) —
+// extracted verbatim, not reworded.
+// ---------------------------------------------------------------------------
+
+export function applyRequireLink(
   spec: CljValue,
   currentEnv: Env,
   registry: NamespaceRegistry,
-  resolveNs?: (nsName: string) => boolean,
   allowedPackages?: string[] | 'all',
   isLibraryNamespace?: (nsName: string) => boolean
 ): boolean {
@@ -486,23 +527,7 @@ export function processRequireSpec(
 
   const nsName = elements[0].name
 
-  // allowedPackages check — only fires for library-registered namespaces.
-  // Filesystem namespaces (user-controlled source via sourceRoots) are always
-  // allowed — the user controls those files, not the allowedPackages gate.
-  // Built-ins (clojure.*) are always allowed via ALWAYS_ALLOWED below.
-  const isLibrary = isLibraryNamespace ? isLibraryNamespace(nsName) : true
-  if (isLibrary && allowedPackages !== undefined && !isNamespaceAllowed(nsName, allowedPackages)) {
-    const allowedList =
-      allowedPackages === 'all' ? [] : allowedPackages
-    const err = new EvaluationError(
-      `Access denied: namespace '${nsName}' is not in the allowed packages for this session.\n` +
-        `Allowed packages: ${JSON.stringify(allowedList)}\n` +
-        `To allow all packages, use: allowedPackages: 'all'`,
-      { nsName, allowedPackages }
-    )
-    err.code = 'namespace/access-denied'
-    throw err
-  }
+  assertNamespaceAllowed(nsName, allowedPackages, isLibraryNamespace)
 
   let changed = false
   const hasAsAlias = elements.some(
@@ -542,10 +567,8 @@ export function processRequireSpec(
     return changed
   }
 
-  // Always attempt to load the source — resolveNs is idempotent (no-ops if
-  // already loaded). This ensures namespaces pre-declared via declareNs (native
-  // vars only, no .clj source yet) still get their source evaluated on first require.
-  if (resolveNs) resolveNs(nsName)
+  // Link-only: the target must already be resident. Loading is the caller's job
+  // (processRequireSpec for REPL/eval, the async graph loader for S3).
   const targetEnv = registry.get(nsName)
   if (!targetEnv) {
     const err = new EvaluationError(
@@ -617,4 +640,49 @@ export function processRequireSpec(
     }
   }
   return changed
+}
+
+// ---------------------------------------------------------------------------
+// processRequireSpec — LOAD + LINK. Loads the target namespace if absent (via
+// resolveNs), then applies links via applyRequireLink. This is the REPL/eval
+// path that keeps today's load-then-link behavior; the signature is unchanged
+// so existing callers (runtime require mechanics, bootstrap `require`) are
+// unaffected.
+// ---------------------------------------------------------------------------
+
+export function processRequireSpec(
+  spec: CljValue,
+  currentEnv: Env,
+  registry: NamespaceRegistry,
+  resolveNs?: (nsName: string) => boolean,
+  allowedPackages?: string[] | 'all',
+  isLibraryNamespace?: (nsName: string) => boolean
+): boolean {
+  // Load phase: a well-formed, loadable spec (vector + symbol head, not
+  // :as-alias) gets its namespace loaded BEFORE linking. The gate runs here too
+  // so a denied namespace is never source-loaded (loading runs code). Malformed
+  // specs and :as-alias fall through to applyRequireLink, the single authority
+  // for validation messages and link application.
+  if (
+    resolveNs &&
+    is.vector(spec) &&
+    spec.value.length > 0 &&
+    is.symbol(spec.value[0])
+  ) {
+    const hasAsAlias = spec.value.some(
+      (el) => is.keyword(el) && el.name === ':as-alias'
+    )
+    if (!hasAsAlias) {
+      const nsName = spec.value[0].name
+      assertNamespaceAllowed(nsName, allowedPackages, isLibraryNamespace)
+      resolveNs(nsName)
+    }
+  }
+  return applyRequireLink(
+    spec,
+    currentEnv,
+    registry,
+    allowedPackages,
+    isLibraryNamespace
+  )
 }
