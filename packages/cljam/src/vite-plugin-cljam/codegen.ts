@@ -1,5 +1,6 @@
 import type { Arity } from '../core/types'
-import { extractNsName, extractNsRequires, extractStringRequires } from './namespace-utils'
+import { extractNsName, extractNsRequires } from './namespace-utils'
+import { graphNeedsAsync } from './namespace-graph'
 import { readNamespaceVars, readDeftestNames } from './static-analysis'
 
 export interface CodegenContext {
@@ -7,27 +8,44 @@ export interface CodegenContext {
   coreIndexPath: string
   virtualSessionId: string
   resolveDepPath: (depNs: string) => string | null
+  /**
+   * Read a dependency namespace's source for transitive graph analysis (S7).
+   * Returns null when the namespace has no locatable source. Used by
+   * {@link graphNeedsAsync} to discover host imports declared only in transitive
+   * dependencies, so the sync-vs-async load decision matches the runtime loader.
+   */
+  readDepSource?: (depNs: string) => string | null
 }
 
 export function generateModuleCode(
   ctx: CodegenContext,
   nsNameFromPath: string,
-  source: string,
-  filePath?: string
+  source: string
 ): string {
   const nsName = extractNsName(source) ?? nsNameFromPath
 
-  // Detect string requires from AST — determines sync vs async load call.
-  const hasStringRequires = extractStringRequires(source, filePath).length > 0
+  // Graph-aware sync-vs-async decision (S7): the module needs async loading if
+  // the file OR any namespace in its transitive closure declares a host import.
+  // This mirrors the runtime loader's graphNeedsAsync; without it a purely
+  // transitive host dependency would be missed and the bundle would break.
+  const needsAsync = graphNeedsAsync(source, ctx)
 
   const requires = extractNsRequires(source)
   const depImports = requires
     .map((depNs) => {
       const depPath = ctx.resolveDepPath(depNs)
-      if (depPath) return `import ${JSON.stringify(depPath)};`
-      return null
+      // A declared dependency that cannot be resolved is a build error, not a
+      // silent skip — a dropped import would surface later as a confusing
+      // runtime "namespace not found". Fail fast with a clear message.
+      if (!depPath) {
+        throw new Error(
+          `cljam: namespace "${nsName}" requires "${depNs}", but no source file ` +
+            `was found for it under any configured source root ` +
+            `(${ctx.sourceRoots.join(', ')}).`
+        )
+      }
+      return `import ${JSON.stringify(depPath)};`
     })
-    .filter(Boolean)
     .join('\n')
 
   // Static analysis: pure AST walk, no execution.
@@ -59,9 +77,9 @@ export function generateModuleCode(
   }
 
   const escapedSource = JSON.stringify(source)
-  // Files with string requires need async loading (top-level await, requires target: esnext).
-  // Files without string requires use the sync path — no top-level await overhead.
-  const loadCall = hasStringRequires
+  // Graphs that touch a host import need async loading (top-level await, requires
+  // target: esnext). Pure Clojure graphs use the sync path — no TLA overhead.
+  const loadCall = needsAsync
     ? `await __session.loadFileAsync(${escapedSource}, ${JSON.stringify(nsName)});`
     : `__session.loadFile(${escapedSource}, ${JSON.stringify(nsName)});`
 
@@ -184,10 +202,12 @@ export function generateTestModuleCode(
 
   const nsName = extractNsName(source) ?? nsNameFromPath
   const deftestNames = readDeftestNames(source)
-  const hasStringRequires = extractStringRequires(source).length > 0
+  // Graph-aware async decision (S7), same as generateModuleCode — a transitive
+  // host import in a required namespace must drive the async load call too.
+  const needsAsync = graphNeedsAsync(source, ctx)
 
   const escapedSource = JSON.stringify(source)
-  const loadCall = hasStringRequires
+  const loadCall = needsAsync
     ? `await __session.loadFileAsync(${escapedSource}, ${JSON.stringify(nsName)});`
     : `__session.loadFile(${escapedSource}, ${JSON.stringify(nsName)});`
 

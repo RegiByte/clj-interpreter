@@ -296,14 +296,16 @@ describe('generateModuleCode', () => {
     expect(code).toContain('"fallback.name"')
   })
 
-  it('skips dependency imports when resolveDepPath returns null', () => {
+  it('throws a build error when a declared dependency cannot be resolved (S7)', () => {
+    // Previously an unresolvable clj require was silently dropped from depImports,
+    // surfacing later as a confusing runtime "namespace not found". S7 fails fast
+    // at build time — the bundler counterpart of the runtime's namespace/not-found.
     const ctx = makeCodegenCtx({
       resolveDepPath: () => null,
     })
     const source = '(ns test.nodep (:require [dep :as d]))\n(def x d/y)'
-    const code = generateModuleCode(ctx, 'test.nodep', source)
 
-    expect(code).not.toContain('import "')
+    expect(() => generateModuleCode(ctx, 'test.nodep', source)).toThrow(/dep/)
   })
 
   it('emits minimal module (no exports) for namespace with only macros', () => {

@@ -142,6 +142,42 @@ describe('G2 transitive async correctness', () => {
 })
 
 // ---------------------------------------------------------------------------
+// S7 — Unresolvable declared dependency is an error, never a silent skip.
+// A clj require whose namespace has no locatable source is a genuine bug; the
+// loader must surface it, not quietly continue. The runtime already does the
+// right thing: resolveNamespace returns false (no source found), then
+// applyRequireLink asserts residency and throws namespace/not-found. This GUARD
+// locks that behavior so the S7 Vite-side fail-fast has a runtime counterpart
+// it can mirror, and so a future refactor can't regress it into a silent skip.
+// ---------------------------------------------------------------------------
+
+describe(`S7 unresolvable declared dependency [${GUARD}]`, () => {
+  const files = {
+    'src/app.clj': '(ns app (:require [missing :as m]))\n(def x 1)',
+  }
+
+  it('loadFile throws namespace/not-found for an unresolvable clj require', () => {
+    const s = graphSession(files)
+    const err = captureSync(() =>
+      s.loadFile(files['src/app.clj'], 'app', 'src/app.clj')
+    )
+    expect(err).toBeDefined()
+    expect(err!.code).toBe('namespace/not-found')
+    expect(err!.message).toMatch(/missing/)
+  })
+
+  it('loadFileAsync throws namespace/not-found for an unresolvable clj require', async () => {
+    const s = graphSession(files)
+    const err = await captureAsync(() =>
+      s.loadFileAsync(files['src/app.clj'], 'app', 'src/app.clj')
+    )
+    expect(err).toBeDefined()
+    expect(err!.code).toBe('namespace/not-found')
+    expect(err!.message).toMatch(/missing/)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // G11 — Cycles fail clearly with the cycle path. Today a cyclic require
 // produces a confusing partial-load "symbol not found", because loadFile marks
 // the namespace source-loaded before processing requires, so the back-edge is a

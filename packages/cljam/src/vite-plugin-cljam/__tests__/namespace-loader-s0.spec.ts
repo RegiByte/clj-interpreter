@@ -9,38 +9,30 @@ import {
 import { parseDescriptor } from '../../core/loader/ns-descriptor'
 
 // ---------------------------------------------------------------------------
-// S0 — Vite graph-aware tripwires (see .regibyte/NAMESPACE_LOADER_PLAN.md §S7).
+// S7 — Vite graph-aware load decision (see .regibyte/NAMESPACE_LOADER_PLAN.md §S7).
 //
 // The Vite codegen must agree with the runtime loader on namespace-graph
 // semantics: if any namespace in a file's transitive closure imports a host
 // module, the generated browser module must use top-level await + loadFileAsync.
-// Today the sync-vs-async decision looks ONLY at the current file's own string
-// requires (codegen.ts), so a purely-transitive host dependency is missed.
+// The sync-vs-async decision now walks the transitive Clojure dep graph
+// (codegen.ts → namespace-graph.ts → graphNeedsAsync), not just the current
+// file's own string requires.
 //
-// Honest breakdown after auditing the real code:
-//   V1 — RED   : per-module load-call is not graph-aware (the genuine gap).
+// Status after S7 landed (all green):
+//   V1 — per-module load-call is graph-aware (the gap is closed).
 //   V2 — GUARD : __importMap already includes transitive hosts (global file
-//                scan in index.ts scanStringRequires); lock it so S7 does not
+//                scan in index.ts scanStringRequires); locked so S7 does not
 //                regress the map to a per-graph subset.
-//   V3 — SKIP  : equivalence with the shared core descriptor parser
-//                (core/loader/ns-descriptor.ts) cannot be a compiling test until
-//                that module exists in S1. Flip to `it` then.
+//   V3 — equivalence with the shared core descriptor parser
+//                (core/loader/ns-descriptor.ts), so bundler and runtime agree.
 // ---------------------------------------------------------------------------
 
-const RED = 'RED until S7'
 const GUARD = 'GUARD — must stay green'
 
-/**
- * S7 codegen seam (test-only). The graph-aware analyzer will need to read a
- * dependency's source to discover transitive host imports. Declaring it here as
- * an optional extension keeps S0 purely additive — codegen ignores it today, so
- * these tests are genuinely red until S7 wires the transitive scan through it.
- */
-interface S7CodegenContext extends CodegenContext {
-  readDepSource?: (depNs: string) => string | null
-}
-
-function makeCtx(overrides?: Partial<S7CodegenContext>): S7CodegenContext {
+// S7 graduated the `readDepSource` seam from a test-only extension into a real
+// field on CodegenContext: the graph-aware analyzer reads a dependency's source
+// to discover transitive host imports. These tests are now green.
+function makeCtx(overrides?: Partial<CodegenContext>): CodegenContext {
   return {
     sourceRoots: ['src'],
     coreIndexPath: '/project/src/core/index.ts',
@@ -50,7 +42,7 @@ function makeCtx(overrides?: Partial<S7CodegenContext>): S7CodegenContext {
   }
 }
 
-describe(`S7/V1 graph-aware load call [${RED}]`, () => {
+describe('S7/V1 graph-aware load call', () => {
   const depWithHost = '(ns dep (:require ["host-mod" :as h]))\n(def x 1)'
 
   it('emits await loadFileAsync when a transitive dep imports a host module', () => {
@@ -85,6 +77,18 @@ describe(`S7/V1 graph-aware load call [${RED}]`, () => {
     const code = generateModuleCode(ctx, 'app', source)
 
     expect(code).toContain('await __session.loadFileAsync(')
+  })
+})
+
+describe('S7 unresolvable declared dependency is a build error', () => {
+  // A clj require whose namespace has no resolvable source used to be silently
+  // dropped from depImports (.filter(Boolean)), surfacing later as a confusing
+  // runtime "namespace not found". S7 fails fast at build time with a clear
+  // message — the bundler counterpart of the runtime's namespace/not-found.
+  it('throws a clear build error when a clj require cannot be resolved', () => {
+    const ctx = makeCtx({ resolveDepPath: () => null })
+    const source = '(ns app (:require [missing :as m]))\n(def x 1)'
+    expect(() => generateModuleCode(ctx, 'app', source)).toThrow(/missing/)
   })
 })
 

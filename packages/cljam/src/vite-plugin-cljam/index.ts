@@ -162,22 +162,26 @@ export function cljPlugin(options?: CljPluginOptions): Plugin {
         }
       },
     })
+    // One resolution loop, two derived accessors: resolveDepPath wants the path,
+    // readDepSource (S7 transitive graph analysis) wants the source. Both walk
+    // the same source-root priority list, so derive them from one locator.
+    const locateDep = (depNs: string): { path: string; source: string } | null => {
+      for (const root of sourceRoots) {
+        const depPath = resolve(projectRoot, nsToPath(depNs, root))
+        try {
+          return { path: depPath, source: readFileSync(depPath, 'utf-8') }
+        } catch {
+          continue
+        }
+      }
+      return null
+    }
     codegenCtx = {
       sourceRoots,
       coreIndexPath,
       virtualSessionId: VIRTUAL_SESSION_ID,
-      resolveDepPath: (depNs: string) => {
-        for (const root of sourceRoots) {
-          const depPath = resolve(projectRoot, nsToPath(depNs, root))
-          try {
-            readFileSync(depPath)
-            return depPath
-          } catch {
-            continue
-          }
-        }
-        return null
-      },
+      resolveDepPath: (depNs: string) => locateDep(depNs)?.path ?? null,
+      readDepSource: (depNs: string) => locateDep(depNs)?.source ?? null,
     }
   }
 
@@ -393,7 +397,7 @@ export function cljPlugin(options?: CljPluginOptions): Plugin {
       if (id.endsWith('.clj') && !id.includes('?')) {
         const source = readFileSync(id, 'utf-8')
         const nsNameFromPath = pathToNs(relative(projectRoot, id), sourceRoots)
-        const code = generateModuleCode(codegenCtx, nsNameFromPath, source, id)
+        const code = generateModuleCode(codegenCtx, nsNameFromPath, source)
         const dts = generateDts(codegenCtx, nsNameFromPath, source)
         if (dts) writeFileIfChanged(id + '.d.ts', dts)
         return code
