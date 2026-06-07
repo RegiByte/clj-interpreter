@@ -266,12 +266,10 @@ describe(`G14 REPL ns is never a no-op [${RED}]`, () => {
     expect(s.getNs(before)?.vars.has('x')).toBe(false)
   })
 
-  it('a standalone (ns ...) in evaluate throws ns-in-repl (not a silent switch)', () => {
+  it('a standalone (ns ...) in evaluate switches the current namespace', () => {
     const s = createSession()
-    const err = captureSync(() => s.evaluate('(ns repl.solo)'))
-    expect(err).toBeDefined()
-    expect(err!.code).toBe('namespace/ns-in-repl')
-    expect(err!.message).toMatch(/in-ns|load/)
+    s.evaluate('(ns repl.solo)')
+    expect(s.currentNs).toBe('repl.solo')
   })
 
   it('in-ns remains the supported REPL namespace switch [' + GUARD + ']', () => {
