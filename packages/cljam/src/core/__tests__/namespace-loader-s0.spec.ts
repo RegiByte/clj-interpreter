@@ -278,3 +278,38 @@ describe(`G14 REPL ns is never a no-op [${RED}]`, () => {
     expect(s.currentNs).toBe('repl.target')
   })
 })
+
+// ---------------------------------------------------------------------------
+// S5b — REPL async host-require routing. A leading (ns app (:require [root :as r]))
+// evaluated via evaluateAsync, where `root` transitively needs a host import,
+// must LOAD (await the closure) instead of throwing namespace/requires-async.
+// Today the symbol-spec branch of processNsRequiresAsync drops to the sync
+// resolveNamespace → loadFile → graphNeedsAsync path and throws. After S5b it
+// routes through the async graph loader, mirroring loadFileAsync's cljRequires.
+// Preserves the Calva "add a host dep to the ns form, re-eval to load it" flow.
+// ---------------------------------------------------------------------------
+
+describe('S5b REPL async host-require routing', () => {
+  const graph = {
+    'src/root.clj': '(ns root (:require [dep :as d]))\n(def val d/x)',
+    'src/dep.clj': '(ns dep (:require ["host-mod" :as h]))\n(def x 42)',
+  }
+
+  it(`REPL leading ns with a transitive host require loads via evaluateAsync [${RED}]`, async () => {
+    const s = graphSession(graph, { 'host-mod': { ok: true } })
+    await s.evaluateAsync('(ns app (:require [root :as r]))')
+    expect(s.currentNs).toBe('app')
+    // The transitive closure (root → dep → ["host-mod"]) loaded, and the :as
+    // alias resolves end-to-end from the REPL.
+    const result = await s.evaluateAsync('r/val')
+    expect(result).toEqual({ kind: 'number', value: 42 })
+  })
+
+  it(`host-free leading ns require still loads via evaluateAsync [${GUARD}]`, async () => {
+    const s = graphSession({ 'src/lib.clj': '(ns lib)\n(def answer 42)' })
+    await s.evaluateAsync('(ns app2 (:require [lib :as l]))')
+    expect(s.currentNs).toBe('app2')
+    const result = await s.evaluateAsync('l/answer')
+    expect(result).toEqual({ kind: 'number', value: 42 })
+  })
+})

@@ -4,6 +4,7 @@ import { wireIdeStubs, wireNsCore } from './bootstrap'
 import { internVar, makeEnv, makeNamespace } from './env'
 import { EvaluationError } from './errors'
 import { v } from './factories'
+import { parseDescriptor, type NsDescriptor } from './loader/ns-descriptor'
 import {
   resolveModuleOrder,
   type ModuleContext,
@@ -12,13 +13,7 @@ import {
 import { makeCoreModule } from './modules/core'
 import { makeJsModule } from './modules/js'
 import { makeVmModule } from './modules/vm'
-import { parseDescriptor, type NsDescriptor } from './loader/ns-descriptor'
-import {
-  extractAliasMapFromTokens,
-  extractNsNameFromTokens,
-  extractRequireClauses,
-} from './ns-forms'
-import { readForms } from './reader'
+import { extractRequireClauses } from './ns-forms'
 import type { NamespaceRegistry } from './registry'
 import {
   applyRequireLink,
@@ -26,9 +21,13 @@ import {
   ensureNamespaceInRegistry,
   processRequireSpec,
 } from './registry'
-import { tokenize } from './tokenizer'
-import type { CljNamespace, CljValue, Env, EvaluationContext } from './types'
-import type { VmChunk } from './types'
+import type {
+  CljNamespace,
+  CljValue,
+  Env,
+  EvaluationContext,
+  VmChunk,
+} from './types'
 
 // ---------------------------------------------------------------------------
 // Core types
@@ -171,7 +170,8 @@ function buildRuntime(
   //     is a circular dependency (G11) — diagnosed by loadFile, not deadlocked.
   // A namespace absent from both is `unloaded`.
   const loaded = new Map<string, 'executed' | 'failed'>()
-  for (const nsName of initialSourceLoadedNs ?? []) loaded.set(nsName, 'executed')
+  for (const nsName of initialSourceLoadedNs ?? [])
+    loaded.set(nsName, 'executed')
   const loadingPath: string[] = []
 
   // locateNamespaceSource: resolve a namespace name to its source text using the
@@ -219,7 +219,10 @@ function buildRuntime(
   // Skips already-executed namespaces (resolveNamespace would skip them too).
   // The visited set breaks cycles so the walk terminates on any graph shape.
   // Parse errors in dep sources are silently skipped: let the actual load fail.
-  function graphNeedsAsync(descriptor: NsDescriptor, visited: Set<string>): boolean {
+  function graphNeedsAsync(
+    descriptor: NsDescriptor,
+    visited: Set<string>
+  ): boolean {
     if (visited.has(descriptor.nsName)) return false
     visited.add(descriptor.nsName)
 
@@ -403,6 +406,17 @@ function buildRuntime(
         )
         if (changed && env.ns) runtime.touchNamespace(env.ns)
       }
+      // :as-alias reader aliases are recorded too (G4). They are not in
+      // cljRequires (they never load), so install them from the descriptor.
+      for (const readerAlias of descriptor.readerAliases) {
+        if (
+          env.ns &&
+          env.ns.readerAliases.get(readerAlias.alias) !== readerAlias.nsName
+        ) {
+          env.ns.readerAliases.set(readerAlias.alias, readerAlias.nsName)
+          runtime.touchNamespace(env.ns)
+        }
+      }
       // Docstring capture — the body excludes the ns form, so replicate the one
       // runtime effect evaluateNs had.
       if (descriptor.doc && env.ns) env.ns.doc = descriptor.doc
@@ -494,7 +508,9 @@ function buildRuntime(
             : `${input.nsName}/fn--${id}`
       return {
         id,
-        ...(input.evalIdentity !== undefined ? { evalId: input.evalIdentity.id } : {}),
+        ...(input.evalIdentity !== undefined
+          ? { evalId: input.evalIdentity.id }
+          : {}),
         displayName,
       }
     },
@@ -606,12 +622,27 @@ function buildRuntime(
             // Shared with the async file loader (importAndBindHostRequire).
             await importAndBindHostRequire(spec, fromEnv, ctx)
           } else {
-            // Symbol require spec — sync path
-            const changed = processRequireSpec(
+            // Symbol require spec: route loading through the async graph loader
+            // so a transitive host dependency awaits instead of dropping to sync resolveNamespace.
+            // loadFile -> graphNeedsAsync -> require-async. Mirrors loadFileAsyncImpl's
+            // clj require handling: async-load the target, then link. An :as-alias spec
+            // names a (possibly not-yet resident) ns purely as a reader alias. It must not be loaded.
+            if (
+              is.vector(spec) &&
+              spec.value.length > 0 &&
+              is.symbol(spec.value[0])
+            ) {
+              const hasAsAlias = spec.value.some(
+                (val) => is.keyword(val) && val.name === ':as-alias'
+              )
+              if (!hasAsAlias) {
+                await loadNamespaceAsyncImpl(spec.value[0].name, ctx)
+              }
+            }
+            const changed = applyRequireLink(
               spec,
               fromEnv,
               registry,
-              (nsName) => resolveNamespace(nsName, ctx),
               ctx.allowedPackages,
               isLibraryNamespace
             )
@@ -630,6 +661,7 @@ function buildRuntime(
       // G1: reject more than one top-level ns form (namespace/multiple-ns-forms).
       // The check lives only in the descriptor parser — one implementation.
       const descriptor = parseDescriptor(source, nsName, filePath)
+      const targetNs = descriptor.nsName
 
       // G2: fail-fast if the transitive dependency closure needs host imports.
       // Pre-walk runs before any state mutation (no loadingPath.push, no
@@ -642,9 +674,6 @@ function buildRuntime(
         err.code = 'namespace/requires-async'
         throw err
       }
-
-      const tokens = tokenize(source)
-      const targetNs = extractNsNameFromTokens(tokens) ?? nsName ?? 'user'
 
       // G11: a require for a namespace already on the in-flight dependency stack
       // is a circular dependency. Diagnose it here, BEFORE touching load state,
@@ -662,21 +691,54 @@ function buildRuntime(
         throw err
       }
 
-      const aliasMap = extractAliasMapFromTokens(tokens)
-      const forms = readForms(tokens, targetNs, aliasMap, source)
       const env = this.ensureNamespace(targetNs)
-      ctx.currentSource = source
-      ctx.currentFile = filePath
-      ctx.currentLineOffset = 0
-      ctx.currentColOffset = 0
+      const prevSource = ctx.currentSource
+      const prevFile = ctx.currentFile
+      const prevLineOffset = ctx.currentLineOffset
+      const prevColOffset = ctx.currentColOffset
+
       // Mark `loading` (push the path) before processing requires so a back-edge
       // in the dependency graph is caught as a cycle. Mark `executed` only after
       // the body runs; on any failure mark `failed` so retries are deterministic
       // (resolveNamespace clears `failed` and re-runs).
       loadingPath.push(targetNs)
+
+      ctx.currentSource = source
+      ctx.currentFile = filePath
+      ctx.currentLineOffset = 0
+      ctx.currentColOffset = 0
+
       try {
-        this.processNsRequires(forms, env, ctx)
-        for (const form of forms) {
+        // Load the closure first (sync - graphNeedsAsync checks)
+        for (const req of descriptor.cljRequires) {
+          resolveNamespace(req.nsName, ctx)
+        }
+        for (const req of descriptor.cljRequires) {
+          const changed = applyRequireLink(
+            req.spec,
+            env,
+            registry,
+            ctx.allowedPackages,
+            isLibraryNamespace
+          )
+          if (changed && env.ns) runtime.touchNamespace(env.ns)
+        }
+
+        // :as-alias reader aliases are recorded too (G4). They are not in
+        // cljRequires (they never load), so install them from the descriptor.
+        for (const readerAlias of descriptor.readerAliases) {
+          if (
+            env.ns &&
+            env.ns.readerAliases.get(readerAlias.alias) !== readerAlias.nsName
+          ) {
+            env.ns.readerAliases.set(readerAlias.alias, readerAlias.nsName)
+            runtime.touchNamespace(env.ns)
+          }
+        }
+        // Docstring capture - body excludes the ns form, so replicat evaluateNs's runtime effect.
+        if (descriptor.doc && env.ns) env.ns.doc = descriptor.doc
+
+        for (const form of descriptor.bodyForms) {
           const evalIdentity = ctx.allocateEvalIdentity?.(targetNs)
           ctx.currentEvalIdentity = evalIdentity
           try {
@@ -692,8 +754,10 @@ function buildRuntime(
         throw e
       } finally {
         loadingPath.pop()
-        ctx.currentSource = undefined
-        ctx.currentFile = undefined
+        ctx.currentSource = prevSource
+        ctx.currentFile = prevFile
+        ctx.currentLineOffset = prevLineOffset
+        ctx.currentColOffset = prevColOffset
       }
       return targetNs
     },
