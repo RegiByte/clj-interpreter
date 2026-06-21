@@ -34,7 +34,7 @@
     "@modelcontextprotocol/sdk": "^1.0.0"
   },
   "devDependencies": {
-    "@regibyte/cljam": "file:../cljam",
+    "@regibyte/cljam": "workspace:*",
     "vitest": "^4.0.18",
     "typescript": "~5.9.3",
     "@types/node": "^25.3.5"
