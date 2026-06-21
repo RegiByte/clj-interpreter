@@ -1,0 +1,111 @@
+{
+  "meta": {
+    "date": "2026-06-21T19:15:22.795Z",
+    "node": "v22.14.0",
+    "platform": "darwin 25.5.0",
+    "arch": "arm64",
+    "cpu": "Apple M1 Max",
+    "gitSha": "a9fe155",
+    "gitDirty": true,
+    "nbbVersion": "1.4.207",
+    "measure": {
+      "samples": 5,
+      "warmupMinCalls": 3,
+      "warmupMinMs": 100,
+      "targetBatchMs": 15
+    }
+  },
+  "engines": [
+    "cljam-interp",
+    "cljam-vm",
+    "sci"
+  ],
+  "workloads": [
+    {
+      "name": "vector-build",
+      "kind": "micro",
+      "subsystem": "persistent vector conj/nth/peek/reduce",
+      "expected": 1250099999
+    }
+  ],
+  "pairs": [
+    {
+      "workload": "vector-build",
+      "engine": "cljam-interp",
+      "wallMs": 45608.200125,
+      "ok": true,
+      "pass": true,
+      "checksum": 1250099999,
+      "expected": 1250099999,
+      "setupMs": 52.299541,
+      "warmupCalls": 3,
+      "batchSize": 1,
+      "batchesMs": [
+        4517.1185829999995,
+        4464.691125000001,
+        4608.455707999998,
+        4540.999832999994,
+        4516.174792000005
+      ],
+      "perCallMs": [
+        4517.1185829999995,
+        4464.691125000001,
+        4608.455707999998,
+        4540.999832999994,
+        4516.174792000005
+      ]
+    },
+    {
+      "workload": "vector-build",
+      "engine": "cljam-vm",
+      "wallMs": 45491.909332999996,
+      "ok": true,
+      "pass": true,
+      "checksum": 1250099999,
+      "expected": 1250099999,
+      "setupMs": 69.71491700000001,
+      "warmupCalls": 3,
+      "batchSize": 1,
+      "batchesMs": [
+        4500.812583000003,
+        4567.948583000001,
+        4552.247667,
+        4556.927167000002,
+        4511.347834
+      ],
+      "perCallMs": [
+        4500.812583000003,
+        4567.948583000001,
+        4552.247667,
+        4556.927167000002,
+        4511.347834
+      ]
+    },
+    {
+      "workload": "vector-build",
+      "engine": "sci",
+      "wallMs": 496.06658400000015,
+      "ok": true,
+      "pass": true,
+      "checksum": 1250099999,
+      "expected": 1250099999,
+      "setupMs": 10.509,
+      "warmupCalls": 12,
+      "batchSize": 2,
+      "batchesMs": [
+        16.16233299999999,
+        15.720416,
+        15.484541000000036,
+        16.126125000000002,
+        16.278042000000028
+      ],
+      "perCallMs": [
+        8.081166499999995,
+        7.860208,
+        7.742270500000018,
+        8.063062500000001,
+        8.139021000000014
+      ]
+    }
+  ]
+}

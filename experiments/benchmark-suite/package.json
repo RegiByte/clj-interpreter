@@ -1,0 +1,9 @@
+{
+  "name": "benchmark-suite",
+  "private": true,
+  "type": "module",
+  "description": "Cross-engine benchmark: cljam (interpreter vs VM) vs SCI (via nbb) vs raw JS",
+  "devDependencies": {
+    "nbb": "^1.4.207"
+  }
+}

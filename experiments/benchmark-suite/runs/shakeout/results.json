@@ -1,0 +1,138 @@
+{
+  "meta": {
+    "date": "2026-06-11T14:13:07.250Z",
+    "node": "v22.14.0",
+    "platform": "darwin 23.6.0",
+    "arch": "arm64",
+    "cpu": "Apple M1 Max",
+    "gitSha": "a9fe155",
+    "gitDirty": true,
+    "nbbVersion": "1.4.207",
+    "measure": {
+      "samples": 5,
+      "warmupMinCalls": 3,
+      "warmupMinMs": 100,
+      "targetBatchMs": 15
+    }
+  },
+  "engines": [
+    "cljam-interp",
+    "cljam-vm",
+    "sci",
+    "js"
+  ],
+  "workloads": [
+    {
+      "name": "fib",
+      "kind": "micro",
+      "subsystem": "function-call overhead (naive recursion)",
+      "expected": 196418
+    }
+  ],
+  "pairs": [
+    {
+      "workload": "fib",
+      "engine": "cljam-interp",
+      "wallMs": 7275.331167,
+      "ok": true,
+      "pass": true,
+      "checksum": 196418,
+      "expected": 196418,
+      "setupMs": 54.306084000000006,
+      "warmupCalls": 3,
+      "batchSize": 1,
+      "batchesMs": [
+        691.0013750000003,
+        684.744917,
+        695.6360419999992,
+        687.6622090000001,
+        688.4524999999994
+      ],
+      "perCallMs": [
+        691.0013750000003,
+        684.744917,
+        695.6360419999992,
+        687.6622090000001,
+        688.4524999999994
+      ]
+    },
+    {
+      "workload": "fib",
+      "engine": "cljam-vm",
+      "wallMs": 5039.658917000001,
+      "ok": true,
+      "pass": true,
+      "checksum": 196418,
+      "expected": 196418,
+      "setupMs": 73.52629200000001,
+      "warmupCalls": 3,
+      "batchSize": 1,
+      "batchesMs": [
+        479.5348339999996,
+        479.39833299999964,
+        488.98974999999973,
+        496.1987919999997,
+        476.96287500000017
+      ],
+      "perCallMs": [
+        479.5348339999996,
+        479.39833299999964,
+        488.98974999999973,
+        496.1987919999997,
+        476.96287500000017
+      ]
+    },
+    {
+      "workload": "fib",
+      "engine": "sci",
+      "wallMs": 486.9835410000014,
+      "ok": true,
+      "pass": true,
+      "checksum": 196418,
+      "expected": 196418,
+      "setupMs": 8.438000000000002,
+      "warmupCalls": 4,
+      "batchSize": 1,
+      "batchesMs": [
+        32.319458,
+        31.363958000000025,
+        30.664916000000005,
+        30.325958999999955,
+        30.732167000000004
+      ],
+      "perCallMs": [
+        32.319458,
+        31.363958000000025,
+        30.664916000000005,
+        30.325958999999955,
+        30.732167000000004
+      ]
+    },
+    {
+      "workload": "fib",
+      "engine": "js",
+      "wallMs": 311.0590830000001,
+      "ok": true,
+      "pass": true,
+      "checksum": 196418,
+      "expected": 196418,
+      "setupMs": 0.0037090000000006285,
+      "warmupCalls": 41,
+      "batchSize": 8,
+      "batchesMs": [
+        19.796084000000008,
+        19.68474999999998,
+        19.69829100000001,
+        19.64741700000002,
+        19.589207999999985
+      ],
+      "perCallMs": [
+        2.474510500000001,
+        2.4605937499999975,
+        2.4622863750000015,
+        2.4559271250000023,
+        2.448650999999998
+      ]
+    }
+  ]
+}
