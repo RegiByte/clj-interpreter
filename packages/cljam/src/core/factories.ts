@@ -41,6 +41,10 @@ import {
   makeCljMap,
   makeCljSet,
 } from './persistent/map-helpers'
+import {
+  cljVector as _cljVector,
+  makeCljVector,
+} from './persistent/vector-helpers'
 
 export const cljNumber = <T extends number>(value: T) =>
   ({ kind: 'number', value }) as const satisfies CljNumber
@@ -66,28 +70,29 @@ export const cljSymbol = <T extends string>(name: T) =>
 export const cljList = <T extends CljValue[]>(value: T) =>
   ({ kind: 'list', value }) as const satisfies CljList
 export const cljSet = (values: CljValue[]): CljSet => makeCljSet(values)
-export const cljVector = <T extends CljValue[]>(value: T) =>
-  ({ kind: 'vector', value }) as const satisfies CljVector
-export const cljMapEntry = (key: CljValue, value: CljValue): CljMapEntry => ({
-  kind: 'vector',
-  value: [key, value],
-  __cljamMapEntry: true,
-})
+export const cljVector = (value: CljValue[]): CljVector => _cljVector(value)
+export const cljMapEntry = (key: CljValue, value: CljValue): CljMapEntry =>
+  // Map entries are always length-2 → array rep (gotchas.md #2); carry the marker.
+  makeCljVector({ kind: 'array', items: [key, value] }, undefined, true) as CljMapEntry
 
 // ─── CljMap factory (implementation lives in persistent/map-helpers.ts) ───────
 
 export { makeCljMap }
 
 /** Returns a new value with the given metadata attached.
- *  CljMap is handled specially because its `entries` getter lives on the
- *  prototype — object-spread would strip it.  All other IMeta types are plain
- *  objects where `{ ...val, meta }` is safe. */
+ *  CljMap and CljVector are handled specially because their compatibility getters
+ *  (`entries` / `value`) live on the prototype — object-spread would strip them.
+ *  All other IMeta types are plain objects where `{ ...val, meta }` is safe. */
 export function cljWithMeta(
   val: CljValue,
   meta: CljMap | undefined
 ): CljValue {
   if (val.kind === 'map') {
     return makeCljMap((val as CljMap)._data, meta)
+  }
+  if (val.kind === 'vector') {
+    const vec = val as CljVector
+    return makeCljVector(vec._data, meta, vec.__cljamMapEntry)
   }
   return { ...val, meta } as CljValue
 }

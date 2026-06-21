@@ -9,6 +9,7 @@ import { is } from '../../../assertions'
 import { EvaluationError } from '../../../errors'
 import { DocGroups, docMeta, v } from '../../../factories'
 import { mapAssoc, mapDissoc, mapEntries, setDisj } from '../../../persistent/map-helpers'
+import { vectorAssoc, vectorCount, vectorNth, vectorToArray } from '../../../persistent/vector-helpers'
 import { printString } from '../../../printer'
 import { toSeq } from '../../../transformations'
 import { type CljNumber, type CljValue } from '../../../types'
@@ -82,7 +83,10 @@ export const mapsSetsFunctions: Record<string, CljValue> = {
           )
         }
         if (is.vector(collection)) {
-          const newValues = [...collection.value]
+          // Path-copy assoc (O(log₃₂ n)) instead of materializing the whole vector
+          // to a flat array and rebuilding (O(n)). vectorAssoc allows index === count
+          // as an append, matching Clojure (and the `> count` bound check below).
+          let result = collection
           for (let i = 0; i < args.length; i += 2) {
             const index = args[i]
             if (!is.number(index)) {
@@ -92,16 +96,16 @@ export const mapsSetsFunctions: Record<string, CljValue> = {
                 i + 1
               )
             }
-            if (index.value > newValues.length) {
+            if (index.value > vectorCount(result)) {
               throw EvaluationError.atArg(
-                `assoc index ${index.value} is out of bounds for vector of length ${newValues.length}`,
+                `assoc index ${index.value} is out of bounds for vector of length ${vectorCount(result)}`,
                 { index, collection },
                 i + 1
               )
             }
-            newValues[(index as CljNumber).value] = args[i + 1]
+            result = vectorAssoc(result, (index as CljNumber).value, args[i + 1])
           }
-          return v.vector(newValues)
+          return result
         }
         // Records: assoc on a declared field returns the same record type (JVM parity).
         // Assoc-ing any unknown key demotes the whole result to a plain map.
@@ -168,10 +172,13 @@ export const mapsSetsFunctions: Record<string, CljValue> = {
           )
         }
         if (is.vector(collection)) {
-          if (collection.value.length === 0) {
+          if (vectorCount(collection) === 0) {
             return collection // return the empty vector
           }
-          const newValues = [...collection.value]
+          // dissoc on a vector removes at an arbitrary index, which shifts every
+          // following element — inherently O(n), no trie shortcut. Materialize once
+          // (copy, since splice mutates) and rebuild.
+          const newValues = [...vectorToArray(collection)]
           for (let i = 0; i < args.length; i += 1) {
             const index = args[i]
             if (!is.number(index)) {
@@ -285,7 +292,7 @@ export const mapsSetsFunctions: Record<string, CljValue> = {
           0
         )
       }
-      return entry.value[0]
+      return vectorNth(entry, 0)
     })
     .withMeta([
       ...docMeta({
@@ -304,7 +311,7 @@ export const mapsSetsFunctions: Record<string, CljValue> = {
           0
         )
       }
-      return entry.value[1]
+      return vectorNth(entry, 1)
     })
     .withMeta([
       ...docMeta({

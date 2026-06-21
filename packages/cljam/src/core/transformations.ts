@@ -3,6 +3,7 @@ import { EvaluationError } from './errors'
 import { v } from './factories'
 import { valueKeywords } from './keywords'
 import { setValues } from './persistent/map-helpers'
+import { vectorToArray } from './persistent/vector-helpers'
 import { getPrintContext, printString } from './printer'
 import {
   type CljCons,
@@ -199,7 +200,7 @@ export const toSeq = (collection: CljValue): CljValue[] => {
     return collection.value
   }
   if (is.vector(collection)) {
-    return collection.value
+    return vectorToArray(collection)
   }
   if (is.map(collection)) {
     return collection.entries.map(([key, value]) => v.mapEntry(key, value))
@@ -247,7 +248,7 @@ export function consToArray(c: CljCons): CljValue[] {
       break
     }
     if (is.vector(tail)) {
-      result.push(...tail.value)
+      result.push(...vectorToArray(tail))
       break
     }
     // Other seqable types — fall through to toSeq

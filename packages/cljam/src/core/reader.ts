@@ -403,7 +403,10 @@ const collectionReader = (valueType: 'list' | 'vector', closeToken: string) => {
         scanner.peek()
       )
     }
-    const result: CljValue = { kind: valueType, value: values }
+    const result: CljValue =
+      valueType === 'vector'
+        ? v.vector(values)
+        : { kind: 'list', value: values }
     if (closingEnd !== undefined) {
       setPos(result, { start: startToken.start.offset, end: closingEnd, source: ctx.source, lineOffset: ctx.lineOffset, colOffset: ctx.colOffset })
     }

@@ -3,6 +3,7 @@ import { EvaluationError } from '../errors'
 import { cljNil } from '../factories'
 import { valueKeywords } from '../keywords'
 import { mapGet, NOT_FOUND, setContains } from '../persistent/map-helpers'
+import { vectorCount, vectorNth } from '../persistent/vector-helpers'
 import { printString } from '../printer'
 import type {
   CljFunction,
@@ -191,15 +192,16 @@ export function applyCallableWithContext(
       err.data = { argIndex: 0 }
       throw err
     }
-    if (index.value < 0 || index.value >= fn.value.length) {
+    const count = vectorCount(fn)
+    if (index.value < 0 || index.value >= count) {
       const err = new EvaluationError(
-        `nth index ${index.value} is out of bounds for collection of length ${fn.value.length}`,
+        `nth index ${index.value} is out of bounds for collection of length ${count}`,
         { fn, args }
       )
       err.data = { argIndex: 0 }
       throw err
     }
-    return fn.value[index.value]
+    return vectorNth(fn, index.value)
   }
   if (is.record(fn)) {
     if (args.length === 0) {

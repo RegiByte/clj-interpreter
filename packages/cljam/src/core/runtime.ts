@@ -159,7 +159,7 @@ function buildRuntime(
   // Updated via runtime.syncNsVar() which session.setNs calls.
   let currentNsRef = 'user'
 
-  // Load-state model (S2, see .regibyte/S2_LINK_LOAD_DESIGN.md). Two DISTINCT
+  // Load-state model. Two DISTINCT
   // structures — conflating them is the cycle-detection bug:
   //   - loaded: terminal states per namespace. 'executed' = its .clj source ran
   //     to completion; 'failed' = its load threw. Replaces the old sourceLoadedNs

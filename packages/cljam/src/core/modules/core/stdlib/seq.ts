@@ -10,6 +10,14 @@ import { is } from '../../../assertions.ts'
 import { EvaluationError } from '../../../errors.ts'
 import { DocGroups, docMeta, v } from '../../../factories.ts'
 import { mapAssoc, mapContains, mapCount, mapGet, NOT_FOUND, setContains, setConj, setValues } from '../../../persistent/map-helpers.ts'
+import {
+  vectorConj,
+  vectorCount,
+  vectorNth,
+  vectorPeek,
+  vectorSlice,
+  vectorToArray,
+} from '../../../persistent/vector-helpers.ts'
 import { printString } from '../../../printer.ts'
 import { realizeLazySeq, toSeq } from '../../../transformations.ts'
 import {
@@ -116,7 +124,7 @@ export const seqFunctions: Record<string, CljValue> = {
         return v.list(collection.value.slice(1))
       }
       if (is.vector(collection)) {
-        return v.vector(collection.value.slice(1))
+        return v.vector(vectorSlice(collection, 1))
       }
       if (is.map(collection) || is.record(collection)) {
         const entries = toSeq(collection)
@@ -171,7 +179,7 @@ export const seqFunctions: Record<string, CljValue> = {
           return v.list([...newItems, ...collection.value])
         }
         if (is.vector(collection)) {
-          return v.vector([...collection.value, ...args])
+          return vectorConj(collection, ...args)
         }
         if (is.map(collection)) {
           let result = collection
@@ -185,14 +193,14 @@ export const seqFunctions: Record<string, CljValue> = {
                 pairArgIndex
               )
             }
-            if (pair.value.length !== 2) {
+            if (vectorCount(pair) !== 2) {
               throw EvaluationError.atArg(
                 `conj on maps expects each argument to be a vector key-pair for maps, got ${printString(pair)}`,
                 { pair },
                 pairArgIndex
               )
             }
-            result = mapAssoc(result, pair.value[0], pair.value[1])
+            result = mapAssoc(result, vectorNth(pair, 0), vectorNth(pair, 1))
           }
           return result
         }
@@ -244,7 +252,8 @@ export const seqFunctions: Record<string, CljValue> = {
       }
 
       const wrap = is.list(xs) ? v.list : v.vector
-      const newItems = [x, ...xs.value]
+      const tail = is.vector(xs) ? vectorToArray(xs) : xs.value
+      const newItems = [x, ...tail]
 
       return wrap(newItems)
     })
@@ -274,17 +283,19 @@ export const seqFunctions: Record<string, CljValue> = {
             return defaultValue
           }
           case valueKeywords.vector: {
-            const values = target.value
             if (!is.number(key)) {
               throw new EvaluationError(
                 'get on vectors expects a 0-based index as parameter',
                 { key }
               )
             }
-            if (key.value < 0 || key.value >= values.length) {
+            // Index through the trie (O(log₃₂ n)) instead of materializing the whole
+            // vector to read its length and one slot, as `target.value` would.
+            const vec = target as CljVector
+            if (key.value < 0 || key.value >= vectorCount(vec)) {
               return defaultValue
             }
-            return values[key.value]
+            return vectorNth(vec, key.value)
           }
           default:
             return defaultValue
@@ -350,17 +361,21 @@ export const seqFunctions: Record<string, CljValue> = {
             // Sequence terminated in a realized list or vector — index into it directly
             if (is.list(current) || is.vector(current)) {
               const relativeIndex = index - i
-              const items = current.value
-              if (relativeIndex < 0 || relativeIndex >= items.length) {
+              const length = is.vector(current)
+                ? vectorCount(current)
+                : current.value.length
+              if (relativeIndex < 0 || relativeIndex >= length) {
                 if (notFound !== undefined) return notFound
                 const err = new EvaluationError(
-                  `nth index ${index} is out of bounds for collection of length ${i + items.length}`,
+                  `nth index ${index} is out of bounds for collection of length ${i + length}`,
                   { coll, n }
                 )
                 err.data = { argIndex: 1 }
                 throw err
               }
-              return items[relativeIndex]
+              return is.vector(current)
+                ? vectorNth(current, relativeIndex)
+                : current.value[relativeIndex]
             }
             // Non-sequential terminal (shouldn't happen in well-formed sequences)
             if (notFound !== undefined) return notFound
@@ -378,17 +393,19 @@ export const seqFunctions: Record<string, CljValue> = {
             { coll }
           )
         }
-        const items = coll.value
-        if (index < 0 || index >= items.length) {
+        // Vectors index through the trie (O(log₃₂ n)) instead of materializing the
+        // whole structure just to read one slot, which `.value[i]` would do.
+        const length = is.vector(coll) ? vectorCount(coll) : coll.value.length
+        if (index < 0 || index >= length) {
           if (notFound !== undefined) return notFound
           const err = new EvaluationError(
-            `nth index ${index} is out of bounds for collection of length ${items.length}`,
+            `nth index ${index} is out of bounds for collection of length ${length}`,
             { coll, n }
           )
           err.data = { argIndex: 1 }
           throw err
         }
-        return items[index]
+        return is.vector(coll) ? vectorNth(coll, index) : coll.value[index]
       }
     )
     .withMeta([
@@ -406,6 +423,9 @@ export const seqFunctions: Record<string, CljValue> = {
           `last expects a list or vector${coll !== undefined ? `, got ${printString(coll)}` : ''}`,
           { coll }
         )
+      }
+      if (is.vector(coll)) {
+        return vectorCount(coll) === 0 ? v.nil() : vectorPeek(coll)
       }
       const items = coll.value
       return items.length === 0 ? v.nil() : items[items.length - 1]
@@ -427,7 +447,11 @@ export const seqFunctions: Record<string, CljValue> = {
           0
         )
       }
-      return v.list([...coll.value].reverse())
+      // vectorToArray returns the live items array for the array rep, so copy
+      // before the in-place .reverse() (gotchas.md #1 — the old [...coll.value]
+      // did this implicitly).
+      const items = is.vector(coll) ? vectorToArray(coll) : coll.value
+      return v.list([...items].reverse())
     })
     .withMeta([
       ...docMeta({
@@ -488,7 +512,7 @@ export const seqFunctions: Record<string, CljValue> = {
         }
         if (is.vector(coll)) {
           if (!is.number(key)) return v.boolean(false)
-          return v.boolean(key.value >= 0 && key.value < coll.value.length)
+          return v.boolean(key.value >= 0 && key.value < vectorCount(coll))
         }
         if (is.set(coll)) {
           return v.boolean(setContains(coll, key))
@@ -608,7 +632,7 @@ export const seqFunctions: Record<string, CljValue> = {
       for (const arg of args) {
         if (is.nil(arg)) continue
         if (is.list(arg) || is.vector(arg)) {
-          result.push(...arg.value)
+          result.push(...(is.vector(arg) ? vectorToArray(arg) : arg.value))
         } else if (is.cons(arg) || is.lazySeq(arg)) {
           result.push(...toSeq(arg))
         } else if (is.set(arg)) {
@@ -662,7 +686,7 @@ export const seqFunctions: Record<string, CljValue> = {
         case valueKeywords.list:
           return v.number((countable as CljList).value.length)
         case valueKeywords.vector:
-          return v.number((countable as CljVector).value.length)
+          return v.number(vectorCount(countable as CljVector))
         case valueKeywords.map:
           return v.number(mapCount(countable as CljMap))
         case valueKeywords.record:

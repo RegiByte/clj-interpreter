@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { isEqual } from '../../assertions.ts'
 import { v } from '../../factories.ts'
-import type { CljMap, CljSymbol, CljValue, CljVector } from '../../types.ts'
+import type { CljMap, CljSymbol, CljValue } from '../../types.ts'
 import { hashCljValue } from '../hash.ts'
 
 // ─── shorthand factories ────────────────────────────────────────────────────
@@ -444,7 +444,8 @@ describe('hashCljValue', () => {
   describe('metadata is ignored for hashing', () => {
     it('vector with meta hashes same as vector without meta', () => {
       const meta = v.map([[kw(':x'), n(1)]]) as CljMap
-      const withMeta: CljVector = { kind: 'vector', value: [n(1), n(2)], meta }
+      const withMeta = v.vector([n(1), n(2)])
+      withMeta.meta = meta
       const withoutMeta = v.vector([n(1), n(2)])
       expect(hashCljValue(withMeta)).toBe(hashCljValue(withoutMeta))
     })
@@ -842,7 +843,8 @@ describe('hashCljValue', () => {
 
     it('vector with meta === same vector without meta', () => {
       const meta = v.map([[kw(':x'), n(1)]]) as CljMap
-      const withMeta: CljVector = { kind: 'vector', value: [n(1), n(2)], meta }
+      const withMeta = v.vector([n(1), n(2)])
+      withMeta.meta = meta
       const withoutMeta = v.vector([n(1), n(2)])
       // isEqual ignores meta, so they're equal
       assertHashConsistency(withMeta, withoutMeta)

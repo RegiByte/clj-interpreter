@@ -1,6 +1,5 @@
 import { is } from '../assertions'
 import { v } from '../factories'
-import { valueKeywords } from '../keywords'
 import { setValues } from '../persistent/map-helpers'
 import type {
   CljMap,
@@ -17,13 +16,9 @@ export function evaluateVector(
   ctx: EvaluationContext
 ): CljValue {
   const evaluated = vector.value.map((v) => ctx.evaluate(v, env))
-  if (vector.meta)
-    return {
-      kind: valueKeywords.vector,
-      value: evaluated,
-      meta: vector.meta,
-    }
-  return v.vector(evaluated)
+  const result = v.vector(evaluated)
+  if (vector.meta) result.meta = vector.meta
+  return result
 }
 
 export function evaluateSet(

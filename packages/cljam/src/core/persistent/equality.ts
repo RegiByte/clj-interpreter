@@ -32,6 +32,7 @@ import {
 } from '../types.ts'
 import { valueKeywords } from '../keywords.ts'
 import { _injectIsEqual, mapContains, mapCount, mapEntries, mapGet, NOT_FOUND, setValues } from './map-helpers'
+import { vectorCount, vectorToArray } from './vector-helpers'
 
 // ─── lazy-seq realizer (local copy — avoids importing transformations.ts) ────
 
@@ -91,6 +92,56 @@ function seqToArrayForEquality(value: CljValue): CljValue[] | null {
   return null
 }
 
+// ─── vector-vs-vector equality (layered fast-paths) ──────────────────────────
+
+// Structural equality of two vectors is irreducibly O(n) in the worst case, but
+// most comparisons aren't the worst case. Reject/accept cheaply first, then walk
+// (hash-equality-strategy.md Part 2). Only fires for vector-vs-vector; cross-type
+// (vector vs list/cons) still goes through the generic sequential path below so
+// `(= [1 2 3] '(1 2 3))` stays true.
+const vectorsEqual = (a: CljVector, b: CljVector): boolean => {
+  const ad = a._data
+  const bd = b._data
+
+  // 1. Count mismatch → not equal. O(1) — and avoids materializing either side,
+  //    which the old generic path did before it could even compare lengths.
+  if (vectorCount(a) !== vectorCount(b)) return false
+
+  // 2. Shared structure → equal. O(1). Persistent ops share off-path subtrees by
+  //    reference, so two vectors derived from a common ancestor (or one === other)
+  //    share root & tail. This is the persistent-structures dividend.
+  if (
+    ad.kind === 'trie' &&
+    bd.kind === 'trie' &&
+    ad.root === bd.root &&
+    ad.tail === bd.tail
+  ) {
+    return true
+  }
+
+  // 3. Both cached hashes present and differ → not equal. O(1). (Equal hashes do
+  //    NOT imply equal — collisions exist — so this only rejects.) Deliberately
+  //    does NOT force a hash compute (gotchas.md #5): computing a hash to enable
+  //    one comparison is O(n) anyway. The cache only pays off when it's already warm.
+  if (
+    ad.kind === 'trie' &&
+    bd.kind === 'trie' &&
+    ad._hash !== undefined &&
+    bd._hash !== undefined &&
+    ad._hash !== bd._hash
+  ) {
+    return false
+  }
+
+  // 4. Irreducible element walk, short-circuiting on first mismatch.
+  const aArr = vectorToArray(a)
+  const bArr = vectorToArray(b)
+  for (let i = 0; i < aArr.length; i++) {
+    if (!isEqual(aArr[i], bArr[i])) return false
+  }
+  return true
+}
+
 // ─── equality handlers ───────────────────────────────────────────────────────
 
 const equalityHandlers = {
@@ -102,10 +153,7 @@ const equalityHandlers = {
   [valueKeywords.nil]: () => true,
   [valueKeywords.symbol]: (a: CljSymbol, b: CljSymbol) => a.name === b.name,
   [valueKeywords.keyword]: (a: CljKeyword, b: CljKeyword) => a.name === b.name,
-  [valueKeywords.vector]: (a: CljVector, b: CljVector) => {
-    if (a.value.length !== b.value.length) return false
-    return a.value.every((value, index) => isEqual(value, b.value[index]))
-  },
+  [valueKeywords.vector]: (a: CljVector, b: CljVector) => vectorsEqual(a, b),
   [valueKeywords.map]: (a: CljMap, b: CljMap) => {
     const aCount = mapCount(a)
     if (aCount !== mapCount(b)) return false
@@ -157,6 +205,13 @@ export const isEqual = (a: CljValue, b: CljValue): boolean => {
   }
   if (b.kind === 'lazy-seq') {
     return isEqual(a, realizeLazySeqForEquality(b as CljLazySeq))
+  }
+
+  // Vector-vs-vector: layered O(1) fast-paths (count / shared-node / cached-hash)
+  // before any element walk. Must run before the generic sequential path, which
+  // would materialize both tries up front.
+  if (a.kind === 'vector' && b.kind === 'vector') {
+    return vectorsEqual(a as CljVector, b as CljVector)
   }
 
   // Cross-type sequential equality: lists, vectors, cons cells all compare as

@@ -8,13 +8,35 @@ export type CljSymbol = { kind: 'symbol'; name: string; meta?: CljMap }
 export type CljList = { kind: 'list'; value: CljValue[]; meta?: CljMap }
 export type CljVector = {
   kind: 'vector'
-  value: CljValue[]
+  _data: CljVectorData
   meta?: CljMap
   /** Internal marker for vector-like map entries. Not a public CljValue kind. */
   __cljamMapEntry?: true
+  // Compatibility bridge — materializes elements from _data on every call.
+  // Array rep returns its items directly (O(1)); trie rep materializes (O(n)).
+  // Hot paths must use vectorNth/vectorConj/... from vector-helpers.ts.
+  readonly value: CljValue[]
 }
 export type CljMapEntry = CljVector & { __cljamMapEntry: true }
 import type { HamtNode } from './persistent/hamt-kernel.ts'
+import type { TrieNode } from './persistent/vector-kernel.ts'
+
+// ─── CljVector internal representation ──────────────────────────────────────
+// Dual rep mirroring CljMap's small|hamt: a flat array for ≤32 elements (the
+// overwhelming common case — zero overhead, identical to the old behavior) and a
+// 32-way bitmapped trie + tail buffer for larger vectors (O(1) amortized conj).
+// TrieNode stays kernel-owned and is imported type-only here, exactly as HamtNode
+// is above; TrieVectorData lives here so it can join the CljVectorData union.
+export type ArrayVectorData = { kind: 'array'; items: CljValue[] }
+export type TrieVectorData = {
+  kind: 'trie'
+  count: number
+  shift: number
+  root: TrieNode
+  tail: CljValue[]
+  _hash?: number
+}
+export type CljVectorData = ArrayVectorData | TrieVectorData
 
 // ─── CljMap internal representation ─────────────────────────────────────────
 

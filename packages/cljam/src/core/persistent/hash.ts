@@ -8,9 +8,11 @@ import type {
   CljSet,
   CljValue,
   CljVector,
+  CljVectorData,
 } from '../types.ts'
 import { identityHash } from './identity-hash.ts'
 import { hamtEntries, type HamtNode } from './hamt-kernel.ts'
+import { trieToArray } from './vector-kernel.ts'
 
 // ─── seeds and fixed hash constants ─────────────────────────────────────────
 
@@ -67,12 +69,42 @@ function hashNumber(n: number): number {
 
 // Both CljList and CljVector call this. Do not include kind in the seed
 // so that equal sequences of any type hash identically (Clojure cross-type seq equality).
-function hashSequential(items: CljValue[]): number {
+export function hashSequential(items: CljValue[]): number {
   let h = 1
   for (const item of items) {
     h = (Math.imul(31, h) + hashCljValue(item)) | 0
   }
   return h
+}
+
+// The incremental form of hashSequential: appending one element is a single step
+// of the same `h = 31*h + hash(x)` recurrence. A trie vector built by conj can
+// therefore maintain its cached hash in O(1) per element, never re-iterating.
+//
+// LOAD-BEARING INVARIANT (gotchas.md #4): this MUST stay the exact same recurrence
+// as hashSequential above (seed 1, factor 31, no finalizer/avalanche). The
+// cross-type equality `(= '(1 2 3) [1 2 3])` requires their hashes to match, and a
+// conj-folded hash equals hashSequential of the materialized array ONLY while the
+// two functions agree step-for-step. If you "optimize" hashSequential, change this
+// in lockstep — they are deliberately kept adjacent for exactly this reason.
+export function hashConj(oldHash: number, x: CljValue): number {
+  return (Math.imul(31, oldHash) + hashCljValue(x)) | 0
+}
+
+// The single entry for a vector's content hash. The array rep computes directly
+// (≤32 items — trivially cheap, not worth caching). The trie rep returns its
+// cached `_hash`, or computes it once via hashSequential(materialize) and memoizes
+// (a benign cache write on an otherwise-immutable structure). Callers MUST route
+// through here and never read `_hash` raw to USE as a hash: an undefined raw read
+// would silently poison a HAMT lookup when a not-yet-hashed trie vector is used as
+// a map key (Phase A review #4). vector-helpers maintains `_hash` incrementally on
+// conj and invalidates it on assoc/pop; this is where the lazy compute lands.
+export function vectorHash(data: CljVectorData): number {
+  if (data.kind === 'array') return hashSequential(data.items)
+  if (data._hash === undefined) {
+    data._hash = hashSequential(trieToArray(data))
+  }
+  return data._hash
 }
 
 // Order-independent: XOR of per-pair hashes. Pairs mix key and value before XOR-ing
@@ -181,7 +213,7 @@ export function hashCljValue(v: CljValue): number {
     case 'list':
       return hashSequential(v.value) // v.meta intentionally ignored
     case 'vector':
-      return hashSequential(v.value) // v.meta intentionally ignored
+      return vectorHash(v._data) // v.meta intentionally ignored; uses cached _hash on the trie rep
     case 'cons':
       return hashCons(v)
     case 'lazy-seq':

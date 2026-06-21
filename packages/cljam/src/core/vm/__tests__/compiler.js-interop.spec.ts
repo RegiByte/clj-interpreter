@@ -6,6 +6,7 @@ import {
   type SessionSnapshot,
 } from '../../session'
 import type { CljValue, EvalEvent, VmExecutionMode } from '../../types'
+import { v } from '../../factories'
 
 type RunOutcome =
   | { ok: true; value: CljValue; events: EvalEvent[] }
@@ -188,14 +189,14 @@ describe('VM JS interop', () => {
 
   describe('. property access', () => {
     it('reads primitive, null, undefined, object, array, and function properties', () => {
-      expectVmRequiredValue('[(. js/subject name) (. js/subject count) (. js/subject active)]', {
-        kind: 'vector',
-        value: [
+      expectVmRequiredValue(
+        '[(. js/subject name) (. js/subject count) (. js/subject active)]',
+        v.vector([
           { kind: 'string', value: 'alice' },
           { kind: 'number', value: 42 },
           { kind: 'boolean', value: true },
-        ],
-      })
+        ])
+      )
       expectVmRequiredValue('(. js/subject explicit)', {
         kind: 'nil',
         value: null,

@@ -4,6 +4,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
+import { v } from '../../factories'
 import { setValues } from '../../persistent/map-helpers'
 import { createSession } from '../../session'
 import { freshSession } from '../../evaluator/__tests__/evaluator-test-utils'
@@ -101,13 +102,12 @@ describe('js/prop', () => {
     const result = session.evaluate(
       '(vec (map (js/prop "name") (js/seq js/users)))'
     )
-    expect(result).toEqual({
-      kind: 'vector',
-      value: [
+    expect(result).toEqual(
+      v.vector([
         { kind: 'string', value: 'Alice' },
         { kind: 'string', value: 'Bob' },
-      ],
-    })
+      ])
+    )
   })
 
   it('works as predicate in filter — missing key returns nil (falsy)', () => {
@@ -117,13 +117,12 @@ describe('js/prop', () => {
     const r = session.evaluate(
       '(vec (filter (js/prop "enabled") (js/seq js/items)))'
     )
-    expect(r).toEqual({
-      kind: 'vector',
-      value: [
+    expect(r).toEqual(
+      v.vector([
         { kind: 'js-value', value: { enabled: true } },
         { kind: 'js-value', value: { enabled: true } },
-      ],
-    })
+      ])
+    )
   })
 
   it('missing key with no default returns nil', () => {
@@ -165,13 +164,12 @@ describe('js/method', () => {
     const result = session.evaluate(
       '(vec (map (js/method "toUpperCase") (js/seq js/strings)))'
     )
-    expect(result).toEqual({
-      kind: 'vector',
-      value: [
+    expect(result).toEqual(
+      v.vector([
         { kind: 'string', value: 'HELLO' },
         { kind: 'string', value: 'WORLD' },
-      ],
-    })
+      ])
+    )
   })
 
   it('supports partial args (prepended at creation)', () => {
@@ -179,14 +177,13 @@ describe('js/method', () => {
     const result = session.evaluate(
       '(vec (map (js/method "toFixed" 1) (js/seq js/nums)))'
     )
-    expect(result).toEqual({
-      kind: 'vector',
-      value: [
+    expect(result).toEqual(
+      v.vector([
         { kind: 'string', value: '1.5' },
         { kind: 'string', value: '2.7' },
         { kind: 'string', value: '3.1' },
-      ],
-    })
+      ])
+    )
   })
 
   it('accepts call-site args only', () => {
@@ -277,28 +274,26 @@ describe('js/seq', () => {
     const arr = [1, 2, 3]
     const session = jsSession({ arr })
     const result = session.evaluate('(js/seq js/arr)')
-    expect(result).toEqual({
-      kind: 'vector',
-      value: [
+    expect(result).toEqual(
+      v.vector([
         { kind: 'number', value: 1 },
         { kind: 'number', value: 2 },
         { kind: 'number', value: 3 },
-      ],
-    })
+      ])
+    )
   })
 
   it('converts elements via jsToClj (primitives become Clj types)', () => {
     const arr = ['a', true, 42]
     const session = jsSession({ arr })
     const result = session.evaluate('(js/seq js/arr)')
-    expect(result).toEqual({
-      kind: 'vector',
-      value: [
+    expect(result).toEqual(
+      v.vector([
         { kind: 'string', value: 'a' },
         { kind: 'boolean', value: true },
         { kind: 'number', value: 42 },
-      ],
-    })
+      ])
+    )
   })
 
   it('boxes object elements as CljJsValue', () => {
@@ -327,7 +322,7 @@ describe('js/seq', () => {
   it('returns empty vector for empty array', () => {
     const session = jsSession({ arr: [] })
     const result = session.evaluate('(js/seq js/arr)')
-    expect(result).toEqual({ kind: 'vector', value: [] })
+    expect(result).toEqual(v.vector([]))
   })
 })
 
@@ -357,14 +352,13 @@ describe('js/array', () => {
 
   it('round-trips with js/seq', () => {
     const result = freshSession().evaluate('(js/seq (js/array 10 20 30))')
-    expect(result).toEqual({
-      kind: 'vector',
-      value: [
+    expect(result).toEqual(
+      v.vector([
         { kind: 'number', value: 10 },
         { kind: 'number', value: 20 },
         { kind: 'number', value: 30 },
-      ],
-    })
+      ])
+    )
   })
 
   it('converts Clojure maps to JS objects', () => {
@@ -423,19 +417,18 @@ describe('js/obj', () => {
 describe('js/keys', () => {
   it('returns a Clojure vector of property name strings', () => {
     const result = freshSession().evaluate('(js/keys (js/obj "a" 1 "b" 2 "c" 3))')
-    expect(result).toEqual({
-      kind: 'vector',
-      value: [
+    expect(result).toEqual(
+      v.vector([
         { kind: 'string', value: 'a' },
         { kind: 'string', value: 'b' },
         { kind: 'string', value: 'c' },
-      ],
-    })
+      ])
+    )
   })
 
   it('returns empty vector for empty object', () => {
     const result = freshSession().evaluate('(js/keys (js/obj))')
-    expect(result).toEqual({ kind: 'vector', value: [] })
+    expect(result).toEqual(v.vector([]))
   })
 
   it('composes with count', () => {
@@ -472,10 +465,7 @@ describe('js/values', () => {
   })
 
   it('returns empty vector for empty object', () => {
-    expect(freshSession().evaluate('(js/values (js/obj))')).toEqual({
-      kind: 'vector',
-      value: [],
-    })
+    expect(freshSession().evaluate('(js/values (js/obj))')).toEqual(v.vector([]))
   })
 
   it('boxes nested object values as CljJsValue', () => {
@@ -495,22 +485,17 @@ describe('js/entries', () => {
       expect(result.value).toHaveLength(2)
       // Each entry is a vector [string, value]
       const [nameEntry, ageEntry] = result.value
-      expect(nameEntry).toEqual({
-        kind: 'vector',
-        value: [{ kind: 'string', value: 'name' }, { kind: 'string', value: 'Alice' }],
-      })
-      expect(ageEntry).toEqual({
-        kind: 'vector',
-        value: [{ kind: 'string', value: 'age' }, { kind: 'number', value: 30 }],
-      })
+      expect(nameEntry).toEqual(
+        v.vector([{ kind: 'string', value: 'name' }, { kind: 'string', value: 'Alice' }])
+      )
+      expect(ageEntry).toEqual(
+        v.vector([{ kind: 'string', value: 'age' }, { kind: 'number', value: 30 }])
+      )
     }
   })
 
   it('returns empty vector for empty object', () => {
-    expect(freshSession().evaluate('(js/entries (js/obj))')).toEqual({
-      kind: 'vector',
-      value: [],
-    })
+    expect(freshSession().evaluate('(js/entries (js/obj))')).toEqual(v.vector([]))
   })
 
   it('composes with destructuring — extract key and value', () => {

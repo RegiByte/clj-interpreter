@@ -20,6 +20,7 @@ import type {
   VmUpvalue,
 } from './types'
 import { v } from './factories'
+import { vectorToArray } from './persistent/vector-helpers'
 
 // ---------------------------------------------------------------------------
 // allowedPackages helpers
@@ -279,12 +280,19 @@ function cloneValue(value: CljValue, ctx: CloneContext): CljValue {
         value: value.value.map((item) => cloneValue(item, ctx)),
         ...(value.meta ? { meta: cloneValue(value.meta, ctx) as CljMap } : {}),
       }))
-    case 'vector':
-      return cloneObjectValue(value, ctx, () => ({
-        ...value,
-        value: value.value.map((item) => cloneValue(item, ctx)),
-        ...(value.meta ? { meta: cloneValue(value.meta, ctx) as CljMap } : {}),
-      }))
+    case 'vector': {
+      // Rebuild via the factory (NOT object-spread) so the `value` prototype
+      // getter survives — spreading would strip it. Mirrors the map case below.
+      // Elements are deep-cloned for session-V1 isolation, so we materialize and
+      // map rather than reference-sharing the (immutable) trie nodes.
+      const cloned = v.vector(
+        vectorToArray(value).map((item) => cloneValue(item, ctx))
+      )
+      if (value.meta) cloned.meta = cloneValue(value.meta, ctx) as CljMap
+      if (value.__cljamMapEntry) cloned.__cljamMapEntry = true
+      ctx.values.set(value, cloned)
+      return cloned
+    }
     case 'map': {
       const cloned = v.map(
         value.entries.map(([k, v]) => [cloneValue(k, ctx), cloneValue(v, ctx)])
