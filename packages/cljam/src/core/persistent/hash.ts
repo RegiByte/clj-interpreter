@@ -218,6 +218,10 @@ export function hashCljValue(v: CljValue): number {
       return hashCons(v)
     case 'lazy-seq':
       return hashCljValue(realizeLazySeqLocal(v))
+    case 'indexed-seq':
+      // A view into a shared array; hash the remaining slice via the shared
+      // sequential path so seq-hash stays equal across list/cons/indexed-seq.
+      return hashSequential(v.array.slice(v.offset))
 
     // ── maps and sets ────────────────────────────────────────────────────────
     case 'map': {

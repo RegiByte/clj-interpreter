@@ -388,6 +388,16 @@ function cloneValue(value: CljValue, ctx: CloneContext): CljValue {
         tail: cloneValue(value.tail, ctx),
         ...(value.meta ? { meta: cloneValue(value.meta, ctx) as CljMap } : {}),
       }))
+    case 'indexed-seq':
+      // A {array, offset} view: deep-clone the backing elements (session-V1
+      // isolation, like the list case) and preserve the offset. The factory
+      // keeps the never-empty invariant; a live view is always in-bounds.
+      return cloneObjectValue(value, ctx, () =>
+        v.indexedSeq(
+          value.array.map((item) => cloneValue(item, ctx)),
+          value.offset
+        )
+      )
     case 'multi-method': {
       const cloned: CljMultiMethod = {
         kind: 'multi-method',

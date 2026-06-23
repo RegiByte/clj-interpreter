@@ -309,7 +309,7 @@ describe('drop-while transducer', () => {
 describe('take-last transducer', () => {
   it('(take-last 2 [1 2 3 4]) takes the last 2 elements', () => {
     const s = freshSession()
-    expect(s.evaluate('(take-last 2 [1 2 3 4])')).toMatchObject(
+    expect(materialize(s.evaluate('(take-last 2 [1 2 3 4])'))).toMatchObject(
       v.list([v.number(3), v.number(4)])
     )
   })

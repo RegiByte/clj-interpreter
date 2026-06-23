@@ -87,7 +87,7 @@ function stageToMap(stage: EvaluationMeasurementStage): CljValue {
 function bodyFormsFromArg(body: CljValue | undefined): CljValue[] {
   if (body === undefined || is.nil(body)) return []
   if (is.list(body) || is.vector(body)) return body.value
-  if (is.cons(body) || is.lazySeq(body)) return toSeq(body)
+  if (is.cons(body) || is.lazySeq(body) || is.indexedSeq(body)) return toSeq(body)
   throw EvaluationError.atArg(
     `measure* internal body must be a sequence, got ${printString(body)}`,
     { body },

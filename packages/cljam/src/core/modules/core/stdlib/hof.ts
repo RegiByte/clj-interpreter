@@ -4,7 +4,7 @@ import { is } from '../../../assertions'
 import { EvaluationError } from '../../../errors'
 import { DocGroups, docMeta, v } from '../../../factories'
 import { printString } from '../../../printer'
-import { toSeq } from '../../../transformations'
+import { streamSeq, toSeq } from '../../../transformations'
 import type {
   CljNumber,
   CljValue,
@@ -98,6 +98,32 @@ export const hofFunctions: Record<string, CljValue> = {
             { collection },
             rest.length
           )
+        }
+
+        // Lazy/cons sources stream one cell at a time so an early `reduced`
+        // stops realization instead of forcing the whole (possibly huge or
+        // infinite) tail. Concrete collections keep the materialized fast path.
+        if (is.lazySeq(collection) || is.cons(collection)) {
+          const iter = streamSeq(collection)
+          let acc: CljValue
+          if (hasInit) {
+            acc = init!
+          } else {
+            const first = iter.next()
+            if (first.done) {
+              throw new EvaluationError(
+                'reduce called on empty collection with no initial value',
+                { fn }
+              )
+            }
+            acc = first.value
+          }
+          for (let step = iter.next(); !step.done; step = iter.next()) {
+            const result = ctx.applyFunction(fn, [acc, step.value], callEnv)
+            if (is.reduced(result)) return result.value
+            acc = result
+          }
+          return acc
         }
 
         const items = toSeq(collection)

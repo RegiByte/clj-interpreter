@@ -68,6 +68,13 @@ function collectSeqElements(
       }
       break
     }
+    if (is.indexedSeq(current)) {
+      for (let i = current.offset; i < current.array.length; i++) {
+        if (items.length >= limit) break
+        items.push(printString(current.array[i], depth + 1))
+      }
+      break
+    }
     // Unknown tail — just print it
     items.push(printString(current, depth + 1))
     break
@@ -124,7 +131,8 @@ export function printString(value: CljValue, _depth = 0): string {
       is.map(value) ||
       is.set(value) ||
       is.cons(value) ||
-      is.lazySeq(value)
+      is.lazySeq(value) ||
+      is.indexedSeq(value)
     )
       return '#'
   }
@@ -284,6 +292,7 @@ function printStringImpl(value: CljValue, depth: number): string {
         return `#<Delay @${printString(value.value!, depth + 1)}>`
       return '#<Delay pending>'
     case valueKeywords.lazySeq:
+    case valueKeywords.indexedSeq:
     case valueKeywords.cons: {
       const { printLength } = _printCtx
       const limit = printLength !== null ? printLength : LAZY_PRINT_CAP
@@ -420,6 +429,7 @@ function pp(value: CljValue, col: number, maxWidth: number): string {
     case valueKeywords.record:
       return ppRecord(value.fields, value.ns, value.recordType, col, maxWidth)
     case valueKeywords.lazySeq:
+    case valueKeywords.indexedSeq:
     case valueKeywords.cons:
       // Flat representation is already computed above; no deeper pretty-print needed
       return flat

@@ -446,7 +446,8 @@ export const predicateFunctions: Record<string, CljValue> = {
   'seq?': v
     .nativeFn('seq?', function seqPredImpl(x: CljValue) {
       return v.boolean(
-        x !== undefined && (is.list(x) || is.cons(x) || is.lazySeq(x))
+        x !== undefined &&
+          (is.list(x) || is.cons(x) || is.lazySeq(x) || is.indexedSeq(x))
       )
     })
     .withMeta([
@@ -460,7 +461,11 @@ export const predicateFunctions: Record<string, CljValue> = {
     .nativeFn('sequential?', function sequentialPredImpl(x: CljValue) {
       return v.boolean(
         x !== undefined &&
-          (is.list(x) || is.vector(x) || is.lazySeq(x) || is.cons(x))
+          (is.list(x) ||
+            is.vector(x) ||
+            is.lazySeq(x) ||
+            is.cons(x) ||
+            is.indexedSeq(x))
       )
     })
     .withMeta([

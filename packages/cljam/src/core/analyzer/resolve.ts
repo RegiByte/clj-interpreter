@@ -98,8 +98,35 @@ type Expansion = { expanded: CljValue; chain: CljValue[] | null }
  * form, so materialize it as a list (mirrors `macroExpandAllWithContext`).
  */
 function toListIfSeq(form: CljValue): CljValue {
-  if (is.cons(form) || is.lazySeq(form)) return v.list(toSeq(form))
+  // Normalizes macro output that came back as a runtime seq (cons/lazy-seq/indexed-seq)
+  // into a code-form list — the analyzer's twin of the expand.ts macro-output guard.
+  if (is.cons(form) || is.lazySeq(form) || is.indexedSeq(form))
+    return v.list(toSeq(form))
   return form
+}
+
+/**
+ * Deeply materialize a macro's output: any runtime seq (`cons`/`lazy-seq`/
+ * `indexed-seq`) in code position becomes a list, recursively through the list
+ * spine. Macros build code with `cons`/`map`/`rest`, so a single expansion can
+ * nest runtime seqs several levels deep (e.g. `fn`'s `(map psig sigs)` yields a
+ * lazy-seq of arity clauses, each clause a `cons` once `rest` returns an
+ * indexed-seq). The shallow `toListIfSeq` only fixes the top level, leaving the
+ * structural readers (`parseAnalyzerArities`, param-vector reader) staring at a
+ * raw `cons`. This mirrors `macroExpandAllWithContext`'s recursion (stop at
+ * `quote`; treat non-lists as atoms) — structural only, it does not expand macros.
+ */
+function listifyMacroOutput(form: CljValue): CljValue {
+  if (is.cons(form) || is.lazySeq(form) || is.indexedSeq(form)) {
+    return listifyMacroOutput(v.list(toSeq(form)))
+  }
+  if (!is.list(form) || form.value.length === 0) return form
+  const head = form.value[0]
+  if (is.symbol(head) && head.name === 'quote') return form
+  const normalized = form.value.map(listifyMacroOutput)
+  return normalized.every((e, i) => e === form.value[i])
+    ? form
+    : v.list(normalized)
 }
 
 function expandHead(form: CljValue, st: AnalyzeState): Expansion {
@@ -124,7 +151,12 @@ function expandHead(form: CljValue, st: AnalyzeState): Expansion {
       const macro = lookupMacro(name, st)
       if (macro === undefined || !is.macro(macro)) break
       chain.push(current)
-      current = st.ctx.applyMacro(macro, current.value.slice(1))
+      // Deeply listify: macro output can nest runtime seqs (cons/lazy-seq/
+      // indexed-seq) in code position several levels down, which the structural
+      // arity/param readers can't consume. Mirrors expand.ts's recursive normalize.
+      current = listifyMacroOutput(
+        st.ctx.applyMacro(macro, current.value.slice(1))
+      )
     } catch (e) {
       // A macro that throws (e.g. on malformed args) is a real user error:
       // record it and stop expanding so the partially-resolved tree is still

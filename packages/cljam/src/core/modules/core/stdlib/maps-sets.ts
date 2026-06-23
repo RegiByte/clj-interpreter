@@ -62,6 +62,12 @@ export const mapsSetsFunctions: Record<string, CljValue> = {
             { collection }
           )
         }
+        if (is.indexedSeq(collection)) {
+          throw new EvaluationError(
+            'assoc on sequences is not supported, use vectors instead',
+            { collection }
+          )
+        }
         if (!is.collection(collection)) {
           throw EvaluationError.atArg(
             `assoc expects a collection, got ${printString(collection)}`,
@@ -160,6 +166,13 @@ export const mapsSetsFunctions: Record<string, CljValue> = {
         if (is.list(collection)) {
           throw EvaluationError.atArg(
             'dissoc on lists is not supported, use vectors instead',
+            { collection },
+            0
+          )
+        }
+        if (is.indexedSeq(collection)) {
+          throw EvaluationError.atArg(
+            'dissoc on sequences is not supported, use vectors instead',
             { collection },
             0
           )

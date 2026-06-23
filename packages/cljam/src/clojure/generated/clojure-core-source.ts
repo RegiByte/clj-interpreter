@@ -1331,12 +1331,21 @@ export const clojure_coreSource = `\
 (defn
   ^{:doc-group "Sequences"}
   range
-  "Returns a lazy infinite sequence of integers from 0.
-  With args, returns a finite sequence (delegates to native range*)."
+  "Returns a lazy seq of nums from start (inclusive) to end (exclusive),
+  by step, where start defaults to 0, step to 1, and end to infinity.
+  With no args, returns an infinite lazy seq of integers from 0. When step
+  is zero and start does not equal end, returns an infinite seq of start
+  (Clojure parity)."
   ([] (iterate inc 0))
-  ([end] (range* end))
-  ([start end] (range* start end))
-  ([start end step] (range* start end step)))
+  ([end] (range 0 end 1))
+  ([start end] (range start end 1))
+  ([start end step]
+   (lazy-seq
+    (when (cond
+            (pos? step) (< start end)
+            (neg? step) (> start end)
+            :else       (not= start end))
+      (cons start (range (+ start step) end step))))))
 
 (defn
   ^{:doc-group "IO"}

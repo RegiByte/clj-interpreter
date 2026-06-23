@@ -4,6 +4,7 @@ import {
   cljBoolean,
   cljList,
   cljMap,
+  cljMapEntry,
   cljNil,
   cljNumber,
   cljString,
@@ -19,16 +20,23 @@ import {
 } from '../../session'
 import { toSeq } from '../../transformations'
 
-/** Recursively convert lazy-seqs/cons to flat lists for test comparisons. */
+/** Recursively convert lazy-seqs/cons/indexed-seqs to flat lists for test comparisons. */
 export function materialize(value: CljValue): CljValue {
   if (isLazySeq(value) || isCons(value)) {
     const items = toSeq(value)
     return cljList(items.map(materialize))
   }
+  if (value.kind === 'indexed-seq') {
+    return cljList(value.array.slice(value.offset).map(materialize))
+  }
   if (value.kind === 'list') {
     return cljList(value.value.map(materialize))
   }
   if (value.kind === 'vector') {
+    // Preserve the map-entry marker so realized map seqs still compare as entries.
+    if (value.__cljamMapEntry) {
+      return cljMapEntry(materialize(value.value[0]), materialize(value.value[1]))
+    }
     return cljVector(value.value.map(materialize))
   }
   return value

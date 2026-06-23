@@ -8,7 +8,7 @@ function ev(code: string) {
 
 describe('Sequence utilities', () => {
   it('butlast', () => {
-    expect(ev('(butlast [1 2 3])')).toMatchObject({ kind: 'list' })
+    expect(materialize(ev('(butlast [1 2 3])'))).toMatchObject({ kind: 'list' })
     expect(ev('(into [] (butlast [1 2 3]))')).toMatchObject({
       kind: 'vector', value: [
         { kind: 'number', value: 1 },
@@ -21,9 +21,9 @@ describe('Sequence utilities', () => {
 
   it('fnext / nnext / nthnext / nthrest', () => {
     expect(ev('(fnext [1 2 3])')).toMatchObject({ value: 2 })
-    expect(ev('(nnext [1 2 3])')).toMatchObject({ kind: 'list' })
+    expect(materialize(ev('(nnext [1 2 3])'))).toMatchObject({ kind: 'list' })
     expect(ev('(first (nnext [1 2 3]))')).toMatchObject({ value: 3 })
-    expect(ev('(nthnext [1 2 3 4] 2)')).toMatchObject({ kind: 'list' })
+    expect(materialize(ev('(nthnext [1 2 3 4] 2)'))).toMatchObject({ kind: 'list' })
     expect(ev('(first (nthnext [1 2 3 4] 2))')).toMatchObject({ value: 3 })
     expect(ev('(into [] (nthrest [1 2 3 4] 2))')).toMatchObject({
       kind: 'vector', value: [

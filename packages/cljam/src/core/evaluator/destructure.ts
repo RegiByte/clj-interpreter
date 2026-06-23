@@ -10,6 +10,7 @@ function toSeqSafe(value: CljValue): CljValue[] {
   if (is.nil(value)) return []
   if (is.list(value)) return value.value
   if (is.vector(value)) return value.value
+  if (is.indexedSeq(value)) return value.array.slice(value.offset)
   if (is.lazySeq(value)) {
     const realized = realizeLazySeq(value)
     return toSeqSafe(realized)
@@ -29,6 +30,7 @@ function seqFirst(value: CljValue): CljValue {
     return is.nil(realized) ? v.nil() : seqFirst(realized)
   }
   if (is.cons(value)) return value.head
+  if (is.indexedSeq(value)) return value.array[value.offset]
   if (is.list(value) || is.vector(value))
     return value.value.length > 0 ? value.value[0] : v.nil()
   return v.nil()
@@ -42,6 +44,10 @@ function seqRest(value: CljValue): CljValue {
     return is.nil(realized) ? v.list([]) : seqRest(realized)
   }
   if (is.cons(value)) return value.tail
+  if (is.indexedSeq(value))
+    return value.offset + 1 < value.array.length
+      ? v.indexedSeq(value.array, value.offset + 1)
+      : v.list([])
   if (is.list(value)) return v.list(value.value.slice(1))
   if (is.vector(value)) return v.list(value.value.slice(1))
   return v.list([])
@@ -55,6 +61,7 @@ function seqIsEmpty(value: CljValue): boolean {
     return seqIsEmpty(realized)
   }
   if (is.cons(value)) return false
+  if (is.indexedSeq(value)) return false
   if (is.list(value) || is.vector(value)) return value.value.length === 0
   return true
 }

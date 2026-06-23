@@ -5,6 +5,7 @@ import {
   type CljCons,
   type CljDelay,
   type CljFunction,
+  type CljIndexedSeq,
   type CljJsValue,
   type CljKeyword,
   type CljLazySeq,
@@ -30,7 +31,7 @@ import {
   type CljVolatile,
 } from './types.ts'
 
-import { specialFormKeywords, valueKeywords } from './keywords.ts'
+import { specialFormKeywords, valueKeywords, valueKindKeywords } from './keywords.ts'
 import { isEqual } from './persistent/equality.ts'
 export { isEqual }
 
@@ -105,6 +106,8 @@ export const isLazySeq = (value: CljValue): value is CljLazySeq =>
   value.kind === 'lazy-seq'
 export const isCons = (value: CljValue): value is CljCons =>
   value.kind === 'cons'
+export const isIndexedSeq = (value: CljValue): value is CljIndexedSeq =>
+  value.kind === 'indexed-seq'
 export const isNamespace = (value: CljValue): value is CljNamespace =>
   value.kind === 'namespace'
 export const isProtocol = (value: CljValue): value is CljProtocol =>
@@ -113,13 +116,21 @@ export const isRecord = (value: CljValue): value is CljRecord =>
   value.kind === 'record'
 export const isCollection = (
   value: CljValue
-): value is CljList | CljVector | CljMap | CljRecord | CljSet | CljCons =>
+): value is
+  | CljList
+  | CljVector
+  | CljMap
+  | CljRecord
+  | CljSet
+  | CljCons
+  | CljIndexedSeq =>
   isVector(value) ||
   isMap(value) ||
   isRecord(value) ||
   isList(value) ||
   isSet(value) ||
-  isCons(value)
+  isCons(value) ||
+  isIndexedSeq(value)
 
 export const isSeqable = (
   value: CljValue
@@ -131,7 +142,8 @@ export const isSeqable = (
   | CljSet
   | CljString
   | CljLazySeq
-  | CljCons =>
+  | CljCons
+  | CljIndexedSeq =>
   isCollection(value) || value.kind === 'string' || isLazySeq(value)
 
 export const isCljValue = (value: any): value is CljValue => {
@@ -139,7 +151,7 @@ export const isCljValue = (value: any): value is CljValue => {
     typeof value === 'object' &&
     value !== null &&
     'kind' in value &&
-    value.kind in valueKeywords
+    value.kind in valueKindKeywords
   )
 }
 
@@ -182,6 +194,7 @@ export const is = {
   delay: isDelay,
   lazySeq: isLazySeq,
   cons: isCons,
+  indexedSeq: isIndexedSeq,
   namespace: isNamespace,
   protocol: isProtocol,
   record: isRecord,

@@ -174,6 +174,17 @@ export type CljCons = {
   meta?: CljMap
 }
 
+// A view over a SHARED, immutable array: { which array, where in it }.
+// Internal-only — produced by seq/rest/next over array-backed sources to give
+// O(1) first/rest without copying. INVARIANT: 0 <= offset < array.length (an
+// empty view never exists; the sole factory normalizes empty → nil).
+export type CljIndexedSeq = {
+  kind: 'indexed-seq'
+  array: CljValue[]
+  offset: number
+  meta?: CljMap
+}
+
 export type CljVar = {
   kind: 'var'
   ns: string
@@ -395,6 +406,7 @@ export type CljValue =
   | CljDelay
   | CljLazySeq
   | CljCons
+  | CljIndexedSeq
   | CljNamespace
   | CljPending
   | CljJsValue

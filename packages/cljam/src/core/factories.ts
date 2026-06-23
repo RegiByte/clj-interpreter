@@ -8,6 +8,7 @@ import type {
   CljCons,
   CljDelay,
   CljFunction,
+  CljIndexedSeq,
   CljJsValue,
   CljKeyword,
   CljLazySeq,
@@ -214,6 +215,15 @@ export const cljCons = (head: CljValue, tail: CljValue): CljCons => ({
   head,
   tail,
 })
+// The SOLE constructor for an indexed-seq view. Normalizes an empty/exhausted
+// view → nil so the "a seq is never empty" invariant holds by construction.
+export const cljIndexedSeq = (
+  array: CljValue[],
+  offset = 0
+): CljIndexedSeq | CljNil =>
+  offset >= array.length
+    ? cljNil()
+    : { kind: 'indexed-seq', array, offset }
 export const cljNamespace = (name: string): CljNamespace => ({
   kind: 'namespace',
   name,
@@ -416,6 +426,7 @@ export const v = {
   map: cljMap,
   set: cljSet,
   cons: cljCons,
+  indexedSeq: cljIndexedSeq,
 
   // callables
   function: cljFunction,

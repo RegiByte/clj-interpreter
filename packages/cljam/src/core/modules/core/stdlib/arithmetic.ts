@@ -772,14 +772,19 @@ export const arithmeticFunctions: Record<string, CljValue> = {
 
   'rand-nth': v
     .nativeFn('rand-nth', function randNthImpl(coll: CljValue) {
-      if (coll === undefined || (!is.list(coll) && !is.vector(coll))) {
+      if (
+        coll === undefined ||
+        (!is.list(coll) && !is.vector(coll) && !is.indexedSeq(coll))
+      ) {
         throw EvaluationError.atArg(
           `rand-nth expects a list or vector`,
           { coll },
           0
         )
       }
-      const items = (coll as CljList | CljVector).value
+      const items = is.indexedSeq(coll)
+        ? coll.array.slice(coll.offset)
+        : (coll as CljList | CljVector).value
       if (items.length === 0) {
         throw EvaluationError.atArg(
           'rand-nth called on empty collection',

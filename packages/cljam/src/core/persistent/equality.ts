@@ -13,6 +13,7 @@ import {
   type CljChar,
   type CljCons,
   type CljDelay,
+  type CljIndexedSeq,
   type CljKeyword,
   type CljLazySeq,
   type CljList,
@@ -67,6 +68,10 @@ function seqToArrayForEquality(value: CljValue): CljValue[] | null {
     const realized = realizeLazySeqForEquality(value as CljLazySeq)
     return seqToArrayForEquality(realized)
   }
+  if (value.kind === 'indexed-seq') {
+    const idx = value as CljIndexedSeq
+    return idx.array.slice(idx.offset)
+  }
   if (value.kind === 'cons') {
     const result: CljValue[] = []
     let current: CljValue = value
@@ -83,6 +88,11 @@ function seqToArrayForEquality(value: CljValue): CljValue[] | null {
       }
       if (current.kind === 'list' || current.kind === 'vector') {
         result.push(...(current as CljList | CljVector).value)
+        break
+      }
+      if (current.kind === 'indexed-seq') {
+        const idx = current as CljIndexedSeq
+        result.push(...idx.array.slice(idx.offset))
         break
       }
       return null
@@ -216,8 +226,16 @@ export const isEqual = (a: CljValue, b: CljValue): boolean => {
 
   // Cross-type sequential equality: lists, vectors, cons cells all compare as
   // ordered sequences. (= [1 2 3] '(1 2 3)) => true
-  const aIsSeq = a.kind === 'list' || a.kind === 'vector' || a.kind === 'cons'
-  const bIsSeq = b.kind === 'list' || b.kind === 'vector' || b.kind === 'cons'
+  const aIsSeq =
+    a.kind === 'list' ||
+    a.kind === 'vector' ||
+    a.kind === 'cons' ||
+    a.kind === 'indexed-seq'
+  const bIsSeq =
+    b.kind === 'list' ||
+    b.kind === 'vector' ||
+    b.kind === 'cons' ||
+    b.kind === 'indexed-seq'
   if (aIsSeq && bIsSeq) {
     const aArr = seqToArrayForEquality(a)
     const bArr = seqToArrayForEquality(b)

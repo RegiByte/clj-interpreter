@@ -4,7 +4,7 @@ import { is } from '../../../assertions'
 import { EvaluationError } from '../../../errors'
 import { DocGroups, docMeta, v } from '../../../factories'
 import { joinLines, printString } from '../../../printer'
-import { toSeq } from '../../../transformations'
+import { streamSeq, toSeq } from '../../../transformations'
 import type {
   CljFunction,
   CljNativeFunction,
@@ -148,10 +148,15 @@ export const transducerFunctions: Record<string, CljValue> = {
           )
         }
 
-        // Step loop
-        const items = toSeq(actualColl)
+        // Step loop. Lazy/cons sources stream one cell at a time so an early
+        // `reduced` (e.g. from a `take` transducer) stops realization instead
+        // of forcing the whole tail. Concrete collections materialize as before.
+        const source: Iterable<CljValue> =
+          is.lazySeq(actualColl) || is.cons(actualColl)
+            ? streamSeq(actualColl)
+            : toSeq(actualColl)
         let acc = actualInit
-        for (const item of items) {
+        for (const item of source) {
           // 2-arity call on the composed rf
           const result = ctx.applyFunction(rf, [acc, item], callEnv)
           if (is.reduced(result)) {

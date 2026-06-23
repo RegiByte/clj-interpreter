@@ -222,6 +222,9 @@ export const toSeq = (collection: CljValue): CljValue[] => {
   if (is.cons(collection)) {
     return consToArray(collection)
   }
+  if (is.indexedSeq(collection)) {
+    return collection.array.slice(collection.offset)
+  }
   throw new EvaluationError(
     `toSeq expects a collection or string, got ${printString(collection)}`,
     { collection }
@@ -251,9 +254,52 @@ export function consToArray(c: CljCons): CljValue[] {
       result.push(...vectorToArray(tail))
       break
     }
+    if (is.indexedSeq(tail)) {
+      result.push(...tail.array.slice(tail.offset))
+      break
+    }
     // Other seqable types — fall through to toSeq
     result.push(...toSeq(tail))
     break
   }
   return result
+}
+
+/**
+ * Stream a (possibly lazy) seq element-by-element, realizing exactly one cell
+ * per step. Unlike `toSeq`/`consToArray`, the tail is never materialized up
+ * front: a consumer that stops early (e.g. on `reduced`) leaves the rest of the
+ * source unrealized. This is what lets `reduce`/`transduce` honor an
+ * early-terminating transducer over a lazy source without forcing all of it.
+ */
+export function* streamSeq(collection: CljValue): Generator<CljValue> {
+  let cur: CljValue = collection
+  while (true) {
+    if (is.lazySeq(cur)) {
+      cur = realizeLazySeq(cur)
+      continue
+    }
+    if (is.nil(cur)) return
+    if (is.cons(cur)) {
+      yield cur.head
+      cur = cur.tail
+      continue
+    }
+    if (is.list(cur)) {
+      yield* cur.value
+      return
+    }
+    if (is.vector(cur)) {
+      yield* vectorToArray(cur)
+      return
+    }
+    if (is.indexedSeq(cur)) {
+      const { array, offset } = cur
+      for (let i = offset; i < array.length; i++) yield array[i]
+      return
+    }
+    // Other seqable types (map/record/set/string) — concrete, materialize.
+    yield* toSeq(cur)
+    return
+  }
 }
