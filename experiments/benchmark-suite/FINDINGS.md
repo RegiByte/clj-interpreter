@@ -60,7 +60,7 @@ The map story is structurally better (HAMT exists in `src/core/persistent/`)
 but still **84–108× slower than SCI** on `map-assoc` — worth profiling
 (Movement B) before assuming the kernel itself is the problem.
 
-## Finding 3 — lazy sequences are pathologically expensive
+## Finding 3 — lazy sequences are pathologically expensive — ✅ RESOLVED (session 339)
 
 `seq-pipeline` vs `transduce-pipeline` run the *same logical work*
 (filter→map→take 1000→reduce over `(range 100000)`):
@@ -73,9 +73,45 @@ but still **84–108× slower than SCI** on `map-assoc` — worth profiling
 
 In SCI laziness costs 2× over transducers; in cljam it costs >100×. The
 lazy-seq cell machinery is the single largest per-workload gap in the suite
-(2000–3800× vs SCI) and drags every seq-idiomatic program. (These two pairs
-also carried the run's worst noise flags — 38–88% IQR dispersion, likely
-GC-driven; the magnitude dwarfs the noise.)
+(2000–3800× vs SCI) and drags every seq-idiomatic program.
+
+> **UPDATE (session 339) — the pathology is dead.** Root cause was NOT the lazy
+> cell machinery (<2% of profile) but **O(n) array-copying `rest` over an eager
+> array-backed source** → O(n²) traversal + GC storm (session 336 diagnosis). Fix:
+> the **IndexedSeq** `{array, offset}` view — `seq`/`rest` now produce O(1) views
+> (Phase C). `runs/20260622-164646/`:
+> - `seq-pipeline` cljam-vm **547→950→14.25 ms** (the 950 was a later, cleaner
+>   measurement; either way **~67× faster**), **~3485× → ~49× SCI**.
+> - rest-walk @ N=40000 **1304 → 22.5 ms (~58×)**, scaling now **linear** (was O(n²)).
+> - take-1000 pipeline **near-flat** in N. Phase D (lazy `range`) flattens the
+>   residual eager-build slope. The remaining ~49× SCI = generic call overhead
+>   (execution engine, Phase 2/3 — out of scope for this arc, as predicted).
+>
+> **UPDATE (session 340) — Phase D + streaming reduce; both pipelines now FLAT.**
+> `runs/20260623-024052/`. Two changes:
+> 1. **Lazy `range`** (Phase D) — `range` is now a pure-Clojure `lazy-seq` recurrence
+>    (`core.clj`), matching Clojure (incl. zero-step → infinite `(repeat start)`).
+>    Only pulled elements realize → the take-1000 pipeline is **flat in N** (source
+>    size stops mattering): `seq-pipeline` holds ~18-19 ms across N=25k–400k.
+> 2. **Streaming `reduce`/`transduce`** — Phase D *exposed* a latent bug: both
+>    `reduce` (`hof.ts`) and `transduce` (`transducers.ts`) did `toSeq(coll)` —
+>    **fully realizing a lazy source before reducing** — so an early-terminating
+>    transducer (`take`) couldn't stop the pull. Eager `range` hid this (already a
+>    list); lazy `range` made `(transduce (take 1000…) + 0 (range 100000))` realize
+>    all 100k → **314 ms, linear in N**. Fix: a `streamSeq` generator (one-cell-at-
+>    a-time via the existing `realizeLazySeq` trampoline); `reduce`/`transduce` now
+>    **stream** lazy/cons sources (per-step `reduced` check, tail never realized) and
+>    keep the materialized fast-path for concrete collections.
+> - `seq-pipeline` cljam-vm **18.97 ms (64.8× SCI)**, flat in N.
+> - `transduce-pipeline` cljam-vm **314 → 8.29 ms (60.9× SCI)**, flat in N (~38×).
+> - **Transducers now correctly beat lazy seqs** (8.3 vs 19 ms) — the Finding's
+>   original table had them *backwards* (lazy 116× *slower*). Order restored.
+> - Headline cljam-vm geomean **15.1× → 11.7× SCI** (the transduce outlier gone).
+> - Both pipelines now sit at the **~60× SCI generic-call-overhead floor** =
+>   execution engine (Phase 2/3), the banked-and-stop line for this arc.
+> - **Lesson:** lazy *production* needs streaming *consumption*. A consumer that
+>   materializes before consuming throws away the producer's laziness at the
+>   boundary — the eager half dominates. Both halves of the seq protocol must agree.
 
 ## Finding 4 — bright spots and anomalies
 
