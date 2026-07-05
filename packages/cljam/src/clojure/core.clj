@@ -62,7 +62,6 @@
 (declare loop*)
 (declare let*)
 (declare repeat*)
-(declare range*)
 (declare seen-rest?)
 (declare pprint)
 (declare hierarchy-descendants-global)

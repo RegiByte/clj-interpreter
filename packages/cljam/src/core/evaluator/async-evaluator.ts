@@ -49,9 +49,9 @@ import { v } from '../factories'
 import { specialFormKeywords, valueKeywords } from '../keywords'
 import { setValues } from '../persistent/map-helpers'
 import type { CljList, CljSet, CljValue, Env, EvaluationContext } from '../types'
+import { getPos } from '../positions'
 import { bindParams, RecurSignal, resolveArity } from './arity'
 import { setupBindingVars } from './binding-setup'
-import { destructureBindings } from './destructure'
 import {
   matchesDiscriminator,
   parseTryStructure,
@@ -376,6 +376,28 @@ async function evaluateSpecialFormAsync(
   }
 }
 
+/**
+ * `let*`/`loop*` bind simple symbols only — destructuring is lowered into
+ * symbol-only bindings by the `let`/`loop`/`fn` macros before these special
+ * forms ever run. Mirrors the sync evaluator's contract (special-forms.ts
+ * `evaluateLetStar`/`evaluateLoopRecur`).
+ */
+function bindingNameOrThrow(
+  pattern: CljValue,
+  formName: 'let*' | 'loop*',
+  list: CljList,
+  env: Env
+): string {
+  if (!is.symbol(pattern)) {
+    throw new EvaluationError(
+      `${formName} only supports simple symbol bindings; use ${formName.slice(0, -1)} for destructuring`,
+      { pattern, env },
+      getPos(pattern) ?? getPos(list)
+    )
+  }
+  return pattern.name
+}
+
 async function evaluateLetAsync(
   list: CljList,
   env: Env,
@@ -387,21 +409,10 @@ async function evaluateLetAsync(
   let currentEnv = env
   const pairs = bindings.value
   for (let i = 0; i < pairs.length; i += 2) {
-    const pattern = pairs[i]
-    const valueForm = pairs[i + 1]
-    // Value evaluation is async; pattern binding is purely structural (sync).
-    const value = await evaluateFormAsync(valueForm, currentEnv, asyncCtx)
-    const boundPairs = destructureBindings(
-      pattern,
-      value,
-      asyncCtx.syncCtx,
-      currentEnv
-    )
-    currentEnv = extend(
-      boundPairs.map(([n]) => n),
-      boundPairs.map(([, v]) => v),
-      currentEnv
-    )
+    const name = bindingNameOrThrow(pairs[i], 'let*', list, env)
+    // Value evaluation is async; the binding is a simple symbol.
+    const value = await evaluateFormAsync(pairs[i + 1], currentEnv, asyncCtx)
+    currentEnv = extend([name], [value], currentEnv)
   }
   return evaluateFormsAsync(list.value.slice(2), currentEnv, asyncCtx)
 }
@@ -416,54 +427,31 @@ async function evaluateLoopAsync(
 
   const loopBody = list.value.slice(2)
 
-  // Collect patterns and evaluate initial values async
-  const patterns: CljValue[] = []
+  // Bind simple symbols, evaluating initial values async (sequential binding).
+  const names: string[] = []
   let currentValues: CljValue[] = []
   let initEnv = env
   for (let i = 0; i < loopBindings.value.length; i += 2) {
-    const pattern = loopBindings.value[i]
+    const name = bindingNameOrThrow(loopBindings.value[i], 'loop*', list, env)
     const value = await evaluateFormAsync(
       loopBindings.value[i + 1],
       initEnv,
       asyncCtx
     )
-    patterns.push(pattern)
+    names.push(name)
     currentValues.push(value)
-    const boundPairs = destructureBindings(
-      pattern,
-      value,
-      asyncCtx.syncCtx,
-      initEnv
-    )
-    initEnv = extend(
-      boundPairs.map(([n]) => n),
-      boundPairs.map(([, v]) => v),
-      initEnv
-    )
+    initEnv = extend([name], [value], initEnv)
   }
 
   while (true) {
-    let loopEnv = env
-    for (let i = 0; i < patterns.length; i++) {
-      const boundPairs = destructureBindings(
-        patterns[i],
-        currentValues[i],
-        asyncCtx.syncCtx,
-        loopEnv
-      )
-      loopEnv = extend(
-        boundPairs.map(([n]) => n),
-        boundPairs.map(([, v]) => v),
-        loopEnv
-      )
-    }
+    const loopEnv = extend(names, currentValues, env)
     try {
       return await evaluateFormsAsync(loopBody, loopEnv, asyncCtx)
     } catch (e) {
       if (e instanceof RecurSignal) {
-        if (e.args.length !== patterns.length) {
+        if (e.args.length !== names.length) {
           throw new EvaluationError(
-            `recur expects ${patterns.length} arguments but got ${e.args.length}`,
+            `recur expects ${names.length} arguments but got ${e.args.length}`,
             { list, env }
           )
         }

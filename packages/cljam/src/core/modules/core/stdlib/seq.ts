@@ -1,5 +1,5 @@
 // Sequence abstraction: list, seq, first, rest, cons, conj, count, empty?, empty,
-// nth, get, contains?, last, reverse, repeat*, range*, concat*
+// nth, get, contains?, last, reverse, repeat*, concat*
 //
 // These are the "core sequence protocol" operations — they apply uniformly across
 // all collection types. conj lives here because it implements the sequence
@@ -624,73 +624,6 @@ export const seqFunctions: Record<string, CljValue> = {
       ...docMeta({
         doc: 'Returns a finite sequence of n copies of x (native helper).',
         arglists: [['n', 'x']],
-        docGroup: DocGroups.sequences,
-        extra: {
-          'no-doc': true,
-        },
-      }),
-    ]),
-
-  // ── Range ────────────────────────────────────────────────────────────────
-
-  'range*': v
-    .nativeFn('range*', function rangeImpl(...args: CljValue[]) {
-      if (args.length === 0 || args.length > 3) {
-        throw new EvaluationError(
-          'range expects 1, 2, or 3 arguments: (range n), (range start end), or (range start end step)',
-          { args }
-        )
-      }
-      const badIdx = args.findIndex(function checkIsNumber(a) {
-        return !is.number(a)
-      })
-      if (badIdx !== -1) {
-        throw EvaluationError.atArg(
-          'range expects number arguments',
-          { args },
-          badIdx
-        )
-      }
-      let start: number
-      let end: number
-      let step: number
-      if (args.length === 1) {
-        start = 0
-        end = (args[0] as CljNumber).value
-        step = 1
-      } else if (args.length === 2) {
-        start = (args[0] as CljNumber).value
-        end = (args[1] as CljNumber).value
-        step = 1
-      } else {
-        start = (args[0] as CljNumber).value
-        end = (args[1] as CljNumber).value
-        step = (args[2] as CljNumber).value
-      }
-      if (step === 0) {
-        // step is always the last arg: index args.length - 1
-        throw EvaluationError.atArg(
-          'range step cannot be zero',
-          { args },
-          args.length - 1
-        )
-      }
-      const result: CljValue[] = []
-      if (step > 0) {
-        for (let i = start; i < end; i += step) {
-          result.push(v.number(i))
-        }
-      } else {
-        for (let i = start; i > end; i += step) {
-          result.push(v.number(i))
-        }
-      }
-      return v.list(result)
-    })
-    .withMeta([
-      ...docMeta({
-        doc: 'Returns a finite sequence of numbers (native helper).',
-        arglists: [['n'], ['start', 'end'], ['start', 'end', 'step']],
         docGroup: DocGroups.sequences,
         extra: {
           'no-doc': true,

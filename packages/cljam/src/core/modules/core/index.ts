@@ -56,7 +56,7 @@ import { printFunctions, printVars } from './stdlib/print'
 //   repeatedly  → lazy infinite sequence
 //   cycle       → lazy infinite sequence
 //   repeat      → lazy infinite (delegates to repeat* for finite arity)
-//   range       → lazy infinite (delegates to range* for finite arity)
+//   range       → lazy seq (pure Clojure lazy-seq recurrence, all arities)
 //   into        → 2-arity uses reduce+conj; 3-arity uses transduce
 //   sequence    → materialise via into
 //   completing  → 0-arity init + 1-arity completion wrapper
@@ -70,8 +70,8 @@ import { printFunctions, printVars } from './stdlib/print'
 //   *err*       → nil by default; bound by with-err-str to capture stderr
 //   *print-length*, *print-level* → print control
 //
-// range* and repeat* are intentionally kept — clojure.core.clj calls them
-// explicitly as private native helpers for finite-arity range/repeat.
+// repeat* is intentionally kept — clojure.core.clj calls it explicitly as a
+// private native helper for finite-arity repeat.
 // ---------------------------------------------------------------------------
 
 const coreNativeFunctions = {
