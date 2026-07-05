@@ -2,6 +2,7 @@ import {
   type CljFunction,
   type CljMacro,
   type CljNativeFunction,
+  type CljSymbol,
   type CljValue,
   type Env,
   type EvaluationContext,
@@ -14,18 +15,23 @@ import {
 } from './apply.ts'
 import { macroExpandAllWithContext } from './expand.ts'
 import {
+  DEFAULT_VM_EXECUTION_MODE,
   type EvaluationMeasurement,
   evaluateFormsWithContext,
+  evaluateSymbolWithContext,
   evaluateWithContext,
   evaluateWithMeasurementsWithContext,
 } from './evaluate.ts'
 
 // Forward to external consumers
 export { RecurSignal } from './arity.ts'
+export { DEFAULT_VM_EXECUTION_MODE } from './evaluate.ts'
 
 export function createEvaluationContext(): EvaluationContext {
   const ctx = {
     evaluate: (expr: CljValue, env: Env) => evaluateWithContext(expr, env, ctx),
+    evaluateSymbol: (sym: CljSymbol, env: Env) =>
+      evaluateSymbolWithContext(sym, env, ctx),
     evaluateForms: (forms: CljValue[], env: Env) =>
       evaluateFormsWithContext(forms, env, ctx),
     applyFunction: (
@@ -41,6 +47,7 @@ export function createEvaluationContext(): EvaluationContext {
       macroExpandAllWithContext(form, env, ctx),
     resolveNs: (_name: string) => null as null,
     allNamespaces: () => [],
+    vmExecutionMode: DEFAULT_VM_EXECUTION_MODE,
     // IO defaults — overwritten by buildSessionFacade with session-specific channels.
     io: {
       stdout: (text: string) => console.log(text),

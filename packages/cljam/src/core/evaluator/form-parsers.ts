@@ -153,6 +153,21 @@ export function matchesDiscriminator(
     // java.lang.Throwable). Treat as catch-all — we're not on the JVM.
     return true
   }
+  return matchesDiscriminatorValue(disc, thrown, env, ctx)
+}
+
+/**
+ * The value half of `matchesDiscriminator`: matching rules applied to an
+ * already-evaluated discriminator. Split out so the AST walker can evaluate
+ * discriminator NODES itself (locals live in slot frames, not the Env chain)
+ * and still share the exact matching semantics with the form path.
+ */
+export function matchesDiscriminatorValue(
+  disc: CljValue,
+  thrown: CljValue,
+  env: Env,
+  ctx: EvaluationContext
+): boolean {
   // A symbol that evaluated to itself (shouldn't happen, but guard anyway)
   if (is.symbol(disc)) return true
 

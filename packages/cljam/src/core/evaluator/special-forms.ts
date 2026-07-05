@@ -14,19 +14,20 @@ import type {
   EvaluationContext,
 } from '../types'
 import { parseArities, RecurSignal } from './arity'
-import { setupBindingVars } from './binding-setup'
+import { resolveSetTargetVar, setupBindingVars } from './binding-setup'
 import {
   matchesDiscriminator,
   parseTryStructure,
   validateBindingVector,
 } from './form-parsers'
-import { defineMacro, defineVar, mergeDocIntoMeta } from './defs'
+import { defineMacro, defineVar, withDefmacroMeta } from './defs'
 import { evaluateDot, evaluateNew } from './js-interop'
 
 import { assertRecurInTailPosition } from './recur-check'
 
 import { assignChunkIds } from '../vm/chunk.ts'
 import { tryCompileVmFnBodyFromIr } from '../vm/ir-compiler.ts'
+import { tryAttachAstFnBody } from '../walker/fn-body.ts'
 
 function evaluateTry(
   list: CljList,
@@ -196,10 +197,20 @@ function evaluateFnStar(
     arityForms = rest.slice(1)
   }
   const arities = parseArities(arityForms, env)
+  // In 'ast' mode fn bodies get an AST attachment instead of bytecode — the
+  // walker is the execution engine there, mirroring the VM's fn-body seam.
+  const canUseAstBody =
+    ctx.vmExecutionMode === 'ast' && canCompileVmFnBodyInEnv(env)
   const canUseVmBody =
-    ctx.vmExecutionMode !== 'off' && canCompileVmFnBodyInEnv(env)
+    ctx.vmExecutionMode !== 'off' &&
+    ctx.vmExecutionMode !== 'ast' &&
+    canCompileVmFnBodyInEnv(env)
   for (const arity of arities) {
     assertRecurInTailPosition(arity.body)
+
+    if (canUseAstBody) {
+      tryAttachAstFnBody(arity, fnName ?? null, env, ctx)
+    }
 
     if (canUseVmBody) {
       const vmResult = tryCompileVmFnBodyFromIr(
@@ -433,28 +444,7 @@ function evaluateDefmacro(
   const arities = parseArities(arityForms, env)
   const macro = v.multiArityMacro(arities, env)
 
-  // Extract :arglists from the raw param vectors (before destructuring runs).
-  // Single-arity: arityForms[0] is the param vector [x y & rest].
-  // Multi-arity: each arityForms[i].value[0] is the per-arity param vector.
-  const arglistVecs: CljValue[] = is.vector(arityForms[0])
-    ? [arityForms[0]]
-    : arityForms
-        .filter(is.list)
-        .map((f) => f.value[0])
-        .filter(is.vector)
-
-  let finalMeta = docstring ? mergeDocIntoMeta(name.meta, docstring) : name.meta
-  if (arglistVecs.length > 0) {
-    const arglistsKv: [CljValue, CljValue] = [
-      v.keyword(':arglists'),
-      v.vector(arglistVecs),
-    ]
-    const base = (finalMeta?.entries ?? []).filter(
-      ([k]) => !(is.keyword(k) && k.name === ':arglists')
-    )
-    finalMeta = v.map([...base, arglistsKv])
-  }
-
+  const finalMeta = withDefmacroMeta(name.meta, docstring, arityForms)
   const nameWithMeta =
     finalMeta === name.meta ? name : { ...name, meta: finalMeta }
   return defineMacro({ name: nameWithMeta, macro, env, ctx })
@@ -550,30 +540,9 @@ function evaluateSet(
       getPos(symForm) ?? getPos(list)
     )
   }
-  const v = lookupVar(symForm.name, env)
-  if (!v) {
-    throw new EvaluationError(
-      `Unable to resolve var: ${symForm.name} in this context`,
-      { symForm, env },
-      getPos(symForm)
-    )
-  }
-  if (!v.dynamic) {
-    throw new EvaluationError(
-      `Cannot set! non-dynamic var ${v.ns}/${v.name}. Mark it with ^:dynamic.`,
-      { symForm, env },
-      getPos(symForm)
-    )
-  }
-  if (!v.bindingStack || v.bindingStack.length === 0) {
-    throw new EvaluationError(
-      `Cannot set! ${v.ns}/${v.name} — no active binding. Use set! only inside a (binding [...] ...) form.`,
-      { symForm, env },
-      getPos(symForm)
-    )
-  }
+  const targetVar = resolveSetTargetVar(symForm, env)
   const newVal = ctx.evaluate(list.value[2], env)
-  v.bindingStack[v.bindingStack.length - 1] = newVal
+  targetVar.bindingStack![targetVar.bindingStack!.length - 1] = newVal
   return newVal
 }
 

@@ -2,7 +2,11 @@ import { builtInNamespaceSources } from '../clojure/generated/builtin-namespace-
 import { cljToJs as _cljToJs } from './conversions'
 import { internVar, makeEnv } from './env'
 import { CljThrownSignal, EvaluationError, ReaderError } from './errors'
-import { createEvaluationContext, RecurSignal } from './evaluator'
+import {
+  createEvaluationContext,
+  DEFAULT_VM_EXECUTION_MODE,
+  RecurSignal,
+} from './evaluator'
 import { jsToClj } from './evaluator/js-interop'
 import { v } from './factories'
 import { is } from './assertions'
@@ -220,7 +224,7 @@ function buildSessionFacade(
   ctx.importModule = options?.importModule
   ctx.allowedPackages = options?.allowedPackages ?? 'all'
   ctx.allowedHostModules = options?.allowedHostModules ?? 'all'
-  ctx.vmExecutionMode = options?.vmExecutionMode
+  ctx.vmExecutionMode = options?.vmExecutionMode ?? DEFAULT_VM_EXECUTION_MODE
   ctx.instrumentation = options?.instrumentation
   ctx.allocateEvalIdentity = (nsName) => runtime.allocateEvalIdentity(nsName)
   ctx.allocateFunctionIdentity = (input) =>
@@ -632,12 +636,7 @@ export function createSession(options?: SessionOptions): Session {
       registeredSources.size > 0 ? registeredSources : undefined,
   })
 
-  const usesDefaultVmMode = options?.vmExecutionMode === undefined
-  const bootstrapOptions: SessionOptions | undefined = usesDefaultVmMode
-    ? { ...options, vmExecutionMode: 'function-body' }
-    : options
-
-  let session = buildSessionFacade(runtime, 'user', bootstrapOptions)
+  const session = buildSessionFacade(runtime, 'user', options)
 
   // Bootstrap: load clojure.core source (uses session's ctx via session.loadFile)
   const coreLoader = builtInNamespaceSources['clojure.core']
@@ -645,10 +644,6 @@ export function createSession(options?: SessionOptions): Session {
     throw new Error('Missing built-in clojure.core source in registry')
   }
   session.loadFile(coreLoader(), 'clojure.core')
-
-  if (usesDefaultVmMode) {
-    session = buildSessionFacade(runtime, session.currentNs, options)
-  }
 
   if (modules.length > 0) {
     session.runtime.installModules(modules)

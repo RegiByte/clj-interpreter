@@ -13,6 +13,7 @@ const REPO_ROOT = join(SUITE_DIR, '..', '..')
 const ENGINES = {
   'cljam-interp': { runner: 'runners/run-cljam.mjs', extra: { mode: 'off' } },
   'cljam-vm': { runner: 'runners/run-cljam.mjs', extra: { mode: 'function-body' } },
+  'cljam-ast': { runner: 'runners/run-cljam.mjs', extra: { mode: 'ast' } },
   sci: { runner: 'runners/run-sci.mjs', extra: {} },
   js: { runner: 'runners/run-js.mjs', extra: {} },
 }

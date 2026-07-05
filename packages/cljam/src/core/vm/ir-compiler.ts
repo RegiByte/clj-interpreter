@@ -29,7 +29,7 @@ import type {
   InvokeNode,
 } from '../analyzer/nodes'
 import { is } from '../assertions'
-import { mergeDocIntoMeta } from '../evaluator/defs'
+import { mergeDocIntoMeta, withDefmacroMeta } from '../evaluator/defs'
 import { v } from '../factories'
 import { specialFormKeywords } from '../keywords.ts'
 import { getPos, setPos } from '../positions'
@@ -122,7 +122,13 @@ function fail(st: EmitState, reason: VmFallbackReason): false {
   return false
 }
 
-function compileResultForAnalysisErrors(
+/**
+ * Classifies analyzer errors into fatal-malformed (throw, never fall back —
+ * the analyzer is the authority since Phase 1.5) vs plain fallback. Shared by
+ * the VM entry points below AND the AST walker (`walker/`), so all engines
+ * agree on malformed-form behavior.
+ */
+export function compileResultForAnalysisErrors(
   errors: AnalysisError[]
 ): VmCompileResult {
   const error = errors[0]
@@ -324,35 +330,6 @@ function symbolWithMeta(sym: CljSymbol, meta: CljMap | undefined): CljSymbol {
   const pos = getPos(sym)
   if (pos) setPos(copy, pos)
   return copy
-}
-
-/**
- * Builds the {:macro true :arglists [...] :doc "..."} meta for a defmacro symbol
- * constant. Mirrors the private `withDefmacroMeta` in the legacy compiler.
- */
-function withDefmacroMeta(
-  baseMeta: CljMap | undefined,
-  docstring: string | undefined,
-  arityForms: CljValue[]
-): CljMap | undefined {
-  let finalMeta = docstring ? mergeDocIntoMeta(baseMeta, docstring) : baseMeta
-  const arglistVecs: CljValue[] = is.vector(arityForms[0])
-    ? [arityForms[0]]
-    : arityForms
-        .filter(is.list)
-        .map((form) => (form as CljList).value[0])
-        .filter(is.vector)
-  if (arglistVecs.length > 0) {
-    const base = (finalMeta?.entries ?? []).filter(
-      ([k]) => !(is.keyword(k) && k.name === ':arglists')
-    )
-    const entries: [CljValue, CljValue][] = [
-      ...base,
-      [v.keyword(':arglists'), v.vector(arglistVecs)],
-    ]
-    finalMeta = v.map(entries)
-  }
-  return finalMeta
 }
 
 function emitJsGetPropIr(chunk: VmChunk, propName: string, pos: Pos | null): void {
@@ -848,12 +825,24 @@ export function emitNode(node: AstNode, st: EmitState): boolean {
     }
 
     case 'dynamic': {
+      // The runtime is the authority for `binding` errors: malformed shapes
+      // and names that don't statically resolve to Vars throw when the form
+      // EXECUTES on the interpreter. Refuse to compile those so the fallback
+      // path preserves that contract — emitting the resolvable subset would
+      // silently run a form the interpreter rejects.
+      if (!node.wellFormed || node.bindingVars.some((b) => b === null)) {
+        return fail(st, {
+          category: 'unsupported-special-form',
+          detail:
+            'ir-compiler: dynamic binding requires statically resolved vars',
+        })
+      }
       const { chunk } = st
       emit(chunk, Op.PushBindingFrame, node.pos)
       for (let i = 0; i < node.bindingVars.length; i++) {
         if (!emitNode(node.inits[i], st)) return false
-        const sym = node.bindingVars[i].form as CljSymbol
-        const symPos = node.bindingVars[i].pos
+        const sym = node.bindingVars[i]!.form as CljSymbol
+        const symPos = node.bindingVars[i]!.pos
         emit(chunk, Op.PushDynamicBinding, symPos)
         emitOperand(chunk, addConstant(chunk, sym), symPos)
       }
@@ -988,7 +977,7 @@ export function tryCompileVmFromIr(
 }
 
 /** Build a synthetic anonymous-or-named `(fn* ...)` form for one arity. */
-function synthFnStar(
+export function synthFnStar(
   params: CljSymbol[],
   restParam: CljSymbol | null,
   body: CljValue[],

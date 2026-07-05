@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { createSession } from '../session'
 import { is } from '../assertions'
-import type { CljMap, CljValue, CljVector, EvalEvent } from '../types'
+import type {
+  CljMap,
+  CljValue,
+  CljVector,
+  EvalEvent,
+  VmExecutionMode,
+} from '../types'
 import { v } from '../factories'
 
 function entry(map: CljMap, keyName: string): CljValue {
@@ -32,8 +38,11 @@ function expectKeywordName(value: CljValue): string {
   return value.name
 }
 
-function measure(code: string): CljMap {
-  return expectMap(createSession().evaluate(code))
+function measure(code: string, vmExecutionMode?: VmExecutionMode): CljMap {
+  const session = createSession(
+    vmExecutionMode === undefined ? undefined : { vmExecutionMode }
+  )
+  return expectMap(session.evaluate(code))
 }
 
 function stages(result: CljMap): CljMap[] {
@@ -52,7 +61,16 @@ describe('measurement utilities', () => {
 
     expect(entry(result, ':value')).toEqual(v.number(3))
     expect(expectNumber(entry(result, ':elapsed-ms'))).toBeGreaterThanOrEqual(0)
-    expect(expectKeywordName(entry(result, ':path'))).toBe(':vm/top-level')
+    expect(expectKeywordName(entry(result, ':path'))).toBe(':ast/top-level')
+  })
+
+  it('reports AST analyze and walk stages for walker-executed forms', () => {
+    const result = measure('(measure* (+ 1 (* 2 3)))')
+
+    expect(stageNames(result)).toEqual(
+      expect.arrayContaining([':macroexpand', ':ast/analyze', ':ast/walk'])
+    )
+    expect(expectKeywordName(entry(result, ':path'))).toBe(':ast/top-level')
   })
 
   it('evaluates multiple body forms in order and returns the last value', () => {
@@ -68,7 +86,7 @@ describe('measurement utilities', () => {
   })
 
   it('reports VM compile and execute stages for VM-ready forms', () => {
-    const result = measure('(measure* (+ 1 (* 2 3)))')
+    const result = measure('(measure* (+ 1 (* 2 3)))', 'opportunistic')
 
     expect(stageNames(result)).toEqual(
       expect.arrayContaining([':macroexpand', ':vm/compile', ':vm/execute'])
@@ -123,7 +141,7 @@ describe('measurement utilities', () => {
     expect(session.evaluate('(+ 1 2)')).toEqual(v.number(3))
     expect(events).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ path: 'vm:top-level' }),
+        expect.objectContaining({ path: 'ast:top-level' }),
       ])
     )
   })

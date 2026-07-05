@@ -204,7 +204,7 @@ describe('update', () => {
   })
 
   it.each([
-    ['(update {:a 1} :a 42)', '42 is not callable'],
+    ['(update {:a 1} :a 42)', 'f is not callable'],
     ['(update)', 'No matching arity for 0'],
   ])(
     'should throw on invalid update arguments: %s → "%s"',

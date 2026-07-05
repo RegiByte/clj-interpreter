@@ -57,6 +57,7 @@ describe('top-level VM bytecode cache', () => {
   it('reuses cached chunks for identical VM-ready top-level forms', () => {
     const events: EvalEvent[] = []
     const session = createSession({
+      vmExecutionMode: 'opportunistic',
       instrumentation: { onEvent: (event) => events.push(event) },
     })
 
@@ -71,6 +72,7 @@ describe('top-level VM bytecode cache', () => {
   it('misses after semantic namespace mutation changes the namespace version', () => {
     const events: EvalEvent[] = []
     const session = createSession({
+      vmExecutionMode: 'opportunistic',
       instrumentation: { onEvent: (event) => events.push(event) },
     })
 
@@ -88,6 +90,7 @@ describe('top-level VM bytecode cache', () => {
   it('keeps distinct source positions from sharing cached chunks', () => {
     const events: EvalEvent[] = []
     const session = createSession({
+      vmExecutionMode: 'opportunistic',
       instrumentation: { onEvent: (event) => events.push(event) },
     })
 
@@ -104,6 +107,7 @@ describe('top-level VM bytecode cache', () => {
   it('keeps unsupported forms on existing fallback and vm-required paths', () => {
     const events: EvalEvent[] = []
     const opportunistic = createSession({
+      vmExecutionMode: 'opportunistic',
       instrumentation: { onEvent: (event) => events.push(event) },
     })
 
@@ -120,7 +124,7 @@ describe('top-level VM bytecode cache', () => {
       ])
     )
 
-    const required = createSessionFromSnapshot(snapshotSession(createSession()), {
+    const required = createSessionFromSnapshot(snapshotSession(createSession({ vmExecutionMode: 'opportunistic' })), {
       vmExecutionMode: 'vm-required',
     })
     expect(() => required.evaluate('(async 42)')).toThrow(
@@ -129,7 +133,7 @@ describe('top-level VM bytecode cache', () => {
   })
 
   it('preserves source-position diagnostics from cached chunks', () => {
-    const session = createSession()
+    const session = createSession({ vmExecutionMode: 'opportunistic' })
     const source = '\n\n(/ 1 0)'
 
     expect(() => session.evaluate(source)).toThrow('line 3, col 1')
@@ -137,7 +141,7 @@ describe('top-level VM bytecode cache', () => {
   })
 
   it('reports cache hits through measurement while still executing bytecode', () => {
-    const session = createSession()
+    const session = createSession({ vmExecutionMode: 'opportunistic' })
 
     session.evaluate('(measure* (+ 1 2))')
     const measured = expectMap(session.evaluate('(measure* (+ 1 2))'))
@@ -151,6 +155,7 @@ describe('top-level VM bytecode cache', () => {
   it('does not preserve cache entries across snapshots', () => {
     const events: EvalEvent[] = []
     const session = createSession({
+      vmExecutionMode: 'opportunistic',
       instrumentation: { onEvent: (event) => events.push(event) },
     })
 
@@ -161,6 +166,7 @@ describe('top-level VM bytecode cache', () => {
 
     const cloneEvents: EvalEvent[] = []
     const clone = createSessionFromSnapshot(snapshotSession(session), {
+      vmExecutionMode: 'opportunistic',
       instrumentation: { onEvent: (event) => cloneEvents.push(event) },
     })
 

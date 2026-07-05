@@ -5,7 +5,7 @@ import type { CljValue, CljVector } from '../types'
 import { v } from '../factories'
 
 function disassemble(code: string): string[] | null {
-  const result = createSession().evaluate(code)
+  const result = createSession({ vmExecutionMode: 'opportunistic' }).evaluate(code)
   if (is.nil(result)) return null
   if (!is.vector(result)) {
     throw new Error(`expected vector or nil, got ${result.kind}`)
@@ -84,7 +84,7 @@ describe('disassemble*', () => {
   })
 
   it('disassembles bytecode-backed function vars and bare symbols', () => {
-    const session = createSession()
+    const session = createSession({ vmExecutionMode: 'opportunistic' })
 
     session.evaluate('(defn f [x] (+ x 1))')
 
@@ -97,7 +97,7 @@ describe('disassemble*', () => {
   })
 
   it('disassembles every bytecode-backed arity for multi-arity functions', () => {
-    const session = createSession()
+    const session = createSession({ vmExecutionMode: 'opportunistic' })
 
     session.evaluate('(defn multi ([x] (+ x 1)) ([x y] (+ x y)))')
     const result = expectStringVector(session.evaluate('(disassemble* multi)'))
@@ -107,7 +107,7 @@ describe('disassemble*', () => {
   })
 
   it('disassembles bytecode-backed macro vars', () => {
-    const session = createSession()
+    const session = createSession({ vmExecutionMode: 'opportunistic' })
 
     session.evaluate('(defmacro one [] 1)')
     const result = expectStringVector(session.evaluate("(disassemble* #'one)"))
@@ -117,7 +117,7 @@ describe('disassemble*', () => {
   })
 
   it('returns nil for native and non-bytecode values', () => {
-    const session = createSession()
+    const session = createSession({ vmExecutionMode: 'opportunistic' })
 
     session.evaluate('(def not-bytecode 1)')
 

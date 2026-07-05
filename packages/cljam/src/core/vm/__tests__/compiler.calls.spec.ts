@@ -103,13 +103,13 @@ describe('VM call compilation', () => {
     expect(disassembly).toContain('LoadLocal 0')
     expect(disassembly).toContain('Call 1')
     expect(disassembly).not.toContain('Add 1')
-    expect(createSession().evaluate('((fn [] (let* [+ :answer] (+ {:answer 99}))))')).toEqual(
+    expect(createSession({ vmExecutionMode: 'function-body' }).evaluate('((fn [] (let* [+ :answer] (+ {:answer 99}))))')).toEqual(
       v.number(99)
     )
   })
 
   it('dispatches multimethod calls reached through bytecode', () => {
-    const s = createSession()
+    const s = createSession({ vmExecutionMode: 'function-body' })
     s.evaluate('(defmulti choose :type)')
     s.evaluate('(defmethod choose :a [_] :A)')
     const fn = s.evaluate('(fn [x] (choose x))')

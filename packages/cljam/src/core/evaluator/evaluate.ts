@@ -13,17 +13,24 @@ import { valueKeywords } from '../keywords.ts'
 import { getPos } from '../positions'
 import { measureSync } from '../timing'
 import type {
+  CljSymbol,
   CljValue,
   Env,
   EvalEvent,
   EvaluationContext,
   VmCompileResult,
   VmExecutionMode,
+  VmFallbackReason,
 } from '../types'
-import { tryCompileVmFromIr } from '../vm/ir-compiler'
+import { analyzeForm } from '../analyzer'
+import {
+  compileResultForAnalysisErrors,
+  tryCompileVmFromIr,
+} from '../vm/ir-compiler'
 import { assignChunkIds } from '../vm/chunk'
 import { executeChunk } from '../vm/vm'
 import { makeTopLevelVmCacheKey } from '../vm/cache'
+import { containsUnsupportedOp, makeFrame, walkNode } from '../walker'
 import { evaluateMap, evaluateSet, evaluateVector } from './collections'
 import { evaluateList } from './dispatch'
 import { resolveJsDotChainSymbol } from './js-interop'
@@ -33,8 +40,17 @@ export type EvaluationMeasurement = {
   durationMs: number
 }
 
+/**
+ * The engine a session runs on when the caller doesn't pick one: the AST
+ * walker (Phase 2). Resolved into every context at construction
+ * (`createEvaluationContext`) and at the session facade, so the direct
+ * `ctx.vmExecutionMode === 'ast'` reads in apply.ts/special-forms.ts always
+ * see a concrete mode.
+ */
+export const DEFAULT_VM_EXECUTION_MODE: VmExecutionMode = 'ast'
+
 function vmMode(ctx: EvaluationContext): VmExecutionMode {
-  return ctx.vmExecutionMode ?? 'opportunistic'
+  return ctx.vmExecutionMode ?? DEFAULT_VM_EXECUTION_MODE
 }
 
 function formKind(expr: CljValue): string {
@@ -197,6 +213,104 @@ function evaluateTopLevelWithVm(
   return null
 }
 
+/**
+ * Top-level AST-walker attempt (mode 'ast') — the walker analogue of
+ * `evaluateTopLevelWithVm`, in the same additive-path shape: analyze, classify
+ * errors (ported-malformed = fatal throw, the analyzer is the authority),
+ * pre-scan the whole tree against the walker's allowlist, and only then walk.
+ * Returns null to fall back to the form-walker for the WHOLE form — never
+ * mid-form, so a coverage gap can't cause partial side effects.
+ */
+function evaluateTopLevelWithAst(
+  expr: CljValue,
+  env: Env,
+  ctx: EvaluationContext
+): CljValue | null {
+  let analysis: ReturnType<typeof analyzeForm>
+  try {
+    const measuredAnalysis =
+      ctx.measurement === undefined
+        ? null
+        : measureSync(() => analyzeForm(expr, env, ctx))
+    analysis = measuredAnalysis?.value ?? analyzeForm(expr, env, ctx)
+    if (measuredAnalysis !== null) {
+      recordMeasurementStage(ctx, ':ast/analyze', measuredAnalysis.elapsedMs)
+    }
+  } catch (error) {
+    const reason: VmFallbackReason = {
+      category: 'compile-error',
+      detail: error instanceof Error ? error.message : String(error),
+    }
+    emitEvalEvent(ctx, {
+      path: 'fallback',
+      reason,
+      formKind: formKind(expr),
+      ast: expr,
+    })
+    recordMeasurementStage(ctx, ':fallback', 0, { path: 'fallback', reason })
+    return null
+  }
+
+  if (analysis.errors.length > 0) {
+    const result = compileResultForAnalysisErrors(analysis.errors)
+    if (result.ok) return null
+    if (result.fatal === true) {
+      emitEvalEvent(ctx, {
+        path: 'analyzer-error',
+        reason: result.reason,
+        formKind: formKind(expr),
+        ast: expr,
+      })
+      throwFatalVmCompileError(result, expr, env)
+    }
+    emitEvalEvent(ctx, {
+      path: 'fallback',
+      reason: result.reason,
+      formKind: formKind(expr),
+      ast: expr,
+    })
+    recordMeasurementStage(ctx, ':fallback', 0, {
+      path: 'fallback',
+      reason: result.reason,
+    })
+    return null
+  }
+
+  const unsupportedOp = containsUnsupportedOp(analysis.node)
+  if (unsupportedOp !== null) {
+    const reason: VmFallbackReason = {
+      category: 'unsupported-special-form',
+      detail: `ast-walker: no walker for op '${unsupportedOp}'`,
+    }
+    emitEvalEvent(ctx, {
+      path: 'fallback',
+      reason,
+      formKind: formKind(expr),
+      ast: expr,
+    })
+    recordMeasurementStage(ctx, ':fallback', 0, { path: 'fallback', reason })
+    return null
+  }
+
+  emitEvalEvent(ctx, {
+    path: 'ast:top-level',
+    formKind: formKind(expr),
+    ast: expr,
+  })
+  const frame = makeFrame(analysis.namedSlotCount)
+  if (ctx.measurement === undefined) {
+    return walkNode(analysis.node, frame, env, ctx)
+  }
+  ctx.measurement.setPath('ast:top-level')
+  const { value, elapsedMs } = measureSync(() =>
+    walkNode(analysis.node, frame, env, ctx)
+  )
+  recordMeasurementStage(ctx, ':ast/walk', elapsedMs, {
+    path: 'ast:top-level',
+  })
+  return value
+}
+
 export function evaluateWithContext(
   expr: CljValue,
   env: Env,
@@ -209,11 +323,77 @@ export function evaluateWithContext(
     if (depth === 0) {
       const vmResult = evaluateTopLevelWithVm(expr, env, ctx, mode)
       if (vmResult !== null) return vmResult
+      if (mode === 'ast') {
+        const astResult = evaluateTopLevelWithAst(expr, env, ctx)
+        if (astResult !== null) return astResult
+      }
     }
 
     return evaluateWithContextInner(expr, env, ctx, depth === 0)
   } finally {
     ctx.evaluationDepth = depth
+  }
+}
+
+/**
+ * The interpreter's symbol resolution: qualified names via :as aliases or full
+ * namespace names (with js dot-chain segments), unqualified names via the
+ * Env-chain `lookup`. Exposed as `ctx.evaluateSymbol` so the AST walker's
+ * `:var`/`:js-var` ops resolve Vars through the EXACT same logic without
+ * paying the full `evaluateWithContext` round-trip per reference (depth
+ * bookkeeping, mode dispatch, kind switch).
+ */
+export function evaluateSymbolWithContext(
+  expr: CljSymbol,
+  env: Env,
+  ctx: EvaluationContext
+): CljValue {
+  const slashIdx = expr.name.indexOf('/')
+  if (slashIdx > 0 && slashIdx < expr.name.length - 1) {
+    const alias = expr.name.slice(0, slashIdx)
+    const sym = expr.name.slice(slashIdx + 1)
+    const nsEnv = getNamespaceEnv(env)
+    // Resolve alias: local :as alias first, then full namespace name
+    const targetNs =
+      nsEnv.ns?.aliases.get(alias) ?? ctx.resolveNs(alias) ?? null
+    if (!targetNs) {
+      throw new EvaluationError(`No such namespace or alias: ${alias}`, {
+        symbol: expr.name,
+        env,
+      }, getPos(expr))
+    }
+    if (sym.includes('.')) {
+      const segments = sym.split('.')
+      const root = targetNs.vars.get(segments[0])
+      if (root === undefined) {
+        throw new EvaluationError(`Symbol ${alias}/${segments[0]} not found`, {
+          symbol: expr.name,
+          env,
+        }, getPos(expr))
+      }
+      return resolveJsDotChainSymbol(
+        derefValue(root),
+        expr,
+        segments.slice(1)
+      )
+    }
+    const v = targetNs.vars.get(sym)
+    if (v === undefined) {
+      throw new EvaluationError(`Symbol ${expr.name} not found`, {
+        symbol: expr.name,
+        env,
+      }, getPos(expr))
+    }
+    return derefValue(v)
+  }
+  try {
+    return lookup(expr.name, env)
+  } catch (e) {
+    if (e instanceof EvaluationError && !e.pos) {
+      const pos = getPos(expr)
+      if (pos) e.pos = pos
+    }
+    throw e
   }
 }
 
@@ -248,55 +428,8 @@ function evaluateWithContextInner(
     case valueKeywords.cons:
     case valueKeywords.namespace:
       return expr
-    case valueKeywords.symbol: {
-      const slashIdx = expr.name.indexOf('/')
-      if (slashIdx > 0 && slashIdx < expr.name.length - 1) {
-        const alias = expr.name.slice(0, slashIdx)
-        const sym = expr.name.slice(slashIdx + 1)
-        const nsEnv = getNamespaceEnv(env)
-        // Resolve alias: local :as alias first, then full namespace name
-        const targetNs =
-          nsEnv.ns?.aliases.get(alias) ?? ctx.resolveNs(alias) ?? null
-        if (!targetNs) {
-          throw new EvaluationError(`No such namespace or alias: ${alias}`, {
-            symbol: expr.name,
-            env,
-          }, getPos(expr))
-        }
-        if (sym.includes('.')) {
-          const segments = sym.split('.')
-          const root = targetNs.vars.get(segments[0])
-          if (root === undefined) {
-            throw new EvaluationError(`Symbol ${alias}/${segments[0]} not found`, {
-              symbol: expr.name,
-              env,
-            }, getPos(expr))
-          }
-          return resolveJsDotChainSymbol(
-            derefValue(root),
-            expr,
-            segments.slice(1)
-          )
-        }
-        const v = targetNs.vars.get(sym)
-        if (v === undefined) {
-          throw new EvaluationError(`Symbol ${expr.name} not found`, {
-            symbol: expr.name,
-            env,
-          }, getPos(expr))
-        }
-        return derefValue(v)
-      }
-      try {
-        return lookup(expr.name, env)
-      } catch (e) {
-        if (e instanceof EvaluationError && !e.pos) {
-          const pos = getPos(expr)
-          if (pos) e.pos = pos
-        }
-        throw e
-      }
-    }
+    case valueKeywords.symbol:
+      return evaluateSymbolWithContext(expr, env, ctx)
     case valueKeywords.vector:
       return evaluateVector(expr, env, ctx)
     case valueKeywords.map:

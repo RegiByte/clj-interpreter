@@ -29,7 +29,7 @@ describe('VM binding compilation', () => {
   })
 
   it('stores bytecodeBody for binding bodies and returns the bound value', () => {
-    const s = createSession()
+    const s = createSession({ vmExecutionMode: 'function-body' })
     s.evaluate('(def ^:dynamic *x* :root)')
     const fn = s.evaluate('(fn [] (binding [*x* :bound] *x*))')
 
@@ -43,7 +43,7 @@ describe('VM binding compilation', () => {
   })
 
   it('restores root value after normal completion', () => {
-    const s = createSession()
+    const s = createSession({ vmExecutionMode: 'function-body' })
     s.evaluate('(def ^:dynamic *x* :root)')
 
     expect(s.evaluate('((fn [] (binding [*x* :bound] *x*)))')).toEqual(
@@ -53,7 +53,7 @@ describe('VM binding compilation', () => {
   })
 
   it('restores dynamic binding when the body throws', () => {
-    const s = createSession()
+    const s = createSession({ vmExecutionMode: 'function-body' })
     s.evaluate('(def ^:dynamic *x* :root)')
 
     expect(
@@ -65,7 +65,7 @@ describe('VM binding compilation', () => {
   })
 
   it('restores earlier pushes when later RHS evaluation fails', () => {
-    const s = createSession()
+    const s = createSession({ vmExecutionMode: 'function-body' })
     s.evaluate('(def ^:dynamic *x* :root)')
     s.evaluate('(def ^:dynamic *y* :root-y)')
 
@@ -78,7 +78,7 @@ describe('VM binding compilation', () => {
   })
 
   it('restores earlier pushes when later var validation fails', () => {
-    const s = createSession()
+    const s = createSession({ vmExecutionMode: 'function-body' })
     s.evaluate('(def ^:dynamic *x* :root)')
     s.evaluate('(def *not-dynamic* :root-not-dynamic)')
 
@@ -93,7 +93,7 @@ describe('VM binding compilation', () => {
   })
 
   it('restores nested bindings in LIFO order', () => {
-    const s = createSession()
+    const s = createSession({ vmExecutionMode: 'function-body' })
     s.evaluate('(def ^:dynamic *x* :root)')
 
     expect(
@@ -108,5 +108,18 @@ describe('VM binding compilation', () => {
     expect(compileFnBodyForTest([], ['(binding [:not-symbol 1] 2)'])).toBeNull()
     expect(compileFnBodyForTest([], ['(binding [*x*] 2)'])).toBeNull()
     expect(compileFnBodyForTest([], ['(binding :not-a-vector 2)'])).toBeNull()
+  })
+
+  it('falls back when a binding name resolves to a local, matching the interpreter throw', () => {
+    // analyzeDynamic keeps every init but only Var-resolved names in
+    // bindingVars, so a name that resolves to a LOCAL made the IR emitter
+    // pair *x* with the local's init (silently returning 5 where the
+    // interpreter throws). The dynamic case must refuse to compile instead.
+    const s = createSession({ vmExecutionMode: 'function-body' })
+    s.evaluate('(def ^:dynamic *x* :root)')
+    expect(() =>
+      s.evaluate('((fn [shadow] (binding [shadow 5 *x* 2] *x*)) 0)')
+    ).toThrow("No var found for symbol 'shadow' in binding form")
+    expect(s.evaluate('*x*')).toEqual(v.keyword(':root'))
   })
 })

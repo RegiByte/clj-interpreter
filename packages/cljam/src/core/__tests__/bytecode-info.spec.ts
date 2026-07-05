@@ -51,7 +51,7 @@ function expectSymbolName(value: CljValue): string {
 }
 
 function info(code: string): CljMap {
-  const session = createSession()
+  const session = createSession({ vmExecutionMode: 'opportunistic' })
   session.evaluate("(require '[cljam.vm :as vm])")
   return expectMap(session.evaluate(code))
 }
@@ -90,7 +90,7 @@ function findItem(items: CljVector, name: string): CljMap {
 
 describe('cljam.vm bytecode info', () => {
   it('lazy-loads the cljam.vm namespace', () => {
-    const session = createSession()
+    const session = createSession({ vmExecutionMode: 'opportunistic' })
 
     session.evaluate("(require '[cljam.vm :as vm])")
 
@@ -129,7 +129,7 @@ describe('cljam.vm bytecode info', () => {
   })
 
   it('inspects user functions through bare symbols and var forms', () => {
-    const session = createSession()
+    const session = createSession({ vmExecutionMode: 'opportunistic' })
     session.evaluate("(require '[cljam.vm :as vm])")
     session.evaluate('(defn f [x] (cons x (list 1)))')
 
@@ -144,7 +144,7 @@ describe('cljam.vm bytecode info', () => {
   })
 
   it('includes every bytecode-backed arity for multi-arity functions', () => {
-    const session = createSession()
+    const session = createSession({ vmExecutionMode: 'opportunistic' })
     session.evaluate("(require '[cljam.vm :as vm])")
     session.evaluate('(defn multi ([x] (+ x 1)) ([x y] (+ x y)))')
 
@@ -157,7 +157,7 @@ describe('cljam.vm bytecode info', () => {
   })
 
   it('inspects bytecode-backed macro vars', () => {
-    const session = createSession()
+    const session = createSession({ vmExecutionMode: 'opportunistic' })
     session.evaluate("(require '[cljam.vm :as vm])")
     session.evaluate('(defmacro one [] 1)')
 
@@ -170,7 +170,7 @@ describe('cljam.vm bytecode info', () => {
   })
 
   it('returns nil for unsupported, native, and non-bytecode targets', () => {
-    const session = createSession()
+    const session = createSession({ vmExecutionMode: 'opportunistic' })
     session.evaluate("(require '[cljam.vm :as vm])")
     session.evaluate('(def not-bytecode 1)')
 
@@ -182,7 +182,7 @@ describe('cljam.vm bytecode info', () => {
 
 describe('cljam.vm bytecode stats', () => {
   it('returns opcode sequences and frequencies', () => {
-    const session = createSession()
+    const session = createSession({ vmExecutionMode: 'opportunistic' })
     session.evaluate("(require '[cljam.vm :as vm])")
     session.evaluate('(def info (vm/bytecode-info* (+ 1 (* 2 3))))')
 
@@ -199,7 +199,7 @@ describe('cljam.vm bytecode stats', () => {
   })
 
   it('counts opcode ngrams per chunk without bridging chunk boundaries', () => {
-    const session = createSession()
+    const session = createSession({ vmExecutionMode: 'opportunistic' })
     session.evaluate("(require '[cljam.vm :as vm])")
     session.evaluate('(def info (vm/bytecode-info* (fn [x] (+ x 1))))')
 
@@ -214,7 +214,7 @@ describe('cljam.vm bytecode stats', () => {
   })
 
   it('counts conservative direct invocation hints', () => {
-    const session = createSession()
+    const session = createSession({ vmExecutionMode: 'opportunistic' })
     session.evaluate("(require '[cljam.vm :as vm])")
     session.evaluate('(defn f [x] x)')
 
@@ -229,7 +229,7 @@ describe('cljam.vm bytecode stats', () => {
 
 describe('cljam.vm bytecode census', () => {
   it('summarizes already-resolved vars and values for dynamic namespace walks', () => {
-    const session = createSession()
+    const session = createSession({ vmExecutionMode: 'opportunistic' })
     session.evaluate("(require '[cljam.vm :as vm])")
     session.evaluate('(defn f ([x] x) ([x y] (+ x y)))')
     session.evaluate('(defmacro m [x] x)')
@@ -267,7 +267,7 @@ describe('cljam.vm bytecode census', () => {
   })
 
   it('returns public-only namespace census data by default', () => {
-    const session = createSession()
+    const session = createSession({ vmExecutionMode: 'opportunistic' })
     session.evaluate("(require '[cljam.vm :as vm])")
     session.evaluate(
       [
@@ -293,7 +293,7 @@ describe('cljam.vm bytecode census', () => {
   })
 
   it('can include private interned vars on request', () => {
-    const session = createSession()
+    const session = createSession({ vmExecutionMode: 'opportunistic' })
     session.evaluate("(require '[cljam.vm :as vm])")
     session.evaluate(
       [
@@ -314,7 +314,7 @@ describe('cljam.vm bytecode census', () => {
   })
 
   it('aggregates namespace totals and ngrams without embedding full instruction listings', () => {
-    const session = createSession()
+    const session = createSession({ vmExecutionMode: 'opportunistic' })
     session.evaluate("(require '[cljam.vm :as vm])")
     session.evaluate(
       [
@@ -343,7 +343,7 @@ describe('cljam.vm bytecode census', () => {
   })
 
   it('builds corpus census data, requiring unloaded sync namespaces first', () => {
-    const session = createSession()
+    const session = createSession({ vmExecutionMode: 'opportunistic' })
     session.evaluate("(require '[cljam.vm :as vm])")
     session.evaluate('(ns census.local) (defn local-fn [x] (str x))')
 
@@ -361,7 +361,7 @@ describe('cljam.vm bytecode census', () => {
   })
 
   it('returns top frequency helpers for namespace or corpus census maps', () => {
-    const session = createSession()
+    const session = createSession({ vmExecutionMode: 'opportunistic' })
     session.evaluate("(require '[cljam.vm :as vm])")
     session.evaluate('(ns census.top) (defn f [x] (list (inc x)))')
     session.evaluate("(def census (cljam.vm/namespace-census 'census.top {:ngrams [2]}))")

@@ -159,6 +159,7 @@ describe('runtime identity and namespace versions', () => {
   it('assigns ids to VM-created inline closures and chunks', () => {
     const events: Array<Record<string, unknown> | undefined> = []
     const session = createSession({
+      vmExecutionMode: 'opportunistic',
       instrumentation: {
         onEvent: (event) => events.push(event.details),
       },

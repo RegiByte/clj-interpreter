@@ -10,7 +10,7 @@ function reasonKey(reason: VmFallbackReason): string {
 
 describe('VM clojure.core bytecode coverage reasons', () => {
   it('bytecode-compiles every clojure.core function arity', () => {
-    const session = createSession()
+    const session = createSession({ vmExecutionMode: 'function-body' })
     const core = session.registry.get('clojure.core')
     const groups = new Map<string, number>()
     const rows: Array<{ name: string; reason: VmFallbackReason }> = []

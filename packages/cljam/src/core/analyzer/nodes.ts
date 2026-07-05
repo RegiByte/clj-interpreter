@@ -218,6 +218,14 @@ export interface FnMethodNode extends NodeBase {
   fixedArity: number
   body: DoNode
   /**
+   * Total named slots this arity's frame needs (params + rest + self + every
+   * let/loop/catch binding in the body). Captured from the per-arity slot
+   * counter after body analysis. This is the analyzer's own well-defined
+   * quantity — the VM's `localCount` is a superset (emit-time scratch slots)
+   * and stays VM-computed.
+   */
+  namedSlotCount: number
+  /**
    * The original (pre-analysis) body forms, exactly as the param vector was
    * followed in source. Retained because the runtime `Arity.body` — used by the
    * interpreter when `vmExecutionMode === 'off'` — needs un-analyzed forms, and
@@ -285,10 +293,23 @@ export interface BindingNode extends NodeBase {
 
 export interface DynamicNode extends NodeBase {
   op: 'dynamic'
-  /** The dynamic vars being rebound, in order. */
-  bindingVars: VarNode[]
+  /**
+   * The dynamic vars being rebound, STRICTLY PARALLEL to `inits` — an entry
+   * is null when the binding name is not a symbol that statically resolves
+   * to a Var. The runtime (not the analyzer) is the authority for those
+   * errors, so consumers that need resolved Vars (the VM) must refuse to
+   * compile when any entry is null instead of skipping it.
+   */
+  bindingVars: (VarNode | null)[]
   /** Init expressions, parallel to bindingVars. */
   inits: AstNode[]
+  /**
+   * False when the binding form is structurally malformed (non-vector
+   * bindings or an odd number of entries). The interpreter throws when such
+   * a form EXECUTES; compilers must fall back rather than silently compile
+   * a partial form.
+   */
+  wellFormed: boolean
   body: DoNode
 }
 

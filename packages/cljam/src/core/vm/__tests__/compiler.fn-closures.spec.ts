@@ -21,7 +21,7 @@ describe('VM function closure and upvalue compilation', () => {
 
   it('compiles and executes calls to nested non-capturing fn*', () => {
     expect(
-      createSession().evaluate('((fn [x] ((fn* [y] (+ y 1)) x)) 41)')
+      createSession({ vmExecutionMode: 'function-body' }).evaluate('((fn [x] ((fn* [y] (+ y 1)) x)) 41)')
     ).toEqual(v.number(42))
   })
 
@@ -37,7 +37,7 @@ describe('VM function closure and upvalue compilation', () => {
     expect(chunk.innerFunctions).toHaveLength(1)
     expect(chunk.innerFunctions[0].arities).toHaveLength(2)
     expect(
-      createSession().evaluate(
+      createSession({ vmExecutionMode: 'function-body' }).evaluate(
         '((fn [argc] (let* [f (fn* ([x] (+ x 1)) ([x y] (+ x y)))] (if (= argc 1) (f 41) (f 20 22)))) 2)'
       )
     ).toEqual(v.number(42))
@@ -70,19 +70,19 @@ describe('VM function closure and upvalue compilation', () => {
 
   it('executes nested fn* capturing an outer local', () => {
     expect(
-      createSession().evaluate('((fn [] (let* [x 10] ((fn* [] x)))))')
+      createSession({ vmExecutionMode: 'function-body' }).evaluate('((fn [] (let* [x 10] ((fn* [] x)))))')
     ).toEqual(v.number(10))
   })
 
   it('keeps returned closure upvalues alive after the defining frame returns', () => {
     expect(
-      createSession().evaluate('((fn [] ((let* [x 10] (fn* [] x)))))')
+      createSession({ vmExecutionMode: 'function-body' }).evaluate('((fn [] ((let* [x 10] (fn* [] x)))))')
     ).toEqual(v.number(10))
   })
 
   it('captures parent params through make-adder style closures', () => {
     expect(
-      createSession().evaluate(
+      createSession({ vmExecutionMode: 'function-body' }).evaluate(
         '((fn [] (let* [make-adder (fn* [x] (fn* [y] (+ x y))) add10 (make-adder 10)] (add10 5))))'
       )
     ).toEqual(v.number(15))
@@ -90,7 +90,7 @@ describe('VM function closure and upvalue compilation', () => {
 
   it('preserves lexical shadowing for captured locals', () => {
     expect(
-      createSession().evaluate(
+      createSession({ vmExecutionMode: 'function-body' }).evaluate(
         '((fn [] (let* [x 1 f (fn* [] x)] (let* [x 2] (f)))))'
       )
     ).toEqual(v.number(1))
@@ -98,7 +98,7 @@ describe('VM function closure and upvalue compilation', () => {
 
   it('relays upvalues through multi-level closure chains', () => {
     expect(
-      createSession().evaluate(
+      createSession({ vmExecutionMode: 'function-body' }).evaluate(
         '((fn [] (let* [x 7 f (((fn* [] (fn* [] (fn* [] x)))))] (f))))'
       )
     ).toEqual(v.number(7))
@@ -106,7 +106,7 @@ describe('VM function closure and upvalue compilation', () => {
 
   it('shares captured upvalues across multi-arity nested fn*', () => {
     expect(
-      createSession().evaluate(
+      createSession({ vmExecutionMode: 'function-body' }).evaluate(
         '((fn [] (let* [x 10 f (fn* ([a] (+ x a)) ([a b] (+ x a b)))] [(f 1) (f 1 2)])))'
       )
     ).toEqual(v.vector([v.number(11), v.number(13)]))
@@ -132,13 +132,13 @@ describe('VM function closure and upvalue compilation', () => {
     if (fn.kind !== 'function') return
 
     expect(fn.arities[0].bytecodeBody).toBeUndefined()
-    expect(createSession().evaluate('((let* [x 10] (fn [] x)))')).toEqual(
+    expect(createSession({ vmExecutionMode: 'function-body' }).evaluate('((let* [x 10] (fn [] x)))')).toEqual(
       v.number(10)
     )
   })
 
   it('executes a nested fn* that captures loop-local slots', () => {
-    const fn = createSession().evaluate(
+    const fn = createSession({ vmExecutionMode: 'function-body' }).evaluate(
       '(fn [] (loop* [i 0] (if (= i 1) (let* [f (fn* [] i)] (f)) (recur (+ i 1)))))'
     )
 
@@ -147,7 +147,7 @@ describe('VM function closure and upvalue compilation', () => {
 
     expect(fn.arities[0].bytecodeBody).toBeDefined()
     expect(
-      createSession().evaluate(
+      createSession({ vmExecutionMode: 'function-body' }).evaluate(
         '((fn [] (loop* [i 0] (if (= i 1) (let* [f (fn* [] i)] (f)) (recur (+ i 1))))))'
       )
     ).toEqual(v.number(1))
@@ -155,7 +155,7 @@ describe('VM function closure and upvalue compilation', () => {
 
   it('closes captured loop locals before recur rewrites the slots', () => {
     expect(
-      createSession().evaluate(
+      createSession({ vmExecutionMode: 'function-body' }).evaluate(
         '((fn [] (let* [fns (loop* [i 0 fns []] (if (= i 3) fns (recur (+ i 1) (conj fns (fn* [] i))))) f0 (nth fns 0) f1 (nth fns 1) f2 (nth fns 2)] [(f0) (f1) (f2)])))'
       )
     ).toEqual(v.vector([v.number(0), v.number(1), v.number(2)]))
@@ -163,7 +163,7 @@ describe('VM function closure and upvalue compilation', () => {
 
   it('closes multiple captured loop locals together before recur', () => {
     expect(
-      createSession().evaluate(
+      createSession({ vmExecutionMode: 'function-body' }).evaluate(
         '((fn [] (let* [fns (loop* [i 0 j 10 fns []] (if (= i 2) fns (recur (+ i 1) (+ j 10) (conj fns (fn* [] [i j]))))) f0 (nth fns 0) f1 (nth fns 1)] [(f0) (f1)])))'
       )
     ).toEqual(

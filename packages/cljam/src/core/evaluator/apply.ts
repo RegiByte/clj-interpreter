@@ -14,6 +14,7 @@ import type {
   EvaluationContext,
 } from '../types'
 import { executeChunk } from '../vm/vm'
+import { makeFrame, walkNode } from '../walker'
 import {
   bindParams,
   RecurSignal,
@@ -38,6 +39,36 @@ export function applyFunctionWithContext(
   }
   if (fn.kind === valueKeywords.function) {
     const arity = resolveArity(fn.arities, args.length)
+
+    // AST-walker path (mode 'ast'): the parallel of the bytecode branch below.
+    // Frame layout matches the analyzer's slot plan: args at 0..n-1 (variadic
+    // rest packed at n), self after params, everything else nil until written.
+    if (arity.astMethod && ctx.vmExecutionMode === 'ast') {
+      const method = arity.astMethod
+      ctx.instrumentation?.onEvent({
+        path: 'ast:function-body',
+        mode: ctx.vmExecutionMode,
+        formKind: 'fn*',
+        details: { functionName: fn.name ?? null },
+      })
+      const frame = makeFrame(arity.astSlotCount ?? 0)
+      frame.upvalues = arity.astUpvalues ?? []
+      let currentArgs = args
+      while (true) {
+        const slotArgs = slotValuesForArity(arity, currentArgs)
+        for (let i = 0; i < slotArgs.length; i++) frame.slots[i] = slotArgs[i]
+        if (method.self !== null) frame.slots[method.self.slot] = fn
+        try {
+          return walkNode(method.body, frame, fn.env, ctx)
+        } catch (e) {
+          if (e instanceof RecurSignal) {
+            currentArgs = e.args
+            continue
+          }
+          throw e
+        }
+      }
+    }
 
     if (arity.bytecodeBody && ctx.vmExecutionMode !== 'off') {
       const chunk = arity.bytecodeBody
@@ -101,6 +132,25 @@ export function applyMacroWithContext(
   ctx: EvaluationContext
 ): CljValue {
   const arity = resolveArity(macro.arities, rawArgs.length)
+
+  // AST-walker path (mode 'ast'): parallel of the fn astMethod branch, minus
+  // the RecurSignal loop — the interpreter's macro path has none either
+  // (a fn-level recur in a macro body propagates out on both paths).
+  if (arity.astMethod && ctx.vmExecutionMode === 'ast') {
+    const method = arity.astMethod
+    ctx.instrumentation?.onEvent({
+      path: 'ast:macro-body',
+      mode: ctx.vmExecutionMode,
+      formKind: 'defmacro',
+      details: { macroName: macro.name ?? null },
+    })
+    const frame = makeFrame(arity.astSlotCount ?? 0)
+    frame.upvalues = arity.astUpvalues ?? []
+    const slotArgs = slotValuesForArity(arity, rawArgs)
+    for (let i = 0; i < slotArgs.length; i++) frame.slots[i] = slotArgs[i]
+    if (method.self !== null) frame.slots[method.self.slot] = macro
+    return walkNode(method.body, frame, macro.env, ctx)
+  }
 
   if (arity.bytecodeBody && ctx.vmExecutionMode !== 'off') {
     const chunk = arity.bytecodeBody

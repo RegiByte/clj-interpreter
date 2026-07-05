@@ -82,6 +82,37 @@ export function mergeDocIntoMeta(
   return v.map([...existing, docEntry])
 }
 
+/**
+ * Builds the {:doc "..." :arglists [...]} meta for a defmacro name symbol from
+ * the raw arity forms (param vectors read before any evaluation). Shared by
+ * the interpreter (`evaluateDefmacro`), the VM emitter (`Op.DefMacro`), and
+ * the AST walker so the three defmacro paths cannot drift.
+ */
+export function withDefmacroMeta(
+  baseMeta: CljMap | undefined,
+  docstring: string | undefined,
+  arityForms: CljValue[]
+): CljMap | undefined {
+  let finalMeta = docstring ? mergeDocIntoMeta(baseMeta, docstring) : baseMeta
+  const arglistVecs: CljValue[] = is.vector(arityForms[0])
+    ? [arityForms[0]]
+    : arityForms
+        .filter(is.list)
+        .map((form) => form.value[0])
+        .filter(is.vector)
+  if (arglistVecs.length > 0) {
+    const base = (finalMeta?.entries ?? []).filter(
+      ([k]) => !(is.keyword(k) && k.name === ':arglists')
+    )
+    const entries: [CljValue, CljValue][] = [
+      ...base,
+      [v.keyword(':arglists'), v.vector(arglistVecs)],
+    ]
+    finalMeta = v.map(entries)
+  }
+  return finalMeta
+}
+
 function propagateDocToFunction(value: CljValue, meta: CljMap | undefined) {
   if (!meta || !is.function(value)) return
 

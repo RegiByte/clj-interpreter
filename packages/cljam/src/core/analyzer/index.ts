@@ -28,6 +28,13 @@ import { analyze } from './resolve'
 export type AnalyzeResult = {
   node: AstNode
   errors: AnalysisError[]
+  /**
+   * Total named slots the top-level form's frame needs (top-level let/loop/catch
+   * bindings — fn bodies have their own per-arity `namedSlotCount`). Read from
+   * the root slot counter after analysis; consumed by the AST walker's
+   * top-level frame.
+   */
+  namedSlotCount: number
 }
 
 export function analyzeForm(
@@ -43,7 +50,7 @@ export function analyzeForm(
   const st: AnalyzeState = { cljEnv, ctx, errors: [] }
   const node = analyze(form, env, st)
   markContext(node, st.errors, context)
-  return { node, errors: st.errors }
+  return { node, errors: st.errors, namedSlotCount: env.slots.next }
 }
 
 /** Human-readable line view (the `analyze*` surface). Errors are appended. */

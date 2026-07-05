@@ -370,13 +370,13 @@ describe('VM loop and recur integration', () => {
       v.number(1),
     ],
   ])('evaluates loop* function body with %s', (_label, code, expected) => {
-    expect(createSession().evaluate(code)).toEqual(expected)
+    expect(createSession({ vmExecutionMode: 'function-body' }).evaluate(code)).toEqual(expected)
   })
 
   it('evaluates loop arithmetic through intrinsic bytecode shape', () => {
     const code =
       '((fn [n] (loop* [i 0 acc 0] (if (= i n) acc (recur (+ i 1) (+ acc i))))) 5)'
-    const fn = createSession().evaluate(
+    const fn = createSession({ vmExecutionMode: 'function-body' }).evaluate(
       '(fn [n] (loop* [i 0 acc 0] (if (= i n) acc (recur (+ i 1) (+ acc i)))))'
     )
 
@@ -390,11 +390,11 @@ describe('VM loop and recur integration', () => {
     const disassembly = disassembleChunk(bytecodeBody)
     expect(disassembly).toContain('Eq 2')
     expect(disassembly).toContain('Add 2')
-    expect(createSession().evaluate(code)).toEqual(v.number(10))
+    expect(createSession({ vmExecutionMode: 'function-body' }).evaluate(code)).toEqual(v.number(10))
   })
 
   it('evaluates function-level recur through bytecodeBody', () => {
-    const s = createSession()
+    const s = createSession({ vmExecutionMode: 'function-body' })
     const fn = s.evaluate(
       '(fn [n acc] (if (= n 0) acc (recur (- n 1) (+ acc n))))'
     )
@@ -411,7 +411,7 @@ describe('VM loop and recur integration', () => {
   })
 
   it('runs function-level recur past the VM frame limit without pushing frames', () => {
-    const s = createSession()
+    const s = createSession({ vmExecutionMode: 'function-body' })
     s.evaluate('(def down (fn [n] (if (= n 0) n (recur (- n 1)))))')
 
     expect(s.evaluate('(down 10005)')).toEqual(v.number(0))
@@ -420,7 +420,7 @@ describe('VM loop and recur integration', () => {
   it('raises analyzer-owned function-level recur arity mismatch', () => {
     let thrown: unknown
     try {
-      createSession().evaluate('(fn [n] (recur n n))')
+      createSession({ vmExecutionMode: 'function-body' }).evaluate('(fn [n] (recur n n))')
     } catch (error) {
       thrown = error
     }
@@ -435,7 +435,7 @@ describe('VM loop and recur integration', () => {
   it('raises analyzer-owned too few variadic recur args', () => {
     let thrown: unknown
     try {
-      createSession().evaluate('(fn [x & more] (recur))')
+      createSession({ vmExecutionMode: 'function-body' }).evaluate('(fn [x & more] (recur))')
     } catch (error) {
       thrown = error
     }
@@ -450,7 +450,7 @@ describe('VM loop and recur integration', () => {
   it('raises analyzer-owned loop* binding-shape errors', () => {
     let thrown: unknown
     try {
-      createSession().evaluate('(fn [] (loop* [[a b] [1 2]] a))')
+      createSession({ vmExecutionMode: 'function-body' }).evaluate('(fn [] (loop* [[a b] [1 2]] a))')
     } catch (error) {
       thrown = error
     }
@@ -480,7 +480,7 @@ describe('VM loop and recur integration', () => {
       },
     })
     expect(() =>
-      createSession().evaluate(
+      createSession({ vmExecutionMode: 'function-body' }).evaluate(
         '(fn [] (loop* [i 0] (+ 1 (recur (+ i 1)))))'
       )
     ).toThrow('Can only recur from tail position')
@@ -488,7 +488,7 @@ describe('VM loop and recur integration', () => {
 
   it('throws like the interpreter for loop* recur arity mismatch at runtime fallback', () => {
     expect(() =>
-      createSession().evaluate(
+      createSession({ vmExecutionMode: 'function-body' }).evaluate(
         '((fn [] (loop* [i 0 acc 0] (recur (+ i 1)))))'
       )
     ).toThrow('recur expects 2 arguments but got 1')

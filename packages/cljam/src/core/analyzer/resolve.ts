@@ -1102,6 +1102,7 @@ function analyzeFnMethod(
     variadic: arity.restParam !== null,
     fixedArity: arity.params.length,
     body,
+    namedSlotCount: recurEnv.slots.next,
     bodyForms: arity.body,
   }
 }
@@ -1384,15 +1385,24 @@ function analyzeDynamic(
   orig: CljValue
 ): AstNode {
   const bindingVec = list.value[1]
-  const pairs = is.vector(bindingVec) ? bindingVec.value : ([] as CljValue[])
-  const bindingVars: VarNode[] = []
+  const isVec = is.vector(bindingVec)
+  const pairs = isVec ? bindingVec.value : ([] as CljValue[])
+  // Deliberately lenient: `binding` errors (malformed shape, non-symbol
+  // names, names that don't resolve to dynamic Vars) are RUNTIME errors —
+  // they surface only when the form executes, and a Var may be defined
+  // between analysis and execution. bindingVars stays parallel to inits
+  // (null = unresolved) so consumers can't mispair them.
+  const wellFormed = isVec && pairs.length % 2 === 0
+  const bindingVars: (VarNode | null)[] = []
   const inits: AstNode[] = []
   for (let i = 0; i + 1 < pairs.length; i += 2) {
     const sym = pairs[i]
+    let varRef: VarNode | null = null
     if (is.symbol(sym)) {
-      const varRef = analyzeSymbol(sym, env, st, sym)
-      if (varRef.op === 'var') bindingVars.push(varRef)
+      const resolved = analyzeSymbol(sym, env, st, sym)
+      if (resolved.op === 'var') varRef = resolved
     }
+    bindingVars.push(varRef)
     inits.push(analyze(pairs[i + 1], env, st))
   }
   const body = analyzeBody(list.value.slice(2), env, st, list)
@@ -1405,6 +1415,7 @@ function analyzeDynamic(
     tag: null,
     bindingVars,
     inits,
+    wellFormed,
     body,
   }
 }

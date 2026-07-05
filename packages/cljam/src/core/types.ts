@@ -20,6 +20,9 @@ export type CljVector = {
 export type CljMapEntry = CljVector & { __cljamMapEntry: true }
 import type { HamtNode } from './persistent/hamt-kernel.ts'
 import type { TrieNode } from './persistent/vector-kernel.ts'
+// Type-only import (like TrieNode/HamtNode above): analyzer/nodes.ts imports
+// value types from here, but the cycle is erased at compile time.
+import type { FnMethodNode as AstFnMethod } from './analyzer/nodes.ts'
 
 // ─── CljVector internal representation ──────────────────────────────────────
 // Dual rep mirroring CljMap's small|hamt: a flat array for ≤32 elements (the
@@ -105,6 +108,12 @@ export type Arity = {
   body: CljValue[]
   bytecodeBody?: VmChunk
   vmClosure?: VmFunctionClosure
+  /** Analyzer AST body for the walker (mode 'ast'), mirroring `bytecodeBody`. */
+  astMethod?: AstFnMethod
+  /** Captured upvalues, copied at closure creation. Shared across arities. */
+  astUpvalues?: CljValue[]
+  /** Frame size for `astMethod` (the analyzer's `namedSlotCount`). */
+  astSlotCount?: number
 }
 
 export type CljFunction = {
@@ -243,6 +252,8 @@ export type IOContext = {
 
 export type EvaluationContext = {
   evaluate: (expr: CljValue, env: Env) => CljValue
+  /** Interpreter symbol resolution without the full evaluate round-trip — the AST walker's Var path. */
+  evaluateSymbol: (sym: CljSymbol, env: Env) => CljValue
   evaluateForms: (forms: CljValue[], env: Env) => CljValue
   applyFunction: (
     fn: CljFunction | CljNativeFunction,
@@ -572,6 +583,7 @@ export type VmExecutionMode =
   | 'function-body'
   | 'opportunistic'
   | 'vm-required'
+  | 'ast'
 
 export type VmFallbackReason =
   | { category: 'unsupported-special-form'; detail: string }
@@ -611,6 +623,9 @@ export type EvalEvent = {
     | 'vm:function-body'
     | 'vm:macro-body'
     | 'vm:top-level'
+    | 'ast:top-level'
+    | 'ast:function-body'
+    | 'ast:macro-body'
     | 'analyzer-error'
     | 'fallback'
   mode: VmExecutionMode
@@ -626,6 +641,8 @@ export type EvaluationMeasurementStage = {
     | ':vm/compile'
     | ':vm/execute'
     | ':vm/cache-hit'
+    | ':ast/analyze'
+    | ':ast/walk'
     | ':fallback'
     | ':interpreter'
     | string

@@ -180,7 +180,9 @@ function walk(node: AstNode, context: Context, errors: AnalysisError[]): void {
       return
 
     case 'dynamic':
-      for (const vnode of node.bindingVars) walk(vnode, 'expr', errors)
+      for (const vnode of node.bindingVars) {
+        if (vnode !== null) walk(vnode, 'expr', errors)
+      }
       for (const init of node.inits) walk(init, 'expr', errors)
       walk(node.body, context, errors)
       return

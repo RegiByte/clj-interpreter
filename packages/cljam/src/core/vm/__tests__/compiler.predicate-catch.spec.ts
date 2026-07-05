@@ -5,7 +5,7 @@ import { compileFnBodyForTest } from './compiler-test-utils'
 
 describe('VM predicate catch compilation', () => {
   it('stores bytecodeBody for try with a symbol predicate discriminator', () => {
-    const s = createSession()
+    const s = createSession({ vmExecutionMode: 'function-body' })
     s.evaluate('(defn boom? [e] (= (:type e) :boom))')
 
     const fn = s.evaluate('(fn [] (try (throw {:type :boom}) (catch boom? e :caught)))')
@@ -27,7 +27,7 @@ describe('VM predicate catch compilation', () => {
   })
 
   it('symbol-resolved predicate catches matching throw', () => {
-    const s = createSession()
+    const s = createSession({ vmExecutionMode: 'function-body' })
     s.evaluate('(defn boom? [e] (= (:type e) :boom))')
 
     expect(
@@ -36,7 +36,7 @@ describe('VM predicate catch compilation', () => {
   })
 
   it('symbol-resolved predicate skips non-matching throw and propagates', () => {
-    const s = createSession()
+    const s = createSession({ vmExecutionMode: 'function-body' })
     s.evaluate('(defn boom? [e] (= (:type e) :boom))')
 
     expect(() =>
@@ -45,7 +45,7 @@ describe('VM predicate catch compilation', () => {
   })
 
   it('predicate binding slot receives the thrown value', () => {
-    const s = createSession()
+    const s = createSession({ vmExecutionMode: 'function-body' })
     s.evaluate('(defn any? [_] true)')
 
     expect(
@@ -55,7 +55,7 @@ describe('VM predicate catch compilation', () => {
 
   it('inline fn discriminator catches matching throw', () => {
     expect(
-      createSession().evaluate(
+      createSession({ vmExecutionMode: 'function-body' }).evaluate(
         '((fn [] (try (throw {:type :boom}) (catch (fn [e] (= (:type e) :boom)) e :inline-caught))))'
       )
     ).toEqual(v.keyword(':inline-caught'))
@@ -63,14 +63,14 @@ describe('VM predicate catch compilation', () => {
 
   it('inline fn discriminator skips non-matching throw', () => {
     expect(() =>
-      createSession().evaluate(
+      createSession({ vmExecutionMode: 'function-body' }).evaluate(
         '((fn [] (try (throw {:type :other}) (catch (fn [e] (= (:type e) :boom)) e :inline-caught))))'
       )
     ).toThrow()
   })
 
   it('first matching predicate clause wins over later matching clause', () => {
-    const s = createSession()
+    const s = createSession({ vmExecutionMode: 'function-body' })
     s.evaluate('(defn any? [_] true)')
     s.evaluate('(defn any2? [_] true)')
 
@@ -82,7 +82,7 @@ describe('VM predicate catch compilation', () => {
   })
 
   it('predicate clause after non-matching keyword clause catches', () => {
-    const s = createSession()
+    const s = createSession({ vmExecutionMode: 'function-body' })
     s.evaluate('(defn any? [_] true)')
 
     expect(
@@ -93,7 +93,7 @@ describe('VM predicate catch compilation', () => {
   })
 
   it('predicate that throws replaces the original pending throw', () => {
-    const s = createSession()
+    const s = createSession({ vmExecutionMode: 'function-body' })
     s.evaluate('(defn bad-pred [_] (throw {:type :pred-error}))')
 
     expect(() =>
@@ -111,7 +111,7 @@ describe('VM predicate catch compilation', () => {
   })
 
   it('predicate that throws still runs finally before propagating new error', () => {
-    const s = createSession()
+    const s = createSession({ vmExecutionMode: 'function-body' })
     s.evaluate('(def finally-ran (atom false))')
     s.evaluate('(defn bad-pred [_] (throw {:type :pred-error}))')
 
@@ -125,14 +125,14 @@ describe('VM predicate catch compilation', () => {
   it('unresolved symbol discriminator acts as catch-all (class-like JVM behavior)', () => {
     // matchesDiscriminator catches the eval failure and returns true
     expect(
-      createSession().evaluate(
+      createSession({ vmExecutionMode: 'function-body' }).evaluate(
         '((fn [] (try (throw {:type :anything}) (catch java.lang.Throwable e :caught-all))))'
       )
     ).toEqual(v.keyword(':caught-all'))
   })
 
   it('predicate catch with finally — body runs, finally still runs after body', () => {
-    const s = createSession()
+    const s = createSession({ vmExecutionMode: 'function-body' })
     s.evaluate('(def finally-ran (atom false))')
     s.evaluate('(defn any? [_] true)')
 
@@ -149,7 +149,7 @@ describe('VM predicate catch compilation', () => {
 describe('VM predicate catch — inline fn closure capture', () => {
   it('inline fn discriminator closes over outer fn param — match', () => {
     expect(
-      createSession().evaluate(
+      createSession({ vmExecutionMode: 'function-body' }).evaluate(
         '((fn [threshold] (try (throw 99) (catch (fn [e] (> e threshold)) e :caught))) 50)'
       )
     ).toEqual(v.keyword(':caught'))
@@ -157,7 +157,7 @@ describe('VM predicate catch — inline fn closure capture', () => {
 
   it('inline fn discriminator closes over outer fn param — no match, throw propagates', () => {
     expect(() =>
-      createSession().evaluate(
+      createSession({ vmExecutionMode: 'function-body' }).evaluate(
         '((fn [threshold] (try (throw 10) (catch (fn [e] (> e threshold)) e :caught))) 50)'
       )
     ).toThrow()
@@ -165,7 +165,7 @@ describe('VM predicate catch — inline fn closure capture', () => {
 
   it('inline fn discriminator closes over let* binding', () => {
     expect(
-      createSession().evaluate(
+      createSession({ vmExecutionMode: 'function-body' }).evaluate(
         '((fn [x] (let [limit (* x 2)] (try (throw 99) (catch (fn [e] (> e limit)) e :caught)))) 20)'
       )
     ).toEqual(v.keyword(':caught'))
@@ -173,7 +173,7 @@ describe('VM predicate catch — inline fn closure capture', () => {
 
   it('two inline fn catch clauses both close over different locals', () => {
     expect(
-      createSession().evaluate(
+      createSession({ vmExecutionMode: 'function-body' }).evaluate(
         `((fn [lo hi]
            (try (throw 50)
                 (catch (fn [e] (> e hi)) e :over)
@@ -184,7 +184,7 @@ describe('VM predicate catch — inline fn closure capture', () => {
   })
 
   it('inline fn discriminator with finally — closure captures correctly, finally runs', () => {
-    const s = createSession()
+    const s = createSession({ vmExecutionMode: 'function-body' })
     s.evaluate('(def finally-ran (atom false))')
     expect(
       s.evaluate(

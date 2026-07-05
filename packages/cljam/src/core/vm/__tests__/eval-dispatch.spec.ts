@@ -100,7 +100,7 @@ describe('VM evaluation dispatch instrumentation', () => {
     ).toBe(true)
   })
 
-  it('executes supported public session forms through top-level VM by default', () => {
+  it('executes supported public session forms through the AST walker by default', () => {
     const events: EvalEvent[] = []
     const session = createSession({
       instrumentation: { onEvent: (event) => events.push(event) },
@@ -112,8 +112,8 @@ describe('VM evaluation dispatch instrumentation', () => {
     expect(events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          path: 'vm:top-level',
-          mode: 'opportunistic',
+          path: 'ast:top-level',
+          mode: 'ast',
           formKind: 'list:+',
         }),
       ])
@@ -147,9 +147,9 @@ describe('VM evaluation dispatch instrumentation', () => {
       expect.arrayContaining([
         expect.objectContaining({
           path: 'fallback',
-          mode: 'opportunistic',
+          mode: 'ast',
           reason: expect.objectContaining({
-            category: 'unsupported-top-level-mutation',
+            category: 'unsupported-special-form',
           }),
         }),
       ])

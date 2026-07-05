@@ -47,7 +47,7 @@ describe('VM direct throw compilation', () => {
     expect(disassembly).toContain('Call 1')
     expect(disassembly).not.toContain('Throw')
     expect(
-      createSession().evaluate(
+      createSession({ vmExecutionMode: 'function-body' }).evaluate(
         '((fn [] (let* [throw :answer] (throw {:answer 99}))))'
       )
     ).toEqual(v.number(99))
@@ -71,7 +71,7 @@ describe('VM direct throw compilation', () => {
 
 describe('VM try/catch unwind compilation', () => {
   it('stores bytecodeBody for catch-only try bodies and evaluates them through normal application', () => {
-    const fn = createSession().evaluate('(fn [x] (try x (catch :default e e)))')
+    const fn = createSession({ vmExecutionMode: 'function-body' }).evaluate('(fn [x] (try x (catch :default e e)))')
 
     expect(fn.kind).toBe('function')
     if (fn.kind !== 'function') return
@@ -124,7 +124,7 @@ describe('VM try/catch unwind compilation', () => {
     'does not store bytecodeBody for unsupported try bodies with unsupported catch body and still evaluates',
     () => {
       const code = '(try x (catch :default e (async e)))'
-      const fn = createSession().evaluate(`(fn [x] ${code})`)
+      const fn = createSession({ vmExecutionMode: 'function-body' }).evaluate(`(fn [x] ${code})`)
 
       expect(fn.kind).toBe('function')
       if (fn.kind !== 'function') return
@@ -142,7 +142,7 @@ describe('VM try/catch unwind compilation', () => {
   )
 
   it('stores bytecodeBody for direct throw bodies', () => {
-    const fn = createSession().evaluate('(fn [] (throw {:type :error/test}))')
+    const fn = createSession({ vmExecutionMode: 'function-body' }).evaluate('(fn [] (throw {:type :error/test}))')
 
     expect(fn.kind).toBe('function')
     if (fn.kind !== 'function') return
@@ -176,7 +176,7 @@ describe('VM try/catch unwind compilation', () => {
 
   it('does not inject frames into direct bytecode user-thrown maps', () => {
     expect(
-      createSession().evaluate(
+      createSession({ vmExecutionMode: 'function-body' }).evaluate(
         '(try ((fn [] (throw {:type :error/test}))) (catch :error/test e (contains? e :frames)))'
       )
     ).toEqual(v.boolean(false))
@@ -229,7 +229,7 @@ describe('VM try/catch unwind compilation', () => {
       v.keyword(':outer'),
     ],
   ])('evaluates catch-only try through bytecode: %s', (_label, code, expected) => {
-    expect(createSession().evaluate(code)).toEqual(expected)
+    expect(createSession({ vmExecutionMode: 'function-body' }).evaluate(code)).toEqual(expected)
   })
 
   it('propagates non-matching VM catches like the interpreter', () => {

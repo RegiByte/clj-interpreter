@@ -5,7 +5,7 @@ import { is } from '../../assertions'
 
 describe('VM clojure.core/destructure coverage', () => {
   it('compiles clojure.core/destructure to a bytecode-backed function body', () => {
-    const session = createSession()
+    const session = createSession({ vmExecutionMode: 'function-body' })
     const core = session.registry.get('clojure.core')
     const destructure = core?.ns?.vars.get('destructure')?.value
 
@@ -15,7 +15,7 @@ describe('VM clojure.core/destructure coverage', () => {
   })
 
   it('executes vector-pattern destructuring through the bytecode-backed body', () => {
-    const session = createSession()
+    const session = createSession({ vmExecutionMode: 'function-body' })
 
     expect(session.evaluate("(count (destructure '[[a b] v]))")).toEqual(
       v.number(8)

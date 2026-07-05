@@ -146,6 +146,16 @@ function cloneArity(arity: Arity, ctx: CloneContext): Arity {
     ...(arity.vmClosure
       ? { vmClosure: cloneVmFunctionClosure(arity.vmClosure, ctx) }
       : {}),
+    // astMethod is immutable analysis data (never mutated by the walker), so
+    // the node tree is shared by reference; the captured VALUES are session
+    // state and must be deep-cloned like VM upvalues.
+    ...(arity.astMethod ? { astMethod: arity.astMethod } : {}),
+    ...(arity.astSlotCount !== undefined
+      ? { astSlotCount: arity.astSlotCount }
+      : {}),
+    ...(arity.astUpvalues
+      ? { astUpvalues: arity.astUpvalues.map((value) => cloneValue(value, ctx)) }
+      : {}),
   }
 }
 

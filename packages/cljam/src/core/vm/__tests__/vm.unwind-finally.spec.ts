@@ -4,7 +4,7 @@ import { v } from '../../factories'
 import { Op } from '../opcodes'
 
 function expectBytecodeFinally(code: string): void {
-  const fn = createSession().evaluate(code)
+  const fn = createSession({ vmExecutionMode: 'function-body' }).evaluate(code)
 
   expect(fn.kind).toBe('function')
   if (fn.kind !== 'function') return
@@ -22,7 +22,7 @@ describe('VM finally unwind semantics', () => {
   })
 
   it('runs finally on normal completion and keeps the body result', () => {
-    const session = createSession()
+    const session = createSession({ vmExecutionMode: 'function-body' })
     session.evaluate('(def ran (atom false))')
 
     expect(
@@ -33,14 +33,14 @@ describe('VM finally unwind semantics', () => {
 
   it('keeps the catch result after finally completes normally', () => {
     expect(
-      createSession().evaluate(
+      createSession({ vmExecutionMode: 'function-body' }).evaluate(
         '((fn [] (try (throw {:type :body}) (catch :body e :caught) (finally 99))))'
       )
     ).toEqual(v.keyword(':caught'))
   })
 
   it('runs finally before an unmatched body throw continues outward', () => {
-    const session = createSession()
+    const session = createSession({ vmExecutionMode: 'function-body' })
     session.evaluate('(def ran (atom false))')
 
     expect(
@@ -51,7 +51,7 @@ describe('VM finally unwind semantics', () => {
   })
 
   it('runs finally when a catch body throws', () => {
-    const session = createSession()
+    const session = createSession({ vmExecutionMode: 'function-body' })
     session.evaluate('(def ran (atom false))')
 
     expect(
@@ -63,7 +63,7 @@ describe('VM finally unwind semantics', () => {
 
   it('lets a finally throw replace a body throw', () => {
     expect(
-      createSession().evaluate(
+      createSession({ vmExecutionMode: 'function-body' }).evaluate(
         '(try ((fn [] (try (throw {:type :body}) (finally (throw {:type :finally}))))) (catch :finally e (:type e)))'
       )
     ).toEqual(v.keyword(':finally'))
@@ -71,7 +71,7 @@ describe('VM finally unwind semantics', () => {
 
   it('lets a finally throw replace a catch body throw', () => {
     expect(
-      createSession().evaluate(
+      createSession({ vmExecutionMode: 'function-body' }).evaluate(
         '(try ((fn [] (try (throw {:type :body}) (catch :body e (throw {:type :catch})) (finally (throw {:type :finally}))))) (catch :finally e (:type e)))'
       )
     ).toEqual(v.keyword(':finally'))
@@ -79,7 +79,7 @@ describe('VM finally unwind semantics', () => {
 
   it('keeps runtime EvaluationError catchable through finally', () => {
     expect(
-      createSession().evaluate(
+      createSession({ vmExecutionMode: 'function-body' }).evaluate(
         '((fn [] (try (/ 1 0) (catch :error/runtime e (:type e)) (finally 99))))'
       )
     ).toEqual(v.keyword(':error/runtime'))
