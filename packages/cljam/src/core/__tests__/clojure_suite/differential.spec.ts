@@ -1,31 +1,32 @@
 /**
- * Phase 2 differential harness — the safety net for the interpreter-over-AST
- * migration.
+ * Differential harness — AST walker (oracle) ⇄ VM (Phase 4 S2 contract).
  *
- * cljam is collapsing its two semantic surfaces (tree-walking interpreter +
- * bytecode VM) into one shared analyzer/IR. Before the interpreter is rebuilt to
- * consume the analyzed AST, we freeze the current invariant — *the two backends
- * agree on every test in the `.clj` suite* — into a green baseline. Any
- * divergence introduced while reworking the interpreter then trips this gate
- * immediately, naming the exact `deftest` that drifted.
+ * The AST walker is cljam's default engine and, since the S2 safety-net flip,
+ * the REFERENCE implementation: the walker probe suites pin its behavior with
+ * direct assertions, and this harness keeps the OTHER engine — the bytecode
+ * VM — honest against it across the whole `.clj` suite. Any divergence trips
+ * this gate immediately, naming the exact `deftest` that drifted.
+ *
+ * (Until S2 this file compared the form-walking interpreter (`off`) against
+ * the VM; the walker earned the oracle seat by matching that interpreter
+ * 288/288/0 in the retired `differential-ast.spec.ts` arm. Git history is the
+ * archive.)
  *
  * **The two backends** (one flag, `vmExecutionMode`):
- *   - A = `off`           — top-level *and* fn-bodies run on the interpreter.
- *   - B = `function-body` — top-level forms stay on the interpreter (so files
- *                           load: the VM does not support top-level mutation
- *                           forms like `ns`/`def`), while compiled fn-bodies —
- *                           which is where every `deftest` assertion executes —
- *                           run on the VM.
+ *   - A = `ast`           — top-level *and* fn-bodies run on the AST walker.
+ *   - B = `function-body` — compiled fn-bodies — which is where every
+ *                           `deftest` assertion executes — run on the VM.
  *
  * `vm-required` is intentionally NOT used: it cannot even construct a session,
- * because clojure.core's bootstrap contains a top-level `ns` form the VM rejects.
- * `function-body` is the purest *runnable* interpreter-vs-VM pairing.
+ * because clojure.core's bootstrap contains a top-level `ns` form the VM
+ * rejects. `function-body` is the purest *runnable* walker-vs-VM pairing.
  *
- * **Coverage honesty.** Because B silently falls back to the interpreter for any
- * fn-body that fails to compile, a comparison could be vacuous (both backends ran
- * the interpreter). We count executed `vm:function-body` events per test in B; a
- * count of zero means the VM never actually ran the test logic. That is reported,
- * not asserted — it is the coverage map, the honest substitute for `vm-required`.
+ * **Coverage honesty.** Because B silently falls back for any fn-body that
+ * fails to compile, a comparison could be vacuous (both backends ran the same
+ * engine). We count executed `vm:function-body` events per test in B; a count
+ * of zero means the VM never actually ran the test logic. That is reported,
+ * not asserted — it is the coverage map, the honest substitute for
+ * `vm-required`.
  */
 
 import { fileURLToPath } from 'node:url'
@@ -109,14 +110,14 @@ const vacuousCases: VacuousCase[] = []
 
 const suiteFiles = discoverSuiteFiles()
 
-describe('interpreter ⇄ VM differential', () => {
+describe('AST walker (oracle) ⇄ VM differential', () => {
   for (const file of suiteFiles) {
     describe(file.name, () => {
-      let interp: Backend
+      let walker: Backend
       let vm: Backend
 
       beforeAll(async () => {
-        interp = await makeBackend(file.source, 'off')
+        walker = await makeBackend(file.source, 'ast')
         vm = await makeBackend(file.source, 'function-body')
       })
 
@@ -128,7 +129,7 @@ describe('interpreter ⇄ VM differential', () => {
       for (const testName of file.deftests) {
         it(testName, async () => {
           const vmExecBefore = vm.vmExecCount()
-          const a = await runOnce(interp.session, testName)
+          const a = await runOnce(walker.session, testName)
           const b = await runOnce(vm.session, testName)
           const vmExecDelta = vm.vmExecCount() - vmExecBefore
 
@@ -137,7 +138,7 @@ describe('interpreter ⇄ VM differential', () => {
           }
 
           // Both backends must agree on throw-vs-ran.
-          expect(b.kind, `backend disagreement: interpreter=${a.kind}, vm=${b.kind}`).toBe(a.kind)
+          expect(b.kind, `backend disagreement: walker=${a.kind}, vm=${b.kind}`).toBe(a.kind)
 
           if (a.kind === 'ran' && b.kind === 'ran') {
             // Identical assertion outcomes — same failures, same order.
@@ -157,7 +158,7 @@ afterAll(() => {
   const vacuous = vacuousCases.length
   const covered = totalTests - vacuous
   // Surfaced as the coverage map (the honest substitute for vm-required): how
-  // many comparisons genuinely exercised the VM vs. ran the interpreter on both
+  // many comparisons genuinely exercised the VM vs. ran the walker on both
   // sides. Reported, never asserted — a vacuous comparison is not a failure.
   // process.stdout.write (not console.log) so it survives vitest's console
   // interception and is always visible.
@@ -165,7 +166,7 @@ afterAll(() => {
     `\n[differential] VM coverage: ${covered}/${totalTests} deftests executed a ` +
       `compiled fn-body on the VM backend` +
       (vacuous > 0
-        ? `; ${vacuous} vacuous (both ran interpreter):\n` +
+        ? `; ${vacuous} vacuous (both ran walker):\n` +
           vacuousCases.map((c) => `  - ${c.file} › ${c.test}`).join('\n')
         : '.') +
       '\n'
