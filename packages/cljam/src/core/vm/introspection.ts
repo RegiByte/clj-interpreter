@@ -14,7 +14,7 @@ import type {
   VmChunk,
   VmLexicalVarLookup,
 } from '../types'
-import { tryCompileVm } from './compiler'
+import { tryCompileVmFromIr } from './ir-compiler'
 import {
   collectArityDisassemblyEntries,
   collectChunkDisassemblyEntries,
@@ -99,7 +99,7 @@ export function resolveBytecodeTarget(
   }
 
   const expanded = ctx.expandAll(form, callEnv)
-  const result = tryCompileVm(expanded)
+  const result = tryCompileVmFromIr(expanded, callEnv, ctx)
   if (!result.ok) return null
 
   return {

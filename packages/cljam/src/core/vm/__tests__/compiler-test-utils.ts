@@ -8,12 +8,43 @@ import { printString } from '../../printer'
 import { readForms } from '../../reader'
 import { createSession } from '../../session'
 import { tokenize } from '../../tokenizer'
-import type { CljValue } from '../../types'
-import { compileVm, compileVmFnBody } from '../compiler'
+import type { CljSymbol, CljValue, VmChunk, VmCompileResult } from '../../types'
+import { tryCompileVmFnBodyFromIr, tryCompileVmFromIr } from '../ir-compiler'
 import { executeChunk } from '../vm'
 
 export const formToNode = (code: string) =>
   readForms(tokenize(code), 'user', new Map())[0] as CljValue
+
+/**
+ * Bare-form compile helpers over the live ir-compiler. Analysis runs against
+ * an empty env, so free symbols stay runtime-resolved (LoadGlobal /
+ * LoadQualified) — the same contract the legacy compiler's form-only
+ * signature provided.
+ */
+export function tryCompileVm(node: CljValue): VmCompileResult {
+  return tryCompileVmFromIr(node, makeEnv(), createEvaluationContext())
+}
+
+export function compileVm(node: CljValue): VmChunk | null {
+  const result = tryCompileVm(node)
+  return result.ok ? result.chunk : null
+}
+
+export function tryCompileVmFnBody(
+  params: CljSymbol[],
+  restParam: CljSymbol | null,
+  body: CljValue[],
+  selfName: string | null = null
+): VmCompileResult {
+  return tryCompileVmFnBodyFromIr(
+    params,
+    restParam,
+    body,
+    selfName,
+    makeEnv(),
+    createEvaluationContext()
+  )
+}
 
 export function makeCallTestEnv() {
   const env = makeEnv()
@@ -110,7 +141,7 @@ export function compileFnBodyForTest(
     selfName?: string | null
   } = {}
 ) {
-  return compileVmFnBody(
+  const result = tryCompileVmFnBody(
     paramNames.map((name) => v.symbol(name)),
     options.restParam === undefined || options.restParam === null
       ? null
@@ -118,6 +149,7 @@ export function compileFnBodyForTest(
     bodyCode.map(formToNode),
     options.selfName ?? null
   )
+  return result.ok ? result.chunk : null
 }
 
 export function expectVmFnBodyCompilesTo(

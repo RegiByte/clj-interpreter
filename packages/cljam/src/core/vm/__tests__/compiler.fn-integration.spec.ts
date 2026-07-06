@@ -3,8 +3,7 @@ import { createEvaluationContext } from '../../evaluator'
 import { applyFunctionWithContext } from '../../evaluator/apply'
 import { v } from '../../factories'
 import { createSession } from '../../session'
-import { tryCompileVmFnBody } from '../compiler'
-import { formToNode } from './compiler-test-utils'
+import { formToNode, tryCompileVmFnBody } from './compiler-test-utils'
 
 describe('VM function body integration', () => {
   it('reports nested function-body fallback reasons through structured compilation', () => {

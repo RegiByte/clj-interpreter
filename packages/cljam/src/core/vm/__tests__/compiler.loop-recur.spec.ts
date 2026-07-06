@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import { createEvaluationContext } from '../../evaluator'
 import { v } from '../../factories'
 import { createSession } from '../../session'
-import { tryCompileVmFnBody } from '../compiler'
 import { disassembleChunk } from '../debug'
 import { Op } from '../opcodes'
 import { executeChunk } from '../vm'
@@ -12,6 +11,7 @@ import {
   expectVmFnBodyCompilesTo,
   formToNode,
   makeCallTestEnv,
+  tryCompileVmFnBody,
 } from './compiler-test-utils'
 
 describe('VM loop* compilation', () => {
@@ -245,35 +245,47 @@ describe('VM function-level recur compilation', () => {
   it('compiles variadic function-level recur to FnRecurRest', () => {
     const chunk = compileFnBodyForTest(
       ['done', 'x'],
-      ['(if done more (recur true x 2 3))'],
+      ['(if done more (recur true x [2 3]))'],
       { restParam: 'more' }
     )
 
     expect(chunk).not.toBeNull()
     if (chunk === null) return
 
-    expect(disassembleChunk(chunk)).toContain('FnRecurRest 4 2 -> 0000')
+    expect(disassembleChunk(chunk)).toContain('FnRecurRest 3 2 -> 0000')
   })
 
-  it('repackages extra variadic function-level recur args into the rest slot', () => {
+  it('packages the final recur arg into the rest slot (fixed+1 arity)', () => {
     expectVmFnBodyCompilesTo(
       ['done', 'x'],
-      ['(if done more (recur true x 2 3))'],
+      ['(if done more (recur true x [2 3]))'],
       [v.boolean(false), v.number(1), v.nil()],
-      v.list([v.number(2), v.number(3)]),
+      v.list([v.vector([v.number(2), v.number(3)])]),
       { restParam: 'more' }
     )
   })
 
-  it('repackages empty variadic function-level recur rest as nil', () => {
-    expectVmFnBodyCompilesTo(
-      ['done', 'x'],
-      ['(if done more (recur true x))'],
-      [v.boolean(false), v.number(1), v.list([v.number(9)])],
-      v.nil(),
-      { restParam: 'more' }
-    )
-  })
+  it.each([
+    ['extra args beyond fixed+1', '(if done more (recur true x 2 3))', 4],
+    ['fewer args than fixed+1', '(if done more (recur true x))', 2],
+  ])(
+    'rejects variadic recur arg counts that are not fixed+1 — %s',
+    (_label, body, got) => {
+      const result = tryCompileVmFnBody(
+        [v.symbol('done'), v.symbol('x')],
+        v.symbol('more'),
+        [formToNode(body)]
+      )
+
+      expect(result).toMatchObject({
+        ok: false,
+        reason: {
+          category: 'compile-error',
+          detail: `recur expects 3 arguments but got ${got}`,
+        },
+      })
+    }
+  )
 
   it('evaluates variadic recur arguments before rewriting function slots', () => {
     expectVmFnBodyCompilesTo(

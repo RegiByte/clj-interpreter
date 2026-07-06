@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { v } from '../../factories'
 import { createSession } from '../../session'
-import { tryCompileVmFnBody } from '../compiler'
 import { disassembleChunk } from '../debug'
-import { compileFnBodyForTest, formToNode } from './compiler-test-utils'
+import {
+  compileFnBodyForTest,
+  formToNode,
+  tryCompileVmFnBody,
+} from './compiler-test-utils'
 
 describe('VM letfn* compilation', () => {
   it('compiles a single binding as closure storage plus body call', () => {
@@ -45,7 +48,10 @@ describe('VM letfn* compilation', () => {
     ])
   })
 
-  it('uses the binding name as implicit self-name for tail calls', () => {
+  it('calls the binding through the captured slot, not a self-slot (RB-007)', () => {
+    // The analyzer captures the letfn binding as an upvalue (legacy compiled
+    // self-named tail calls to FnRecur) — the intended divergence that fixes
+    // rebinding visibility (RB-007 class).
     const chunk = compileFnBodyForTest([], [
       '(letfn* [down (fn* [n] (if (= n 0) n (down (- n 1))))] (down 3))',
     ])
@@ -58,8 +64,9 @@ describe('VM letfn* compilation', () => {
     if (arityChunk === undefined) return
 
     const disassembly = disassembleChunk(arityChunk)
-    expect(disassembly).toContain('FnRecur 1 -> 0000')
-    expect(disassembly).not.toContain('Call 1')
+    expect(disassembly).toContain('LoadUpvalue 0')
+    expect(disassembly).toContain('Call 1')
+    expect(disassembly).not.toContain('FnRecur')
   })
 
   it('keeps nested shadowing from becoming a self-tail-call', () => {
@@ -137,9 +144,33 @@ describe('VM letfn* compilation', () => {
     ['non-vector bindings', '(letfn* :bad nil)'],
     ['odd binding count', '(letfn* [f (fn* [] 1) g] (f))'],
     ['non-symbol name', '(letfn* [1 (fn* [] 1)] 1)'],
-    ['duplicate name', '(letfn* [f (fn* [] 1) f (fn* [] 2)] (f))'],
-    ['non-fn value', '(letfn* [f 1] f)'],
   ])('falls back without partial compilation for %s', (_label, code) => {
     expect(compileFnBodyForTest([], [code])).toBeNull()
+  })
+
+  it('compiles duplicate letfn* names — the last binding wins', () => {
+    const chunk = compileFnBodyForTest([], [
+      '(letfn* [f (fn* [] 1) f (fn* [] 2)] (f))',
+    ])
+    expect(chunk).not.toBeNull()
+
+    expect(
+      createSession().evaluate('(letfn* [f (fn* [] 1) f (fn* [] 2)] (f))')
+    ).toEqual(v.number(2))
+  })
+
+  it('refuses non-fn letfn* binding values (the walker throws the same at runtime)', () => {
+    const result = tryCompileVmFnBody([], null, [formToNode('(letfn* [f 1] f)')])
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: {
+        category: 'compile-error',
+        detail: 'letfn* binding values must be functions',
+      },
+    })
+    expect(() => createSession().evaluate('(letfn* [f 1] f)')).toThrow(
+      'letfn* binding values must be functions'
+    )
   })
 })

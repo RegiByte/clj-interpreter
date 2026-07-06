@@ -3,11 +3,11 @@ import { createEvaluationContext } from '../../evaluator'
 import { applyFunctionWithContext } from '../../evaluator/apply'
 import { v } from '../../factories'
 import { createSession } from '../../session'
-import { compileVm } from '../compiler'
 import { disassembleChunk } from '../debug'
 import { Op } from '../opcodes'
 import {
   compileFnBodyForTest,
+  compileVm,
   expectSessionEvaluationError,
   formToNode,
 } from './compiler-test-utils'

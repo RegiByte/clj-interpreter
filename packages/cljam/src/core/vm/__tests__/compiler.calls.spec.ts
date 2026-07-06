@@ -4,11 +4,10 @@ import { createEvaluationContext } from '../../evaluator'
 import { v } from '../../factories'
 import { createSession } from '../../session'
 import type { CljValue } from '../../types'
-import { compileVm } from '../compiler'
 import { disassembleChunk } from '../debug'
 import { executeChunk } from '../vm'
 import { expectVmEqualsInterpreter } from './helpers'
-import { expectVmCallCompilesTo, formToNode } from './compiler-test-utils'
+import { compileVm, expectVmCallCompilesTo, formToNode } from './compiler-test-utils'
 
 describe('VM call compilation', () => {
   it.each([

@@ -582,10 +582,18 @@ export function emitNode(node: AstNode, st: EmitState): boolean {
       const { chunk } = st
       for (const binding of node.bindings) bumpLocal(chunk, binding.slot)
       for (const binding of node.bindings) {
-        if (binding.init === null) {
-          return fail(st, { category: 'compile-error', detail: 'letfn* binding missing init' })
+        if (binding.init === null || binding.init.op !== 'fn') {
+          // The walker throws this when the letfn* executes; refusing here
+          // sends the body to the walker so both engines fail identically.
+          return fail(st, {
+            category: 'compile-error',
+            detail: 'letfn* binding values must be functions',
+          })
         }
-        if (!emitNode(binding.init, st)) return false
+        const templateIndex = buildFnTemplate(binding.init, st, binding.name)
+        if (templateIndex === null) return false
+        emit(chunk, Op.Closure, binding.pos)
+        emitOperand(chunk, templateIndex, binding.pos)
         emit(chunk, Op.StoreLocal, binding.pos)
         emitOperand(chunk, binding.slot, binding.pos)
       }

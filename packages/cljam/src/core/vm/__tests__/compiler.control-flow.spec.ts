@@ -4,10 +4,9 @@ import { jsToClj } from '../../conversions'
 import { createEvaluationContext } from '../../evaluator'
 import { v } from '../../factories'
 import { printString } from '../../printer'
-import { compileVm } from '../compiler'
 import { disassembleChunk } from '../debug'
 import { executeChunk } from '../vm'
-import { expectVmCompilesTo, formToNode } from './compiler-test-utils'
+import { compileVm, expectVmCompilesTo, formToNode } from './compiler-test-utils'
 
 describe('VM do compilation', () => {
   it('compiles do with literals', () => {

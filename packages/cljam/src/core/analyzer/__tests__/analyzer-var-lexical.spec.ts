@@ -1,9 +1,9 @@
 /**
  * P2 gate: `(var <local>)` lexical-candidate resolution in the analyzer.
  *
- * For each form we analyze it with `analyzeForm` and compile it with the legacy
- * `tryCompileVm`, then assert that the `the-var` node's `lexicalCandidates`
- * deep-equals the first entry in `chunk.lexicalVarLookups[].candidates`.
+ * For each form we pin the `the-var` node's `lexicalCandidates` explicitly,
+ * and cross-check that the ir-compiler wires exactly those candidates into
+ * the emitted chunk's `lexicalVarLookups` (the LoadLexicalVar plumbing).
  *
  * All forms use `let*`/`fn*` directly so they work with a bare `makeEnv()` env
  * (no macros needed).
@@ -12,8 +12,10 @@
 import { describe, expect, it } from 'vitest'
 import { makeEnv } from '../../env'
 import { createEvaluationContext } from '../../evaluator'
-import { formToNode } from '../../vm/__tests__/compiler-test-utils'
-import { tryCompileVm } from '../../vm/compiler'
+import {
+  formToNode,
+  tryCompileVm,
+} from '../../vm/__tests__/compiler-test-utils'
 import { analyzeForm } from '../index'
 import type {
   FnNode,
@@ -26,9 +28,9 @@ function analyze(code: string) {
   return analyzeForm(formToNode(code), makeEnv(), createEvaluationContext())
 }
 
-function legacyCandidates(code: string, lookupIndex = 0) {
+function chunkCandidates(code: string, lookupIndex = 0) {
   const result = tryCompileVm(formToNode(code))
-  if (!result.ok) throw new Error(`legacy compile failed: ${result.reason}`)
+  if (!result.ok) throw new Error(`ir compile failed: ${result.reason}`)
   const lookup = result.chunk.lexicalVarLookups[lookupIndex]
   if (lookup === undefined)
     throw new Error(`no lexicalVarLookups[${lookupIndex}]`)
@@ -36,9 +38,9 @@ function legacyCandidates(code: string, lookupIndex = 0) {
 }
 
 /** Candidates from the first `(var ...)` inside the first inner fn's first arity. */
-function legacyInnerFnCandidates(code: string, lookupIndex = 0) {
+function innerFnChunkCandidates(code: string, lookupIndex = 0) {
   const result = tryCompileVm(formToNode(code))
-  if (!result.ok) throw new Error(`legacy compile failed: ${result.reason}`)
+  if (!result.ok) throw new Error(`ir compile failed: ${result.reason}`)
   const template = result.chunk.innerFunctions[0]
   if (template === undefined) throw new Error('no innerFunctions[0]')
   const arity = template.arities[0]
@@ -57,7 +59,7 @@ describe('analyzer / (var x) lexical candidates', () => {
     expect(varNode.op).toBe('the-var')
     expect(varNode.name).toBe('f')
 
-    const expected = legacyCandidates('(let* [f (var +)] (var f))')
+    const expected = chunkCandidates('(let* [f (var +)] (var f))')
     expect(varNode.lexicalCandidates).toEqual(expected)
     expect(varNode.lexicalCandidates).toEqual([{ kind: 'local', slot: 0 }])
   })
@@ -67,7 +69,7 @@ describe('analyzer / (var x) lexical candidates', () => {
     const varNode = (node as LetNode).body.ret as TheVarNode
     expect(varNode.op).toBe('the-var')
 
-    const expected = legacyCandidates('(let* [x :not-var] (var x))')
+    const expected = chunkCandidates('(let* [x :not-var] (var x))')
     expect(varNode.lexicalCandidates).toEqual(expected)
     expect(varNode.lexicalCandidates).toEqual([{ kind: 'local', slot: 0 }])
   })
@@ -80,7 +82,7 @@ describe('analyzer / (var x) lexical candidates', () => {
     const varNode = inner.body.ret as TheVarNode
     expect(varNode.op).toBe('the-var')
 
-    const expected = legacyCandidates(code)
+    const expected = chunkCandidates(code)
     expect(varNode.lexicalCandidates).toEqual(expected)
     expect(varNode.lexicalCandidates).toEqual([
       { kind: 'local', slot: 1 },
@@ -97,7 +99,7 @@ describe('analyzer / (var x) lexical candidates', () => {
     const varNode = fn.methods[0].body.ret as TheVarNode
     expect(varNode.op).toBe('the-var')
 
-    const expected = legacyInnerFnCandidates(code)
+    const expected = innerFnChunkCandidates(code)
     expect(varNode.lexicalCandidates).toEqual(expected)
     expect(varNode.lexicalCandidates).toEqual([{ kind: 'upvalue', slot: 0 }])
 

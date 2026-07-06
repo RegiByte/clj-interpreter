@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { is } from '../../assertions'
 import { createSession } from '../../session'
 import type { VmFallbackReason } from '../../types'
-import { tryCompileVmFnBody } from '../compiler'
+import { tryCompileVmFnBody } from './compiler-test-utils'
 
 function reasonKey(reason: VmFallbackReason): string {
   return `${reason.category} :: ${reason.detail}`

@@ -12,8 +12,13 @@ import {
   type Session,
 } from '../../session'
 import { tokenize } from '../../tokenizer'
-import type { CljValue, EvaluationContext } from '../../types'
-import { compileVm } from '../compiler'
+import type {
+  CljValue,
+  Env,
+  EvaluationContext,
+  VmChunk,
+} from '../../types'
+import { tryCompileVmFromIr } from '../ir-compiler'
 import { executeChunk } from '../vm'
 
 const baseline = snapshotSession(createSession())
@@ -74,10 +79,19 @@ function evaluateWithInterpreter(code: string): CljValue {
   return ctx.evaluate(form, env)
 }
 
+function compileVm(
+  form: CljValue,
+  env: Env,
+  ctx: EvaluationContext
+): VmChunk | null {
+  const result = tryCompileVmFromIr(form, env, ctx)
+  return result.ok ? result.chunk : null
+}
+
 function evaluateWithVm(code: string): CljValue {
   const session = freshSession()
   const { ctx, env, form } = prepareForm(code, session)
-  const chunk = compileVm(form)
+  const chunk = compileVm(form, env, ctx)
 
   expect(chunk).not.toBeNull()
   if (chunk === null) throw new Error(`Expected VM compile for: ${code}`)
@@ -101,8 +115,8 @@ export function expectVmEqualsInterpreter(code: string): void {
 
 export function expectVmFallsBack(code: string): void {
   const session = freshSession()
-  const { form } = prepareForm(code, session)
-  expect(compileVm(form)).toBeNull()
+  const { ctx, env, form } = prepareForm(code, session)
+  expect(compileVm(form, env, ctx)).toBeNull()
 }
 
 export function expectVmThrowsLikeInterpreter(code: string): void {

@@ -7,13 +7,14 @@ import {
   createSessionFromSnapshot,
   snapshotSession,
 } from '../../session'
-import { compileVm, tryCompileVm } from '../compiler'
 import { disassembleChunk } from '../debug'
 import { executeChunk } from '../vm'
 import {
+  compileVm,
   expectVmCompilesTo,
   formToNode,
   makeCallTestEnv,
+  tryCompileVm,
 } from './compiler-test-utils'
 
 function createVmRequiredSession() {

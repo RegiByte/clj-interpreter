@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { v } from '../../factories'
-import { compileVm } from '../compiler'
 import { disassembleChunk } from '../debug'
 import { expectVmEqualsInterpreter } from './helpers'
-import { expectVmCallCompilesTo, formToNode } from './compiler-test-utils'
+import { compileVm, expectVmCallCompilesTo, formToNode } from './compiler-test-utils'
 
 describe('VM collection compilation', () => {
   it.each(['[]', '[1 2]', '{:a 1}', '#{1}'])(
