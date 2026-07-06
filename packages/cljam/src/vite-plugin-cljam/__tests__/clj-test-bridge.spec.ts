@@ -248,9 +248,10 @@ describe('async deftest — binding inside async', () => {
 
   it('(testing "..." (let [x @...] ...)) — @deref inside testing body now works', async () => {
     const session = makeTestSession()
-    // testing expands to (with-testing-context* str (fn [] body)), which uses
-    // (binding [*testing-contexts* ...] (thunk)). With the binding-async fix,
-    // the thunk body runs async, so @deref inside it works directly.
+    // testing expands INLINE to (binding [*testing-contexts* ...] body) —
+    // the JVM shape. The body stays lexical content of the async block, so
+    // @deref inside it awaits (F8: async is a lexical boundary; the old
+    // thunk expansion would have put the body behind a closure boundary).
     session.evaluate(
       '(deftest t' +
       '  (async' +

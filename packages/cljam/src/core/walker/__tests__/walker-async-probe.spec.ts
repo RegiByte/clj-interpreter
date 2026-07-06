@@ -8,11 +8,13 @@
  * Execution honesty is unchanged: a probe that silently fell back to the
  * form path cannot pass as covered (`ast:top-level` must have fired).
  *
- * ⚠️ These probes pin CURRENT (pre-F8) async semantics — including dynamic
- * async propagation into applied fn bodies ('fn called from async runs its
- * body async'). Phase 4 S3 replaces that with the lexical-boundary model and
- * updates the affected pins DELIBERATELY, in the same slice. See
- * `references/async-design-scrutiny-2026-07-05.md` F8 ADDENDUM.
+ * F8 (Phase 4 S3): async is a LEXICAL boundary — `@` awaits exactly within
+ * the lexical extent of the `(async …)` body, stopping at closure boundaries.
+ * Applied fn bodies run SYNC regardless of caller; a fn that wants await
+ * declares its own `(async …)` and returns a pending the caller `@`s. The
+ * F8 probes below pin both sides of the boundary, and were re-recorded from
+ * the live walker at the S3 conversion (same golden-master discipline as
+ * S2). See `references/async-design-scrutiny-2026-07-05.md` F8 ADDENDUM.
  *
  * Direct probes pin behavior that intentionally diverged from the form twin
  * (F7 interop-arg awaiting, `:frames` on async errors) or that crosses the
@@ -53,6 +55,12 @@ type Outcome =
 
 const value = (printed: string): Outcome => ({ kind: 'value', printed })
 const rejected = (printed: string): Outcome => ({ kind: 'rejected', printed })
+
+/** What `@pending` inside a SYNC extent (closure body) rejects with — the
+ * deref native's teaching error, and the F8 boundary's one contract. */
+const syncDerefOfPending = rejected(
+  '@ on a pending value requires an (async ...) context. Use (async @x) or compose with then/catch.'
+)
 
 /**
  * Evaluates each form and AWAITS its pending before moving on — the REPL
@@ -179,17 +187,86 @@ const probes: Probe[] = [
     expected: value('7'),
   },
   {
-    name: 'fn called from async runs its body async (@ inside body)',
+    name: 'F8: fn called from async applies SYNC — @ in the body rejects',
     forms: ['(defn probe-af [p] (+ 1 @p))', '(async (probe-af (promise-of 1)))'],
+    expected: syncDerefOfPending,
+  },
+  {
+    name: 'F8 positive: fn declares its own async; the caller @s the pending',
+    forms: [
+      '(defn probe-af2 [p] (async (+ 1 @p)))',
+      '(async @(probe-af2 (promise-of 1)))',
+    ],
     expected: value('2'),
   },
   {
-    name: 'fn recur inside async apply',
+    name: 'F8: recur fn with @ in the body rejects the same way',
     forms: [
       '(defn probe-count [n acc] (if (zero? n) acc (recur (dec n) (+ acc @(promise-of 1)))))',
       '(async (probe-count 4 0))',
     ],
+    expected: syncDerefOfPending,
+  },
+  {
+    name: 'F8 positive: self-recursive async fn adopts inner pendings',
+    forms: [
+      '(defn probe-count2 [n acc] (async (if (zero? n) acc @(probe-count2 (dec n) (+ acc @(promise-of 1))))))',
+      '(async @(probe-count2 4 0))',
+    ],
     expected: value('4'),
+  },
+  {
+    // Pre-F8 these three behaved DIFFERENTLY (native HOF sync, interpreted
+    // 3-arity async, &-args arity sync — scrutiny F8's damning evidence).
+    // One rule now: callbacks are closure bodies, sync everywhere.
+    name: 'F8 consistency: reduce callback is sync',
+    forms: ['(async (reduce (fn [acc x] (+ acc @(promise-of x))) 0 [1 2 3]))'],
+    expected: syncDerefOfPending,
+  },
+  {
+    name: 'F8 consistency: update 3-arity callback is sync',
+    forms: ['(async (update {:k 1} :k (fn [v] @(promise-of v))))'],
+    expected: syncDerefOfPending,
+  },
+  {
+    name: 'F8 consistency: update &-args arity callback is sync (same rule)',
+    forms: ['(async (update {:k 1} :k (fn [v extra] @(promise-of v)) 9))'],
+    expected: syncDerefOfPending,
+  },
+  {
+    name: 'F8: letfn BODY is lexical content — @ in it awaits',
+    forms: ['(async (letfn [(f [x] (+ x 1))] (f @(promise-of 41))))'],
+    expected: value('42'),
+  },
+  {
+    name: 'F8: letfn fn bodies are closure bodies — @ inside rejects',
+    forms: ['(async (letfn [(f [p] @p)] (f (promise-of 1))))'],
+    expected: syncDerefOfPending,
+  },
+  {
+    name: 'F8: binding inits are lexical content — @ in them awaits',
+    forms: [
+      '(def ^:dynamic *probe-fx* 1)',
+      '(async (binding [*probe-fx* @(promise-of 5)] *probe-fx*))',
+    ],
+    expected: value('5'),
+  },
+  {
+    // The scrutiny addendum's JS-model example shape: mutually recursive
+    // letfn fns, each its own (async …), pendings adopted by @ at each seam.
+    name: 'F8 composition: mutually recursive letfn of async fns',
+    forms: [
+      `(async
+         (letfn [(fetch-item [n]
+                   (async (let [v @(promise-of n)]
+                            @(collect v))))
+                 (collect [v]
+                   (async (if (< v 3)
+                            (cons v @(fetch-item (inc v)))
+                            (list v))))]
+           @(fetch-item 0)))`,
+    ],
+    expected: value('(0 1 2 3)'),
   },
   {
     name: 'multimethod dispatched from async',

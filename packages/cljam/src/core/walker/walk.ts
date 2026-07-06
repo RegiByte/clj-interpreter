@@ -632,13 +632,18 @@ function walkDefmacro(
   return defineMacro({ name: nameWithMeta, macro, env, ctx })
 }
 
-/** Two-phase letfn: install ALL siblings into their slots, THEN fill upvalues. */
-function walkLetfn(
+/**
+ * Two-phase letfn install: ALL siblings into their slots, THEN fill upvalues.
+ * Shared with the async twin — installation is sync on both paths (fn
+ * creation only copies captures); only the BODY differs (walkLetfnAsync
+ * walks it async — the F8 lexical rule).
+ */
+export function installLetfnBindings(
   node: LetfnNode,
   frame: EvalFrame,
   env: Env,
   ctx: EvaluationContext
-): CljValue {
+): void {
   const fills: Array<() => void> = []
   for (const binding of node.bindings) {
     if (binding.init === null || binding.init.op !== 'fn') {
@@ -659,6 +664,15 @@ function walkLetfn(
     fills.push(fillUpvalues)
   }
   for (const fill of fills) fill()
+}
+
+function walkLetfn(
+  node: LetfnNode,
+  frame: EvalFrame,
+  env: Env,
+  ctx: EvaluationContext
+): CljValue {
+  installLetfnBindings(node, frame, env, ctx)
   return walkNode(node.body, frame, env, ctx)
 }
 

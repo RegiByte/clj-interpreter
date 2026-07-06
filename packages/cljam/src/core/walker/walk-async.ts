@@ -15,13 +15,19 @@
  * sync walker mutates `let`/`loop` slots in place, so an async body sharing
  * the enclosing frame would watch its locals change while suspended.
  *
+ * Async is a LEXICAL boundary (F8, Phase 4 S3): `@` awaits exactly within
+ * the lexical extent of the `(async …)` body, stopping at closure boundaries.
+ * Invoked callables — fns, natives, multimethods, data structures — apply
+ * SYNC via `ctx.applyCallable`, one rule, no cases; a nested fn that wants
+ * await declares its own `(async …)` and returns a pending the caller `@`s
+ * (JS's model). The form twin still propagates async-ness dynamically into
+ * fn bodies — divergent ON PURPOSE, fallback-only, dies in S4.
+ *
  * Deliberate improvements over the form twin (intended divergences):
  *   - interop args ARE walked async (F7) — `(. obj m @p)` works; the form
  *     path documents "deref explicitly before the form".
  *   - `:invoke` pushes `ctx.frameStack` like the sync walker, so async
  *     errors carry `:frames` (the form twin never populated them).
- * Still mirrored as-is: `letfn`/`fn` creation delegates to sync (an `@` in a
- * letfn body does not await — form-twin V1 limitation, revisit in Phase 4).
  */
 
 import type {
@@ -34,6 +40,7 @@ import type {
   HostFieldNode,
   IfNode,
   InvokeNode,
+  LetfnNode,
   LetNode,
   LoopNode,
   MapNode,
@@ -51,7 +58,6 @@ import { v } from '../factories'
 import { getPos, maybeHydrateErrorPos } from '../positions'
 import { printString } from '../printer'
 import type {
-  CljFunction,
   CljList,
   CljMap,
   CljSymbol,
@@ -62,8 +68,7 @@ import type {
   EvaluationContext,
   StackFrame,
 } from '../types'
-import { RecurSignal, resolveArity, slotValuesForArity } from '../evaluator/arity'
-import { createAsyncEvalCtx } from '../evaluator/async-evaluator'
+import { RecurSignal } from '../evaluator/arity'
 import { racePendingTimeout, SYNC_DEREFABLE_KINDS } from '../pending'
 import {
   bindingPairsOrThrow,
@@ -81,7 +86,7 @@ import {
 import { dispatchMultiMethod } from '../evaluator/multimethod-dispatch'
 import type { EvalFrame } from './frame'
 import { makeFrame } from './frame'
-import { catchClauseMatches, walkNode } from './walk'
+import { catchClauseMatches, installLetfnBindings, walkNode } from './walk'
 
 /**
  * The sync entry for an `:async` node: copy captures NOW (the enclosing frame
@@ -120,6 +125,8 @@ export async function walkNodeAsync(
       return walkDoAsync(node, frame, env, ctx)
     case 'let':
       return walkLetAsync(node, frame, env, ctx)
+    case 'letfn':
+      return walkLetfnAsync(node, frame, env, ctx)
     case 'loop':
       return walkLoopAsync(node, frame, env, ctx)
     case 'recur':
@@ -149,10 +156,10 @@ export async function walkNodeAsync(
     case 'new':
       return walkNewAsync(node, frame, env, ctx)
 
-    // const/quote/local/var/js-var/the-var: leaves — nothing to await.
-    // fn/letfn: CREATION is sync (captures copy from the frame); bodies run
-    // async only when applied (walkInvokeAsync). async: nested blocks make a
-    // new pending via the sync entry, same as the form path.
+    // const/quote/local/var/js-var/the-var/ns: leaves — nothing to await.
+    // fn: CREATION is sync (captures copy from the frame); the body is a
+    // closure body, so it NEVER runs async (F8 lexical boundary). async:
+    // nested blocks make a new pending via the sync entry.
     default:
       return walkNode(node, frame, env, ctx)
   }
@@ -196,6 +203,21 @@ async function walkLetAsync(
       ctx
     )
   }
+  return walkNodeAsync(node.body, frame, env, ctx)
+}
+
+/**
+ * F8: the letfn BODY is lexical content of the async block, so it walks
+ * async; the sibling fns' bodies are closure bodies and stay sync (their
+ * installation — two-phase upvalue fill — is the shared sync helper).
+ */
+async function walkLetfnAsync(
+  node: LetfnNode,
+  frame: EvalFrame,
+  env: Env,
+  ctx: EvaluationContext
+): Promise<CljValue> {
+  installLetfnBindings(node, frame, env, ctx)
   return walkNodeAsync(node.body, frame, env, ctx)
 }
 
@@ -292,9 +314,12 @@ async function walkSetAsync(
 }
 
 /**
- * Mirrors walkDynamic with ONE form-path asymmetry preserved: binding VALUES
- * evaluate synchronously (`evaluateBindingAsync` delegates inits to syncCtx),
- * only the body runs async.
+ * Mirrors walkDynamic with inits AND body walked async — both are lexical
+ * content of the async block (F8; the form twin's sync-inits asymmetry was
+ * an under-coverage of the lexical rule). Per-pair eval/resolve/push order
+ * and exception-safe pops are unchanged; a suspension between pairs leaves
+ * earlier pushes observable, which is the binding-conveyance semantics the
+ * probes already pin.
  */
 async function walkDynamicAsync(
   node: DynamicNode,
@@ -309,7 +334,7 @@ async function walkDynamicAsync(
   try {
     for (let i = 0; i * 2 < pairs.length; i++) {
       const sym = bindingSymbolOrThrow(pairs[i * 2], list)
-      const newVal = walkNode(node.inits[i], frame, env, ctx)
+      const newVal = await walkNodeAsync(node.inits[i], frame, env, ctx)
       const targetVar = resolveDynamicBindingVar(sym, env, ctx)
       targetVar.bindingStack ??= []
       targetVar.bindingStack.push(newVal)
@@ -472,9 +497,12 @@ async function walkNewAsync(
 }
 
 /**
- * Mirrors walkInvoke with async arg walking, plus the deref interception the
- * form twin proved: inside async, `@`/deref is await-or-identity with JVM
- * 3-arg timeout semantics (F6). Same contract strings as the form path.
+ * Mirrors walkInvoke with async HEAD + ARG walking (they are lexical content
+ * of the async body), plus the deref interception the form twin proved:
+ * inside async, `@`/deref is await-or-identity with JVM 3-arg timeout
+ * semantics (F6). The apply itself is SYNC — the F8 lexical boundary: fn
+ * bodies are closure bodies, so `@` inside them does not await (the sync
+ * deref native's error tells the user to declare their own `(async …)`).
  */
 async function walkInvokeAsync(
   node: InvokeNode,
@@ -531,7 +559,7 @@ async function walkInvokeAsync(
   }
   ctx.frameStack.push(stackFrame)
   try {
-    return await applyCallableAsyncAst(evaledHead, args, env, ctx)
+    return ctx.applyCallable(evaledHead, args, env)
   } catch (e) {
     maybeHydrateErrorPos(e, list)
     if (e instanceof EvaluationError && !e.frames) {
@@ -581,64 +609,4 @@ async function walkDerefAsync(
     return ctx.applyCallable(derefFn, [val], env)
   }
   return val
-}
-
-/**
- * The async apply hub for the AST path. Fn bodies called from async code run
- * ASYNC (so `@` works inside them) — `astMethod` bodies on `walkNodeAsync`,
- * legacy form-only fns on the form twin. Natives, multimethods, and
- * data-structure callables stay sync, mirroring `applyCallableAsync`
- * (async-evaluator.ts).
- */
-async function applyCallableAsyncAst(
-  fn: CljValue,
-  args: CljValue[],
-  callEnv: Env,
-  ctx: EvaluationContext
-): Promise<CljValue> {
-  if (is.nativeFunction(fn)) {
-    if (fn.fnWithContext) {
-      return fn.fnWithContext(ctx, callEnv, ...args)
-    }
-    return fn.fn(...args)
-  }
-
-  if (is.function(fn)) {
-    const arity = resolveArity(fn.arities, args.length)
-    if (arity.astMethod) {
-      const method = arity.astMethod
-      ctx.instrumentation?.onEvent({
-        path: 'ast:function-body',
-        mode: ctx.vmExecutionMode ?? 'ast',
-        formKind: 'fn*',
-        details: { functionName: (fn as CljFunction).name ?? null },
-      })
-      const fnFrame = makeFrame(arity.astSlotCount ?? 0)
-      fnFrame.upvalues = arity.astUpvalues ?? []
-      let currentArgs = args
-      while (true) {
-        const slotArgs = slotValuesForArity(arity, currentArgs)
-        for (let i = 0; i < slotArgs.length; i++) fnFrame.slots[i] = slotArgs[i]
-        if (method.self !== null) fnFrame.slots[method.self.slot] = fn
-        try {
-          return await walkNodeAsync(method.body, fnFrame, fn.env, ctx)
-        } catch (e) {
-          if (e instanceof RecurSignal) {
-            currentArgs = e.args
-            continue
-          }
-          throw e
-        }
-      }
-    }
-    // No AST body (legacy/interpreter-path fn): the form twin binds params to
-    // Env chains and walks the body forms async.
-    return createAsyncEvalCtx(ctx).applyCallable(fn, args, callEnv)
-  }
-
-  if (is.multiMethod(fn)) {
-    return dispatchMultiMethod(fn, args, ctx, callEnv)
-  }
-
-  return ctx.applyCallable(fn, args, callEnv)
 }

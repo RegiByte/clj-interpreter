@@ -214,17 +214,16 @@
 ;; (testing "addition"
 ;;   (is (= 2 (+ 1 1))))
 ;;
-;; with-testing-context* is a helper function defined in this namespace so
-;; the (binding [*testing-contexts* ...]) form resolves the var correctly.
-;; The macro expands to a qualified call so it works from any namespace.
+;; Expands INLINE to binding (the JVM clojure.test shape) — no thunk. The
+;; body stays lexical content of its surroundings, so inside (async ...) a
+;; @deref in a testing body awaits (async is a lexical boundary that stops
+;; at closure bodies; a thunk would put the body on the wrong side of it).
+;; Syntax-quote qualifies *testing-contexts*, so it works from any namespace.
 ;; ---------------------------------------------------------------------------
 
-(defn with-testing-context* [string thunk]
-  (binding [*testing-contexts* (conj *testing-contexts* string)]
-    (thunk)))
-
 (defmacro testing [string & body]
-  `(with-testing-context* ~string (fn [] ~@body)))
+  `(binding [*testing-contexts* (conj *testing-contexts* ~string)]
+     ~@body))
 
 ;; ---------------------------------------------------------------------------
 ;; run-tests — discover and execute tests in one or more namespaces
