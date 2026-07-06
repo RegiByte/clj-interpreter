@@ -3,9 +3,11 @@
  */
 
 import { describe, expect, test } from 'vitest'
-import { v } from '../../factories'
+import { cljJsValue, cljVar, v } from '../../factories'
 import type { CljKeyword, CljMap, CljPending } from '../../types'
 import { EvaluationError } from '../../errors'
+import { createEvaluationContext } from '../index'
+import { thrownValueForHandler } from '../form-parsers'
 import { freshSession } from './evaluator-test-utils'
 
 // Helper: evaluate and assert we got a CljPending back
@@ -1120,6 +1122,183 @@ describe('@ await-or-identity inside async', () => {
         [v.keyword(':status'), v.number(200)],
         [v.keyword(':body'), v.string('ABC')],
       ])
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// F3 — one shared rejection-normalization table (thrownValueForHandler)
+// The same underlying error must take the same shape no matter which
+// construct observes it: sync try, async try, or catch*.
+// ---------------------------------------------------------------------------
+
+describe('F3 — shared rejection normalization', () => {
+  function kwEntry(map: CljMap, name: string) {
+    return map.entries.find(
+      ([k]) => k.kind === 'keyword' && (k as CljKeyword).name === name
+    )?.[1]
+  }
+
+  test('catch*, async try, and sync try shape the same EvaluationError identically', async () => {
+    // The same runtime error (calling a non-callable) observed three ways.
+    const viaCatch = evalPending(`
+      (catch* (then (promise-of 5) (fn [x] (x 1)))
+              (fn [e] e))
+    `)
+    const catchMap = (await viaCatch.promise) as CljMap
+
+    const viaAsyncTry = evalPending(`
+      (async (try ((deref (promise-of 5)) 1)
+                  (catch :default e e)))
+    `)
+    const asyncTryMap = (await viaAsyncTry.promise) as CljMap
+
+    const syncMap = freshSession().evaluate(
+      '(try (5 1) (catch :default e e))'
+    ) as CljMap
+
+    expect(catchMap.kind).toBe('map')
+    expect(asyncTryMap.kind).toBe('map')
+    expect(syncMap.kind).toBe('map')
+
+    // One table: :type agrees across all three observers…
+    expect(kwEntry(catchMap, ':type')).toEqual(kwEntry(syncMap, ':type'))
+    expect(kwEntry(asyncTryMap, ':type')).toEqual(kwEntry(syncMap, ':type'))
+    // …and catch* no longer mislabels cljam errors as :error/js.
+    expect(kwEntry(catchMap, ':type')).not.toEqual(v.keyword(':error/js'))
+  })
+
+  function sessionWithRejectingHost() {
+    const session = freshSession()
+    const ns = session.getNs('user')!
+    ns.vars.set(
+      'host',
+      cljVar(
+        'user',
+        'host',
+        cljJsValue({
+          // Lazy so the raw rejected promise is born inside jsToClj's wrap
+          // (no unhandled-rejection window before the pending tracker attaches).
+          get rejected() {
+            return Promise.reject(new Error('host boom'))
+          },
+        })
+      )
+    )
+    return session
+  }
+
+  test('catch* rethrows raw host faults instead of swallowing them into maps', async () => {
+    const session = sessionWithRejectingHost()
+    const result = session.evaluate(`
+      (catch* (. host rejected) (fn [e] :swallowed))
+    `) as CljPending
+    expect(result.kind).toBe('pending')
+    await expect(result.promise).rejects.toThrow('host boom')
+  })
+
+  test('async try rethrows the same raw host fault (parity pinned)', async () => {
+    const session = sessionWithRejectingHost()
+    const result = session.evaluate(`
+      (async (try (deref (. host rejected))
+                  (catch :default e :swallowed)))
+    `) as CljPending
+    expect(result.kind).toBe('pending')
+    await expect(result.promise).rejects.toThrow('host boom')
+  })
+
+  test('the table carries :frames when the EvaluationError has them', () => {
+    const ctx = createEvaluationContext()
+    const err = new EvaluationError('boom', {})
+    err.frames = [{ fnName: 'f', line: 1, col: 1, source: null, pos: null }]
+    const shaped = thrownValueForHandler(err, ctx) as CljMap
+    expect(shaped.kind).toBe('map')
+    expect(kwEntry(shaped, ':type')).toEqual(v.keyword(':error/runtime'))
+    expect(kwEntry(shaped, ':frames')).toBeDefined()
+    // Host faults are the observer's problem — the table refuses them.
+    expect(thrownValueForHandler(new TypeError('raw'), ctx)).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// F1 — pending auto-flattening at the cljPending factory seam
+// JS cannot represent Promise<Promise<T>>; neither should cljam represent
+// pending-of-pending. Resolutions that are themselves pendings are adopted.
+// ---------------------------------------------------------------------------
+
+describe('F1 — pending auto-flattening', () => {
+  test('a nested pending resolves to the inner value at the boundary', async () => {
+    const result = evalPending('(promise-of (promise-of :inner))')
+    expect(await result.promise).toEqual(v.keyword(':inner'))
+  })
+
+  test('then on pending-of-pending applies f to the innermost value', async () => {
+    const result = evalPending('(then (promise-of (promise-of 1)) inc)')
+    expect(await result.promise).toEqual(v.number(2))
+  })
+
+  test('@ inside async sees through nested pendings', async () => {
+    const result = evalPending('(async (deref (promise-of (promise-of 41))))')
+    expect(await result.promise).toEqual(v.number(41))
+  })
+
+  test('make-promise resolve with a pending adopts it (JS resolve parity)', async () => {
+    const result = evalPending(`
+      (then (make-promise (fn [res rej] (res (promise-of 7)))) inc)
+    `)
+    expect(await result.promise).toEqual(v.number(8))
+  })
+
+  test('catch*-returned pending feeds a later then with its value', async () => {
+    const result = evalPending(`
+      (-> (async (throw {:type :oops}))
+          (catch* (fn [e] (promise-of 10)))
+          (then inc))
+    `)
+    expect(await result.promise).toEqual(v.number(11))
+  })
+})
+
+// ---------------------------------------------------------------------------
+// F6 — deref aligns with JVM: (deref p) waits like `await`;
+// (deref p timeout-ms timeout-val) RETURNS timeout-val on timeout.
+// The old shape ((deref p ms) throwing, implicit 30s default) is gone.
+// ---------------------------------------------------------------------------
+
+describe('F6 — JVM 3-arg deref semantics', () => {
+  test('3-arg deref returns the value when it wins the race', async () => {
+    const result = evalPending('(async (deref (promise-of 1) 5000 :fallback))')
+    expect(await result.promise).toEqual(v.number(1))
+  })
+
+  test('3-arg deref returns timeout-val when the timeout wins', async () => {
+    const result = evalPending(`
+      (async (deref (make-promise (fn [res rej] nil)) 10 :timed-out))
+    `)
+    expect(await result.promise).toEqual(v.keyword(':timed-out'))
+  })
+
+  test('plain @ awaits with no implicit timeout', async () => {
+    const session = freshSession()
+    const ns = session.getNs('user')!
+    ns.vars.set(
+      'slow',
+      cljVar(
+        'user',
+        'slow',
+        v.pending(
+          new Promise((res) => setTimeout(() => res(v.number(7)), 50))
+        )
+      )
+    )
+    const result = session.evaluate('(async (+ 1 (deref slow)))') as CljPending
+    expect(await result.promise).toEqual(v.number(8))
+  })
+
+  test('the old 2-arg timeout form is rejected with guidance', async () => {
+    const result = evalPending('(async (deref (promise-of 1) 100))')
+    await expect(result.promise).rejects.toThrow(
+      'expects (deref p) or (deref p timeout-ms timeout-val)'
     )
   })
 })

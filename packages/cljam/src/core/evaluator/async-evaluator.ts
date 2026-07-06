@@ -44,17 +44,25 @@
 
 import { is } from '../assertions'
 import { extend } from '../env'
-import { CljThrownSignal, EvaluationError, isEvaluationError } from '../errors'
+import { EvaluationError } from '../errors'
 import { v } from '../factories'
 import { specialFormKeywords, valueKeywords } from '../keywords'
 import { setValues } from '../persistent/map-helpers'
-import type { CljList, CljSet, CljValue, Env, EvaluationContext } from '../types'
+import type {
+  CljList,
+  CljPending,
+  CljSet,
+  CljValue,
+  Env,
+  EvaluationContext,
+} from '../types'
 import { getPos } from '../positions'
 import { bindParams, RecurSignal, resolveArity } from './arity'
 import { setupBindingVars } from './binding-setup'
 import {
   matchesDiscriminator,
   parseTryStructure,
+  thrownValueForHandler,
   validateBindingVector,
 } from './form-parsers'
 import { dispatchMultiMethod } from './multimethod-dispatch'
@@ -176,7 +184,34 @@ async function evaluateFormsAsync(
 // sync deref for these kinds. Everything else gets the await-or-identity
 // treatment: return the value as-is (matches JS `await` semantics).
 // If a new derefable type is added to atoms.ts, add its kind here too.
-const SYNC_DEREFABLE_KINDS = new Set(['atom', 'volatile', 'reduced', 'delay'])
+export const SYNC_DEREFABLE_KINDS = new Set([
+  'atom',
+  'volatile',
+  'reduced',
+  'delay',
+])
+
+/**
+ * The JVM 3-arg deref race: resolve with `timeoutVal` when the timeout wins.
+ * Shared by both async twins (this file's deref interception and the AST
+ * walker's `walkDerefAsync`). The timer is cleared once the pending settles so
+ * it doesn't hold the event loop open after the race is decided.
+ */
+export function racePendingTimeout(
+  pending: CljPending,
+  timeoutMs: number,
+  timeoutVal: CljValue
+): Promise<CljValue> {
+  let timerId: ReturnType<typeof setTimeout> | null = null
+  const timeoutPromise = new Promise<CljValue>((resolve) => {
+    timerId = setTimeout(() => resolve(timeoutVal), timeoutMs)
+  })
+  const clear = () => {
+    if (timerId !== null) clearTimeout(timerId)
+  }
+  pending.promise.then(clear, clear)
+  return Promise.race([pending.promise, timeoutPromise])
+}
 
 const ASYNC_SPECIAL_FORMS = new Set([
   'quote',
@@ -222,37 +257,43 @@ async function evaluateListAsync(
   // Evaluate the head (function position)
   const fn = await evaluateFormAsync(head, env, asyncCtx)
 
-  // Deref interception: @x expands to (deref x), (deref x ms) adds a timeout.
-  // Semantics inside (async ...): await-or-identity, matching JS `await`.
-  //   CljPending        → await the promise (with optional timeout)
-  //   atom/volatile/... → delegate to sync deref (SYNC_DEREFABLE_KINDS)
-  //   anything else     → return the value as-is
+  // Deref interception: @x expands to (deref x).
+  // Semantics inside (async ...): await-or-identity, matching JS `await` and
+  // JVM deref:
+  //   (deref p)                        → await the promise, no timeout — like
+  //                                      `await` / JVM 1-arg deref, it waits.
+  //   (deref p timeout-ms timeout-val) → JVM 3-arg contract: resolve to
+  //                                      timeout-val when the timeout wins.
+  //   atom/volatile/...                → delegate to sync deref (SYNC_DEREFABLE_KINDS)
+  //   anything else                    → return the value as-is
   // This makes @ safe to use on any value in async middleware — no need to
   // know whether the handler below is sync or async.
-  // Default timeout: 30 000 ms (matches JVM Clojure deref timeout-ms convention).
-  if (is.aFunction(fn) && fn.name === 'deref' && (list.value.length === 2 || list.value.length === 3)) {
+  if (
+    is.aFunction(fn) &&
+    fn.name === 'deref' &&
+    (list.value.length === 2 ||
+      list.value.length === 3 ||
+      list.value.length === 4)
+  ) {
     const val = await evaluateFormAsync(list.value[1], env, asyncCtx)
     if (is.pending(val)) {
-      let timeoutMs = 30_000
-      if (list.value.length === 3) {
-        const t = await evaluateFormAsync(list.value[2], env, asyncCtx)
-        if (!is.number(t)) throw new EvaluationError('deref timeout must be a number (milliseconds)', { t })
-        timeoutMs = t.value
-      }
-      let timerId: ReturnType<typeof setTimeout> | null = null
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timerId = setTimeout(
-          () => reject(new EvaluationError(`deref timed out after ${timeoutMs}ms`, {})),
-          timeoutMs
+      if (list.value.length === 2) return val.promise
+      if (list.value.length !== 4) {
+        throw new EvaluationError(
+          'deref of a pending expects (deref p) or (deref p timeout-ms timeout-val)',
+          { list, env },
+          getPos(list)
         )
-      })
-      // Cancel the timer when val.promise settles so the orphaned timeoutPromise
-      // never fires as an unhandled rejection (which would crash Node/Bun).
-      val.promise.then(
-        () => { if (timerId !== null) clearTimeout(timerId) },
-        () => { if (timerId !== null) clearTimeout(timerId) }
-      )
-      return Promise.race([val.promise, timeoutPromise])
+      }
+      const t = await evaluateFormAsync(list.value[2], env, asyncCtx)
+      if (!is.number(t)) {
+        throw new EvaluationError(
+          'deref timeout must be a number (milliseconds)',
+          { t }
+        )
+      }
+      const timeoutVal = await evaluateFormAsync(list.value[3], env, asyncCtx)
+      return racePendingTimeout(val, t.value, timeoutVal)
     }
     // Not pending: delegate to sync deref for natively derefable kinds (atom/volatile/reduced/delay).
     // Anything else returns as-is — await-or-identity semantics, matching JS `await`.
@@ -499,19 +540,8 @@ async function evaluateTryAsync(
   } catch (e) {
     if (e instanceof RecurSignal) throw e
 
-    let thrownValue: CljValue
-    if (e instanceof CljThrownSignal) {
-      thrownValue = e.value
-    } else if (isEvaluationError(e)) {
-      const evalErr = e
-      const typeKeyword = evalErr.code ? v.keyword(`:${evalErr.code}`) : v.keyword(':error/runtime')
-      thrownValue = v.map([
-        [v.keyword(':type'), typeKeyword],
-        [v.keyword(':message'), v.string(e.message)],
-      ])
-    } else {
-      throw e
-    }
+    const thrownValue = thrownValueForHandler(e, asyncCtx.syncCtx)
+    if (thrownValue === null) throw e
 
     let handled = false
     for (const clause of catchClauses) {

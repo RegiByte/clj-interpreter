@@ -12,8 +12,9 @@
  */
 
 import { is } from '../assertions'
-import { EvaluationError } from '../errors'
-import { getPos } from '../positions'
+import { CljThrownSignal, EvaluationError, isEvaluationError } from '../errors'
+import { v } from '../factories'
+import { framesToClj, getPos } from '../positions'
 import type {
   CljFunction,
   CljList,
@@ -194,4 +195,49 @@ export function matchesDiscriminatorValue(
     'catch discriminator must be a keyword or a predicate function',
     { discriminator: disc, env }
   )
+}
+
+// ---- thrown-value normalization ----
+
+/**
+ * The error map handed to catch handlers for cljam's own runtime errors:
+ * {:type <:code>|:error/runtime :message <msg> :frames <frames>?}.
+ */
+export function evaluationErrorToCljMap(
+  error: EvaluationError,
+  ctx: EvaluationContext
+): CljValue {
+  const typeKeyword = error.code
+    ? v.keyword(`:${error.code}`)
+    : v.keyword(':error/runtime')
+  const entries: [CljValue, CljValue][] = [
+    [v.keyword(':type'), typeKeyword],
+    [v.keyword(':message'), v.string(error.message)],
+  ]
+  if (error.frames && error.frames.length > 0) {
+    entries.push([
+      v.keyword(':frames'),
+      framesToClj(error.frames, ctx.currentSource),
+    ])
+  }
+  return v.map(entries)
+}
+
+/**
+ * THE rejection/throw normalization table. Every construct that hands a
+ * thrown value to user code — sync `try` (interpreter and AST walker),
+ * async `try`, and `catch*` — observes thrown JS values through this one
+ * function, so the same underlying error always takes the same shape:
+ *
+ *   CljThrownSignal → the thrown CljValue, verbatim
+ *   EvaluationError → error map via evaluationErrorToCljMap
+ *   anything else   → null — a host fault; the observer must rethrow it
+ */
+export function thrownValueForHandler(
+  e: unknown,
+  ctx: EvaluationContext
+): CljValue | null {
+  if (e instanceof CljThrownSignal) return e.value
+  if (isEvaluationError(e)) return evaluationErrorToCljMap(e, ctx)
+  return null
 }

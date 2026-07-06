@@ -1,7 +1,8 @@
 import { is } from '../assertions'
-import { EvaluationError } from '../errors'
+import { CljThrownSignal, EvaluationError } from '../errors'
 import { v } from '../factories'
 import { getPos } from '../positions'
+import { printString } from '../printer'
 import type { CljList, CljValue, Env, EvaluationContext } from '../types'
 
 // ---------------------------------------------------------------------------
@@ -79,6 +80,22 @@ export function cljToJs(
     case 'list':
     case 'vector':
       return val.value.map((v) => cljToJs(v, ctx, callEnv))
+    case 'pending':
+      // Boundary policy (Phase 3 F5): a pending crossing to the host becomes
+      // a real Promise. Resolutions convert like any other value; a Clojure
+      // (throw …) rejection unwraps from its CljThrownSignal into a
+      // host-friendly Error (printed value as message, original CljValue on
+      // `cause`). EvaluationErrors and raw host errors pass through — they
+      // are already Errors.
+      return val.promise.then(
+        (resolved) => cljToJs(resolved, ctx, callEnv),
+        (err) => {
+          if (err instanceof CljThrownSignal) {
+            throw new Error(printString(err.value), { cause: err.value })
+          }
+          throw err
+        }
+      )
     case 'map': {
       const obj: Record<string, unknown> = {}
       for (const [key, value] of val.entries) {

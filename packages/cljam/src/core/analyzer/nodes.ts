@@ -243,6 +243,23 @@ export interface InvokeNode extends NodeBase {
   args: AstNode[]
 }
 
+/**
+ * `(async body…)` — the body analyzed as a ZERO-PARAM fn method (own slot
+ * space, own capture set). The fn-method shape is deliberate, not incidental:
+ * the sync walker mutates `let`/`loop` slots in place, so a suspended async
+ * body sharing the enclosing frame would see its locals change under it. As a
+ * closure, captures are copied at entry (the same allocate-then-fill machinery
+ * as `fn`) and the body owns a fresh frame — suspension-safe by construction.
+ * `enterFn` clears the recur target, so a stray `recur` inside `async` is
+ * `malformed/recur-outside` rather than the form path's undefined behavior.
+ */
+export interface AsyncNode extends NodeBase {
+  op: 'async'
+  method: FnMethodNode
+  /** cljam-specific: resolved upvalue descriptors captured by the async body. */
+  captures: Upvalue[]
+}
+
 export interface RecurNode extends NodeBase {
   op: 'recur'
   exprs: AstNode[]
@@ -352,6 +369,7 @@ export type AstNode =
   | FnNode
   | FnMethodNode
   | InvokeNode
+  | AsyncNode
   | RecurNode
   | ThrowNode
   | TryNode

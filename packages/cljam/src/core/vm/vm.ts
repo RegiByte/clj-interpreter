@@ -2,14 +2,17 @@ import { is } from '../assertions'
 import { derefValue, getNamespaceEnv, lookup, lookupVar } from '../env'
 import { CljThrownSignal, EvaluationError, isEvaluationError } from '../errors'
 import { defineMacro, defineVar } from '../evaluator/defs'
-import { matchesDiscriminator } from '../evaluator/form-parsers'
+import {
+  evaluationErrorToCljMap,
+  matchesDiscriminator,
+} from '../evaluator/form-parsers'
 import {
   callJsMethod,
   constructJsValue,
   readJsProperty,
 } from '../evaluator/js-interop'
 import { v, cljWithMeta } from '../factories'
-import { framesToClj, getPos } from '../positions'
+import { getPos } from '../positions'
 import { printString } from '../printer'
 import type {
   Arity,
@@ -1899,20 +1902,7 @@ function runtimeErrorValue(
   error: EvaluationError,
   ctx: EvaluationContext
 ): CljValue {
-  const typeKeyword = error.code
-    ? v.keyword(`:${error.code}`)
-    : v.keyword(':error/runtime')
-  const entries: [CljValue, CljValue][] = [
-    [v.keyword(':type'), typeKeyword],
-    [v.keyword(':message'), v.string(error.message)],
-  ]
-  if (error.frames && error.frames.length > 0) {
-    entries.push([
-      v.keyword(':frames'),
-      framesToClj(error.frames, ctx.currentSource),
-    ])
-  }
-  return v.map(entries)
+  return evaluationErrorToCljMap(error, ctx)
 }
 
 function returnFromFrame(state: VmState, value: CljValue): void {

@@ -46,15 +46,16 @@ export const SUPPORTED_OPS: ReadonlySet<string> = new Set([
   'host-call',
   'host-field',
   'new',
+  'async',
 ])
 
 // Every analyzer op is walked except the permanent exclusions: 'invalid'
 // (analysis errors are classified fatal-or-fallback before walking) and
-// invokes of `async`/`ns` (form-walker-owned, mirroring the VM's
-// `unsupportedVmSpecialForms`).
+// invokes of `ns` (form-walker-owned, mirroring the VM's
+// `unsupportedVmSpecialForms`). `async` walks since Phase 3 — the sync `:async`
+// entry hands the body to `walkNodeAsync` (walk-async.ts).
 
 const formWalkerOwnedHeads = new Set<string>([
-  specialFormKeywords['async'],
   specialFormKeywords['ns'],
 ])
 

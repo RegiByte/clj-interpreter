@@ -95,7 +95,8 @@ describe('measurement utilities', () => {
   })
 
   it('reports fallback and final interpreter path honestly', () => {
-    const result = measure('(measure* (async 42))')
+    // `ns` is the remaining form-walker-owned head; `async` walks since Phase 3.
+    const result = measure('(measure* (ns measure-fallback-probe))')
     const names = stageNames(result)
     const fallbackStage = stages(result).find(
       (stage) => expectKeywordName(entry(stage, ':stage')) === ':fallback'
@@ -107,6 +108,16 @@ describe('measurement utilities', () => {
     expect(
       expectKeywordName(entry(expectMap(entry(fallbackStage!, ':reason')), ':category'))
     ).toBe(':unsupported-special-form')
+  })
+
+  it('walks (async …) on the AST path — no fallback (Phase 3)', () => {
+    const result = measure('(measure* (async 42))')
+
+    expect(stageNames(result)).toEqual(
+      expect.arrayContaining([':macroexpand', ':ast/analyze', ':ast/walk'])
+    )
+    expect(stageNames(result)).not.toContain(':fallback')
+    expect(expectKeywordName(entry(result, ':path'))).toBe(':ast/top-level')
   })
 
   it('records macro expansion before execution for macro-heavy input', () => {

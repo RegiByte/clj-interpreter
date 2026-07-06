@@ -50,6 +50,7 @@ import {
 } from './env'
 import type {
   AstNode,
+  AsyncNode,
   BindingNode,
   ConstNode,
   ConstType,
@@ -752,6 +753,8 @@ function analyzeList(
         return analyzeLetfn(list, env, st, orig)
       case 'fn*':
         return analyzeFn(list, env, st, orig)
+      case 'async':
+        return analyzeAsync(list, env, st, orig)
       case 'def':
         return analyzeDef(list, env, st, orig)
       case 'defmacro':
@@ -1039,6 +1042,51 @@ function analyzeFn(
     maxFixedArity,
     // Shared upvalue table for the whole closure (matches the VM's per-closure
     // upvalueDescriptors). Captured names visible here pre-execution.
+    captures: fnEnv.closure.upvalues,
+  }
+}
+
+/**
+ * `(async body…)` analyzed as a fn-method-like closure: `enterFn` opens a new
+ * capture scope (and clears the recur target — recur does not cross the async
+ * boundary), `enterArity` gives the body its own slot space. See `AsyncNode`
+ * in nodes.ts for why the closure shape is load-bearing (suspension safety).
+ */
+function analyzeAsync(
+  list: CljList,
+  env: NodeEnv,
+  st: AnalyzeState,
+  orig: CljValue
+): AsyncNode {
+  const fnEnv = enterFn(env)
+  const bodyEnv = enterArity(fnEnv)
+  const bodyForms = list.value.slice(1)
+  const body = analyzeBody(bodyForms, bodyEnv, st, list)
+
+  const method: FnMethodNode = {
+    op: 'fn-method',
+    form: list,
+    env: fnEnv,
+    children: ['params', 'body'],
+    pos: posOf(orig, list),
+    tag: null,
+    params: [],
+    self: null,
+    variadic: false,
+    fixedArity: 0,
+    body,
+    namedSlotCount: bodyEnv.slots.next,
+    bodyForms,
+  }
+
+  return {
+    op: 'async',
+    form: list,
+    env,
+    children: ['method'],
+    pos: posOf(orig, list),
+    tag: null,
+    method,
     captures: fnEnv.closure.upvalues,
   }
 }

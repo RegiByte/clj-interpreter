@@ -99,6 +99,13 @@ function header(node: AstNode): string {
       const captured = node.binding.cell.captured ? ' captured' : ''
       return `:binding ${node.name} :${node.localKind} slot=${node.slot}${captured}`
     }
+    case 'async': {
+      const caps =
+        node.captures.length > 0
+          ? ` captures=[${node.captures.map((c) => c.name).join(' ')}]`
+          : ''
+      return `:async${caps}`
+    }
     case 'dynamic':
       return ':dynamic'
     case 'set!':

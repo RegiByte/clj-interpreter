@@ -162,13 +162,14 @@ function unsupported(st: EmitState, node: AstNode): false {
 }
 
 /**
- * The legacy VM compiler refuses `async`/`ns` by head symbol (compiler.ts
- * `unsupportedVmSpecialForms`), even though the analyzer models both as plain
- * invoke nodes. Mirror that here so the live IR path falls back exactly where
- * legacy does, with the same `reason.category` (the probe suites assert it).
+ * The legacy VM compiler refuses `ns` by head symbol (compiler.ts
+ * `unsupportedVmSpecialForms`); the analyzer models it as a plain invoke node.
+ * Mirror that here so the live IR path falls back exactly where legacy does,
+ * with the same `reason.category` (the probe suites assert it). `async` used
+ * to be refused the same way — it is now a real `AsyncNode` op with its own
+ * case in the emit switch below.
  */
 const unsupportedVmSpecialForms = new Set<string>([
-  specialFormKeywords['async'],
   specialFormKeywords['ns'],
 ])
 
@@ -177,15 +178,10 @@ function unsupportedInvokeReason(node: InvokeNode): VmFallbackReason | null {
   if (!is.list(form) || form.value.length === 0) return null
   const head = form.value[0]
   if (!is.symbol(head) || !unsupportedVmSpecialForms.has(head.name)) return null
-  return head.name === specialFormKeywords['ns']
-    ? {
-        category: 'unsupported-top-level-mutation',
-        detail: `VM does not support top-level mutation form ${head.name}`,
-      }
-    : {
-        category: 'unsupported-special-form',
-        detail: `VM does not support special form ${head.name}`,
-      }
+  return {
+    category: 'unsupported-top-level-mutation',
+    detail: `VM does not support top-level mutation form ${head.name}`,
+  }
 }
 
 /** Widen the chunk's local-array size to include `slot`. */
@@ -887,6 +883,16 @@ export function emitNode(node: AstNode, st: EmitState): boolean {
       emit(st.chunk, Op.JsNew, node.pos)
       emitOperand(st.chunk, node.args.length, node.pos)
       return true
+    }
+
+    case 'async': {
+      // The VM has no resumable driver (scrutiny option b was rejected —
+      // Phase 3 async lives on the AST walker). Same category + detail as the
+      // legacy head-symbol refusal so the fallback contract is unchanged.
+      return fail(st, {
+        category: 'unsupported-special-form',
+        detail: 'VM does not support special form async',
+      })
     }
 
     case 'invalid':

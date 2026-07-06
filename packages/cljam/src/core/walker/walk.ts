@@ -48,13 +48,9 @@ import type {
 } from '../analyzer/nodes'
 import { is } from '../assertions'
 import { getNamespaceEnv, makeEnv } from '../env'
-import {
-  CljThrownSignal,
-  EvaluationError,
-  isEvaluationError,
-} from '../errors'
+import { CljThrownSignal, EvaluationError } from '../errors'
 import { v } from '../factories'
-import { framesToClj, getPos, maybeHydrateErrorPos } from '../positions'
+import { getPos, maybeHydrateErrorPos } from '../positions'
 import { printString } from '../printer'
 import type {
   Arity,
@@ -77,7 +73,10 @@ import {
   resolveSetTargetVar,
 } from '../evaluator/binding-setup'
 import { defineMacro, defineVar, withDefmacroMeta } from '../evaluator/defs'
-import { matchesDiscriminatorValue } from '../evaluator/form-parsers'
+import {
+  matchesDiscriminatorValue,
+  thrownValueForHandler,
+} from '../evaluator/form-parsers'
 import {
   callJsMethod,
   constructJsValue,
@@ -85,6 +84,7 @@ import {
 } from '../evaluator/js-interop'
 import { dispatchMultiMethod } from '../evaluator/multimethod-dispatch'
 import type { EvalFrame } from './frame'
+import { walkAsyncBlock } from './walk-async'
 
 /**
  * The dispatcher stays deliberately TINY — every non-trivial op body lives in
@@ -171,6 +171,8 @@ export function walkNode(
       return walkNew(node, frame, env, ctx)
     case 'the-var':
       return walkTheVar(node, frame, env, ctx)
+    case 'async':
+      return walkAsyncBlock(node, frame, env, ctx)
 
     default:
       throw new EvaluationError(
@@ -698,28 +700,8 @@ function walkTry(
     // recur punches through try to its fn/loop target.
     if (e instanceof RecurSignal) throw e
 
-    let thrownValue: CljValue
-    if (e instanceof CljThrownSignal) {
-      thrownValue = e.value
-    } else if (isEvaluationError(e)) {
-      const evalErr = e
-      const typeKeyword = evalErr.code
-        ? v.keyword(`:${evalErr.code}`)
-        : v.keyword(':error/runtime')
-      const entries: [CljValue, CljValue][] = [
-        [v.keyword(':type'), typeKeyword],
-        [v.keyword(':message'), v.string(e.message)],
-      ]
-      if (evalErr.frames && evalErr.frames.length > 0) {
-        entries.push([
-          v.keyword(':frames'),
-          framesToClj(evalErr.frames, ctx.currentSource),
-        ])
-      }
-      thrownValue = v.map(entries)
-    } else {
-      throw e
-    }
+    const thrownValue = thrownValueForHandler(e, ctx)
+    if (thrownValue === null) throw e
 
     let handled = false
     for (const clause of node.catches) {
@@ -750,7 +732,7 @@ function walkTry(
  * rules. An evaluation failure is a catch-all — same rule as the form path
  * (unresolvable JVM class names like java.lang.Throwable land here).
  */
-function catchClauseMatches(
+export function catchClauseMatches(
   clause: CatchNode,
   thrown: CljValue,
   frame: EvalFrame,

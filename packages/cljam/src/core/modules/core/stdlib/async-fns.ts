@@ -6,6 +6,7 @@
 
 import { DocGroups, docMeta, v } from '../../../factories'
 import { CljThrownSignal, EvaluationError } from '../../../errors'
+import { thrownValueForHandler } from '../../../evaluator/form-parsers'
 import { is } from '../../../assertions'
 import { printString } from '../../../printer'
 import { toSeq } from '../../../transformations'
@@ -32,15 +33,11 @@ export const asyncFunctions: Record<string, CljValue> = {
         if (!is.pending(val)) {
           return ctx.applyCallable(f, [val], callEnv)
         }
-        const promise = val.promise.then((resolved) => {
-          try {
-            const result = ctx.applyCallable(f, [resolved], callEnv)
-            // Unwrap nested CljPending for transparent chaining
-            return is.pending(result) ? result.promise : result
-          } catch (e) {
-            return Promise.reject(e)
-          }
-        })
+        // A handler-returned (or resolved) pending flattens at the cljPending
+        // factory seam; a handler throw rejects the chain natively.
+        const promise = val.promise.then((resolved) =>
+          ctx.applyCallable(f, [resolved], callEnv)
+        )
         return v.pending(promise)
       }
     )
@@ -65,26 +62,11 @@ export const asyncFunctions: Record<string, CljValue> = {
         }
         if (!is.pending(val)) return val // not pending — no rejection possible
         const promise = val.promise.catch((err) => {
-          // Normalize the thrown value to a CljValue map
-          let errVal: CljValue
-          if (err instanceof CljThrownSignal) {
-            // (throw ...) inside async: pass the thrown value directly
-            errVal = err.value
-          } else {
-            errVal = v.map([
-              [v.keyword(':type'), v.keyword(':error/js')],
-              [
-                v.keyword(':message'),
-                v.string(err instanceof Error ? err.message : String(err)),
-              ],
-            ])
-          }
-          try {
-            const result = ctx.applyCallable(f, [errVal], callEnv)
-            return is.pending(result) ? result.promise : result
-          } catch (e) {
-            return Promise.reject(e)
-          }
+          // Shared normalization table (same as try/catch in every engine);
+          // null = host fault — rethrow it, parity with async try.
+          const errVal = thrownValueForHandler(err, ctx)
+          if (errVal === null) throw err
+          return ctx.applyCallable(f, [errVal], callEnv)
         })
         return v.pending(promise)
       }

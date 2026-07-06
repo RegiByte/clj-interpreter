@@ -265,9 +265,15 @@ export const cljRecord = (
 
 // --- ASYNC (experimental) ---
 export const cljPending = (promise: Promise<CljValue>): CljPending => {
-  const pending: CljPending = { kind: 'pending', promise }
+  // Adopt pending resolutions (JS thenable-flattening parity): a pending never
+  // resolves to another pending, so double-@ traps are unrepresentable. Inner
+  // pendings were themselves built here, so one unwrap flattens any depth.
+  const flattened = promise.then((value) =>
+    value.kind === 'pending' ? (value as CljPending).promise : value
+  )
+  const pending: CljPending = { kind: 'pending', promise: flattened }
   // Track fulfillment so the printer can show #<Pending @val> when already settled.
-  promise.then(
+  flattened.then(
     (v) => {
       pending.resolved = true
       pending.resolvedValue = v

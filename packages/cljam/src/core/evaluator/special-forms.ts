@@ -1,12 +1,12 @@
 import { is } from '../assertions'
 import { extend, getNamespaceEnv, lookupVar, makeEnv } from '../env'
-import { CljThrownSignal, EvaluationError, isEvaluationError } from '../errors'
+import { EvaluationError } from '../errors'
 import { v } from '../factories'
 // --- ASYNC (experimental) ---
 import { createAsyncEvalCtx } from './async-evaluator'
 // --- END ASYNC ---
 import { specialFormKeywords } from '../keywords.ts'
-import { framesToClj, getPos } from '../positions'
+import { getPos } from '../positions'
 import type {
   CljList,
   CljValue,
@@ -18,6 +18,7 @@ import { resolveSetTargetVar, setupBindingVars } from './binding-setup'
 import {
   matchesDiscriminator,
   parseTryStructure,
+  thrownValueForHandler,
   validateBindingVector,
 } from './form-parsers'
 import { defineMacro, defineVar, withDefmacroMeta } from './defs'
@@ -44,28 +45,8 @@ function evaluateTry(
   } catch (e) {
     if (e instanceof RecurSignal) throw e
 
-    let thrownValue: CljValue
-    if (e instanceof CljThrownSignal) {
-      thrownValue = e.value
-    } else if (isEvaluationError(e)) {
-      const evalErr = e
-      const typeKeyword = evalErr.code
-        ? v.keyword(`:${evalErr.code}`)
-        : v.keyword(':error/runtime')
-      const entries: [CljValue, CljValue][] = [
-        [v.keyword(':type'), typeKeyword],
-        [v.keyword(':message'), v.string(e.message)],
-      ]
-      if (evalErr.frames && evalErr.frames.length > 0) {
-        entries.push([
-          v.keyword(':frames'),
-          framesToClj(evalErr.frames, ctx.currentSource),
-        ])
-      }
-      thrownValue = v.map(entries)
-    } else {
-      throw e
-    }
+    const thrownValue = thrownValueForHandler(e, ctx)
+    if (thrownValue === null) throw e
 
     let handled = false
     for (const clause of catchClauses) {

@@ -113,6 +113,10 @@ function walk(node: AstNode, context: Context, errors: AnalysisError[]): void {
       for (const m of node.methods) walk(m, context, errors)
       return
 
+    case 'async':
+      walk(node.method, context, errors)
+      return
+
     case 'fn-method':
       for (const p of node.params) walk(p, 'expr', errors)
       if (node.self !== null) walk(node.self, 'expr', errors)
