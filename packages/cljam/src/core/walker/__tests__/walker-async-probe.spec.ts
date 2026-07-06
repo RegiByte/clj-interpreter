@@ -296,3 +296,28 @@ describe('walker async probes: F5 host boundary (cljToJs)', () => {
     )
   })
 })
+
+describe('session.evaluateAsync routing (Phase 4 S1)', () => {
+  it('routes a top-level (async …) through ast:top-level with zero fallbacks', async () => {
+    // Pins the session-347 audit finding: evaluateAsync evaluates each form
+    // through the sync ctx.evaluate (under 'ast' that is the walker) and only
+    // AWAITS a trailing pending — it never enters the legacy async form twin
+    // at top level. Counting fallback events (not just ast:top-level, which
+    // REPL plumbing also bumps) is what makes a silent legacy detour fail.
+    const fallbacks: unknown[] = []
+    let topLevel = 0
+    const session = createSessionFromSnapshot(baseline, {
+      vmExecutionMode: 'ast',
+      instrumentation: {
+        onEvent: (event) => {
+          if (event.path === 'fallback') fallbacks.push(event)
+          if (event.path === 'ast:top-level') topLevel += 1
+        },
+      },
+    })
+    const result = await session.evaluateAsync('(async (+ 1 @(promise-of 41)))')
+    expect(printString(result)).toBe('42')
+    expect(fallbacks).toEqual([])
+    expect(topLevel).toBeGreaterThan(0)
+  })
+})

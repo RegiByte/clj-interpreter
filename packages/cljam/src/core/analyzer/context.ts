@@ -64,6 +64,7 @@ function walk(node: AstNode, context: Context, errors: AnalysisError[]): void {
     case 'var':
     case 'the-var':
     case 'js-var':
+    case 'ns':
     case 'invalid':
       return
 

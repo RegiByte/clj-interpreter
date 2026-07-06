@@ -162,6 +162,54 @@ export function resolveSetTargetVar(symForm: CljSymbol, env: Env): CljVar {
   return targetVar
 }
 
+/**
+ * Resolves a (var sym) target symbol to its Var — unqualified via the Env
+ * chain, or qualified through :as aliases / full namespace names. Shared by
+ * the form walker's `var` special form and the AST walker's `walkTheVar`
+ * namespace fallback so resolution logic and error messages cannot drift.
+ */
+export function resolveTheVarBySymbol(
+  sym: CljSymbol,
+  env: Env,
+  ctx: EvaluationContext
+): CljVar {
+  const slashIdx = sym.name.indexOf('/')
+  if (slashIdx > 0 && slashIdx < sym.name.length - 1) {
+    const alias = sym.name.slice(0, slashIdx)
+    const localName = sym.name.slice(slashIdx + 1)
+    const nsEnv = getNamespaceEnv(env)
+    // Resolve alias: local :as alias first, then full namespace name
+    const targetNs =
+      nsEnv.ns?.aliases.get(alias) ?? ctx.resolveNs(alias) ?? null
+    if (!targetNs) {
+      throw new EvaluationError(
+        `No such namespace: ${alias}`,
+        { sym },
+        getPos(sym)
+      )
+    }
+    const targetVar = targetNs.vars.get(localName)
+    if (!targetVar) {
+      throw new EvaluationError(
+        `Var ${sym.name} not found`,
+        { sym },
+        getPos(sym)
+      )
+    }
+    return targetVar
+  }
+
+  const targetVar = lookupVar(sym.name, env)
+  if (!targetVar) {
+    throw new EvaluationError(
+      `Unable to resolve var: ${sym.name} in this context`,
+      { sym },
+      getPos(sym)
+    )
+  }
+  return targetVar
+}
+
 export function setupBindingVars(
   list: CljList,
   env: Env,

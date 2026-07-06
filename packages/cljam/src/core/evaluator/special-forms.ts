@@ -1,5 +1,5 @@
 import { is } from '../assertions'
-import { extend, getNamespaceEnv, lookupVar, makeEnv } from '../env'
+import { extend, getNamespaceEnv, makeEnv } from '../env'
 import { EvaluationError } from '../errors'
 import { v } from '../factories'
 // --- ASYNC (experimental) ---
@@ -14,7 +14,11 @@ import type {
   EvaluationContext,
 } from '../types'
 import { parseArities, RecurSignal } from './arity'
-import { resolveSetTargetVar, setupBindingVars } from './binding-setup'
+import {
+  resolveSetTargetVar,
+  resolveTheVarBySymbol,
+  setupBindingVars,
+} from './binding-setup'
 import {
   matchesDiscriminator,
   parseTryStructure,
@@ -449,41 +453,7 @@ function evaluateVar(
   if (!is.symbol(sym)) {
     throw new EvaluationError('var expects a symbol', { list }, getPos(list))
   }
-
-  const slashIdx = sym.name.indexOf('/')
-  if (slashIdx > 0 && slashIdx < sym.name.length - 1) {
-    const alias = sym.name.slice(0, slashIdx)
-    const localName = sym.name.slice(slashIdx + 1)
-    const nsEnv = getNamespaceEnv(env)
-    // Resolve alias: local :as alias first, then full namespace name
-    const targetNs =
-      nsEnv.ns?.aliases.get(alias) ?? ctx.resolveNs(alias) ?? null
-    if (!targetNs) {
-      throw new EvaluationError(
-        `No such namespace: ${alias}`,
-        { sym },
-        getPos(sym)
-      )
-    }
-    const v = targetNs.vars.get(localName)
-    if (!v)
-      throw new EvaluationError(
-        `Var ${sym.name} not found`,
-        { sym },
-        getPos(sym)
-      )
-    return v
-  }
-
-  const v = lookupVar(sym.name, env)
-  if (!v) {
-    throw new EvaluationError(
-      `Unable to resolve var: ${sym.name} in this context`,
-      { sym },
-      getPos(sym)
-    )
-  }
-  return v
+  return resolveTheVarBySymbol(sym, env, ctx)
 }
 
 function evaluateBinding(

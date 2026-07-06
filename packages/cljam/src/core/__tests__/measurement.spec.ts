@@ -94,9 +94,15 @@ describe('measurement utilities', () => {
     expect(expectKeywordName(entry(result, ':path'))).toBe(':vm/top-level')
   })
 
-  it('reports fallback and final interpreter path honestly', () => {
-    // `ns` is the remaining form-walker-owned head; `async` walks since Phase 3.
-    const result = measure('(measure* (ns measure-fallback-probe))')
+  it('reports fallback and final interpreter path honestly (VM mode)', () => {
+    // Under the DEFAULT mode nothing public falls back anymore (Phase 4 S1 —
+    // `ns` walks). The VM's ns refusal is the surviving fallback specimen, so
+    // the honesty contract is pinned under 'opportunistic' until S4 retires
+    // the fallback machinery entirely.
+    const result = measure(
+      '(measure* (ns measure-fallback-probe))',
+      'opportunistic'
+    )
     const names = stageNames(result)
     const fallbackStage = stages(result).find(
       (stage) => expectKeywordName(entry(stage, ':stage')) === ':fallback'
@@ -107,7 +113,17 @@ describe('measurement utilities', () => {
     expect(fallbackStage).toBeDefined()
     expect(
       expectKeywordName(entry(expectMap(entry(fallbackStage!, ':reason')), ':category'))
-    ).toBe(':unsupported-special-form')
+    ).toBe(':unsupported-top-level-mutation')
+  })
+
+  it('walks (ns …) on the AST path — no fallback (Phase 4 S1)', () => {
+    const result = measure('(measure* (ns measure-ns-walk-probe))')
+
+    expect(stageNames(result)).toEqual(
+      expect.arrayContaining([':macroexpand', ':ast/analyze', ':ast/walk'])
+    )
+    expect(stageNames(result)).not.toContain(':fallback')
+    expect(expectKeywordName(entry(result, ':path'))).toBe(':ast/top-level')
   })
 
   it('walks (async …) on the AST path — no fallback (Phase 3)', () => {

@@ -134,6 +134,17 @@ export interface TheVarNode extends NodeBase {
   lexicalCandidates: Array<{ kind: 'local' | 'upvalue'; slot: number }>
 }
 
+export interface NsNode extends NodeBase {
+  op: 'ns'
+  /**
+   * The optional docstring at position 2. All real ns work (aliases, requires,
+   * namespace switching) happens in the session/loader pre-pass BEFORE
+   * evaluation — recording the docstring is the only runtime job left, so the
+   * node carries nothing else and has no children.
+   */
+  docstring: string | null
+}
+
 export interface HostCallNode extends NodeBase {
   op: 'host-call'
   method: string
@@ -357,6 +368,7 @@ export type AstNode =
   | LocalNode
   | VarNode
   | TheVarNode
+  | NsNode
   | HostCallNode
   | HostFieldNode
   | JsVarNode

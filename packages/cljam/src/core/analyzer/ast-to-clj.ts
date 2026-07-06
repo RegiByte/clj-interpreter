@@ -175,6 +175,13 @@ function opFields(node: AstNode): [string, CljValue][] {
     }
     case 'quote':
       return [['literal?', v.boolean(true)]]
+    case 'ns':
+      return [
+        [
+          'docstring',
+          node.docstring !== null ? v.string(node.docstring) : v.nil(),
+        ],
+      ]
     case 'invalid':
       return [
         ['message', v.string(node.message)],

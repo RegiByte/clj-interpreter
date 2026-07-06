@@ -10,10 +10,11 @@
  *
  * Scope rules:
  *   - locals    → `frame.slots[node.slot]` / `frame.upvalues[node.upvalueIndex]`
- *   - Vars      → resolved LIVE through the form-walker's own symbol path
- *                 (`ctx.evaluate(node.form, env)`) so alias resolution, js/
- *                 dot-chains, dynamic binding stacks, and hot-swap behave
- *                 byte-identically. Never cache an analysis-time Var value.
+ *   - Vars      → resolved LIVE through the interpreter's own symbol logic
+ *                 (`ctx.evaluateSymbol` / `resolveTheVarBySymbol`) so alias
+ *                 resolution, js/ dot-chains, dynamic binding stacks, and
+ *                 hot-swap behave byte-identically. Never cache an
+ *                 analysis-time Var value.
  *
  * Captures are copy-by-value with ALLOCATE-then-FILL timing: a plain `fn`
  * fills its upvalues at creation (so `loop`/`recur` slot reuse cannot leak into
@@ -38,6 +39,7 @@ import type {
   LoopNode,
   MapNode,
   NewNode,
+  NsNode,
   RecurNode,
   SetBangNode,
   SetNode,
@@ -71,6 +73,7 @@ import {
   bindingSymbolOrThrow,
   resolveDynamicBindingVar,
   resolveSetTargetVar,
+  resolveTheVarBySymbol,
 } from '../evaluator/binding-setup'
 import { defineMacro, defineVar, withDefmacroMeta } from '../evaluator/defs'
 import {
@@ -171,6 +174,8 @@ export function walkNode(
       return walkNew(node, frame, env, ctx)
     case 'the-var':
       return walkTheVar(node, frame, env, ctx)
+    case 'ns':
+      return walkNs(node, env)
     case 'async':
       return walkAsyncBlock(node, frame, env, ctx)
 
@@ -429,8 +434,9 @@ function walkNew(
 /**
  * Lexical Var candidates are pre-resolved flat coordinates (innermost-first)
  * — no runtime chain walk. Mirrors the VM's LoadLexicalVar. The namespace
- * fallback delegates to the form-walker's `var` special form for
- * byte-identical resolution and errors.
+ * fallback resolves through `resolveTheVarBySymbol` — the same helper the
+ * form-walker's `var` special form uses — for byte-identical resolution and
+ * errors. This was the last `ctx.evaluate` inside walker/ (Phase 4 S1).
  */
 function walkTheVar(
   node: TheVarNode,
@@ -445,7 +451,23 @@ function walkTheVar(
         : frame.upvalues[candidate.slot]
     if (is.var(value)) return value
   }
-  return ctx.evaluate(node.form, env)
+  // analyzeTheVar guarantees the (var sym) shape — a non-symbol argument
+  // became an 'invalid' node before this op could exist.
+  const sym = (node.form as CljList).value[1] as CljSymbol
+  return resolveTheVarBySymbol(sym, env, ctx)
+}
+
+/**
+ * Mirrors `evaluateNs`: all real ns work (aliases, requires, namespace
+ * switching) happens in the session/loader pre-pass — the runtime handler
+ * only records the optional docstring on the current namespace.
+ */
+function walkNs(node: NsNode, env: Env): CljValue {
+  if (node.docstring !== null) {
+    const nsEnv = getNamespaceEnv(env)
+    if (nsEnv.ns) nsEnv.ns.doc = node.docstring
+  }
+  return v.nil()
 }
 
 /** Mirrors `dispatch.ts` evaluateList after the special-form gate. */

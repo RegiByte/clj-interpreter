@@ -63,11 +63,8 @@ import type {
   StackFrame,
 } from '../types'
 import { RecurSignal, resolveArity, slotValuesForArity } from '../evaluator/arity'
-import {
-  createAsyncEvalCtx,
-  racePendingTimeout,
-  SYNC_DEREFABLE_KINDS,
-} from '../evaluator/async-evaluator'
+import { createAsyncEvalCtx } from '../evaluator/async-evaluator'
+import { racePendingTimeout, SYNC_DEREFABLE_KINDS } from '../pending'
 import {
   bindingPairsOrThrow,
   bindingSymbolOrThrow,

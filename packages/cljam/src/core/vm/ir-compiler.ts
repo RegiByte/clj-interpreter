@@ -31,7 +31,6 @@ import type {
 import { is } from '../assertions'
 import { mergeDocIntoMeta, withDefmacroMeta } from '../evaluator/defs'
 import { v } from '../factories'
-import { specialFormKeywords } from '../keywords.ts'
 import { getPos, setPos } from '../positions'
 import type {
   CljBoolean,
@@ -159,29 +158,6 @@ function unsupported(st: EmitState, node: AstNode): false {
     category: 'unsupported-special-form',
     detail: `ir-compiler: no lowering for op '${node.op}'`,
   })
-}
-
-/**
- * The legacy VM compiler refuses `ns` by head symbol (compiler.ts
- * `unsupportedVmSpecialForms`); the analyzer models it as a plain invoke node.
- * Mirror that here so the live IR path falls back exactly where legacy does,
- * with the same `reason.category` (the probe suites assert it). `async` used
- * to be refused the same way — it is now a real `AsyncNode` op with its own
- * case in the emit switch below.
- */
-const unsupportedVmSpecialForms = new Set<string>([
-  specialFormKeywords['ns'],
-])
-
-function unsupportedInvokeReason(node: InvokeNode): VmFallbackReason | null {
-  const form = node.form
-  if (!is.list(form) || form.value.length === 0) return null
-  const head = form.value[0]
-  if (!is.symbol(head) || !unsupportedVmSpecialForms.has(head.name)) return null
-  return {
-    category: 'unsupported-top-level-mutation',
-    detail: `VM does not support top-level mutation form ${head.name}`,
-  }
 }
 
 /** Widen the chunk's local-array size to include `slot`. */
@@ -489,8 +465,6 @@ export function emitNode(node: AstNode, st: EmitState): boolean {
 
     case 'invoke': {
       const { chunk } = st
-      const unsupportedReason = unsupportedInvokeReason(node)
-      if (unsupportedReason !== null) return fail(st, unsupportedReason)
       if (shouldEmitTailSelfCall(node, st)) {
         for (const arg of node.args) {
           if (!emitNode(arg, st)) return false
@@ -892,6 +866,19 @@ export function emitNode(node: AstNode, st: EmitState): boolean {
       return fail(st, {
         category: 'unsupported-special-form',
         detail: 'VM does not support special form async',
+      })
+    }
+
+    case 'ns': {
+      // `ns` is a real analyzer op since Phase 4 S1 (it used to be refused by
+      // head symbol as a plain invoke). The VM still never lowers it — all
+      // real ns work happens in the session/loader pre-pass, and the walker
+      // owns the residual docstring write. Same category + detail as the
+      // legacy head-symbol refusal so the fallback contract is unchanged
+      // (the probe suites assert it).
+      return fail(st, {
+        category: 'unsupported-top-level-mutation',
+        detail: 'VM does not support top-level mutation form ns',
       })
     }
 

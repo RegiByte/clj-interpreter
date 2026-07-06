@@ -151,6 +151,18 @@ const probes: Probe[] = [
     expectAst: 'top',
   },
 
+  // ── Tier 5.5: ns (Phase 4 S1 — the last form-owned head now walks) ────
+  {
+    name: 'ns docstring lands on the namespace',
+    forms: ['(ns walker.probe.ns-doc "walker ns docs")', '(:doc (describe *ns*))'],
+    expectAst: 'top',
+  },
+  {
+    name: 'ns without docstring evaluates to nil',
+    forms: ['(ns walker.probe.ns-nodoc)', '[(:doc (describe *ns*))]'],
+    expectAst: 'top',
+  },
+
   // ── Error parity ──────────────────────────────────────────────────────
   // The analyzer tolerates unresolved Vars (that's what makes forward refs
   // work), so this legitimately WALKS and throws at Var-resolution time with
@@ -332,6 +344,31 @@ describe('AST walker ≡ form-walker (curated probes)', () => {
     const result = session.evaluate('(my-mac3 41)')
     expect(printString(result)).toBe('42')
     expect(executed).toContain('my-mac3')
+  })
+
+  it('(ns …) walks with zero fallback events (Phase 4 S1 gate)', () => {
+    // The comparative probes above cannot pin THIS form's path (a multi-form
+    // probe's ast:top-level count can be satisfied by its other forms), so
+    // this counts fallback events directly: the ns form was the last
+    // form-walker-owned head, and its analyzer op must leave nothing to fall
+    // back for.
+    const fallbacks: unknown[] = []
+    let topLevel = 0
+    const session = createSessionFromSnapshot(baseline, {
+      vmExecutionMode: 'ast',
+      instrumentation: {
+        onEvent: (event) => {
+          if (event.path === 'fallback') fallbacks.push(event)
+          if (event.path === 'ast:top-level') topLevel += 1
+        },
+      },
+    })
+    session.evaluate('(ns walker.probe.ns-honesty "doc via walker")')
+    expect(fallbacks).toEqual([])
+    expect(topLevel).toBeGreaterThan(0)
+    expect(
+      printString(session.evaluate('(:doc (describe *ns*))'))
+    ).toBe('"doc via walker"')
   })
 
   it('walker-created closures survive session cloning (astUpvalues deep-copy)', () => {

@@ -106,6 +106,8 @@ function header(node: AstNode): string {
           : ''
       return `:async${caps}`
     }
+    case 'ns':
+      return `:ns${node.docstring !== null ? ' <doc>' : ''}`
     case 'dynamic':
       return ':dynamic'
     case 'set!':

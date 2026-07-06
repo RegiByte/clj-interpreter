@@ -50,13 +50,13 @@ import { specialFormKeywords, valueKeywords } from '../keywords'
 import { setValues } from '../persistent/map-helpers'
 import type {
   CljList,
-  CljPending,
   CljSet,
   CljValue,
   Env,
   EvaluationContext,
 } from '../types'
 import { getPos } from '../positions'
+import { racePendingTimeout, SYNC_DEREFABLE_KINDS } from '../pending'
 import { bindParams, RecurSignal, resolveArity } from './arity'
 import { setupBindingVars } from './binding-setup'
 import {
@@ -179,40 +179,6 @@ async function evaluateFormsAsync(
 // If a new special form is added to the sync dispatcher and omitted here,
 // (async ...) blocks will silently treat it as a function call at runtime.
 // Add new forms here and delegate to syncCtx if no async-aware handling needed.
-// Kinds handled by the sync `deref` function in stdlib/atoms.ts.
-// When @ is used inside (async ...) on a non-pending value, we delegate to
-// sync deref for these kinds. Everything else gets the await-or-identity
-// treatment: return the value as-is (matches JS `await` semantics).
-// If a new derefable type is added to atoms.ts, add its kind here too.
-export const SYNC_DEREFABLE_KINDS = new Set([
-  'atom',
-  'volatile',
-  'reduced',
-  'delay',
-])
-
-/**
- * The JVM 3-arg deref race: resolve with `timeoutVal` when the timeout wins.
- * Shared by both async twins (this file's deref interception and the AST
- * walker's `walkDerefAsync`). The timer is cleared once the pending settles so
- * it doesn't hold the event loop open after the race is decided.
- */
-export function racePendingTimeout(
-  pending: CljPending,
-  timeoutMs: number,
-  timeoutVal: CljValue
-): Promise<CljValue> {
-  let timerId: ReturnType<typeof setTimeout> | null = null
-  const timeoutPromise = new Promise<CljValue>((resolve) => {
-    timerId = setTimeout(() => resolve(timeoutVal), timeoutMs)
-  })
-  const clear = () => {
-    if (timerId !== null) clearTimeout(timerId)
-  }
-  pending.promise.then(clear, clear)
-  return Promise.race([pending.promise, timeoutPromise])
-}
-
 const ASYNC_SPECIAL_FORMS = new Set([
   'quote',
   'def',

@@ -134,7 +134,10 @@ describe('VM evaluation dispatch instrumentation', () => {
     expect(events.some((event) => event.path === 'vm:function-body')).toBe(false)
   })
 
-  it('falls back cleanly for unsupported public session forms by default', () => {
+  it('walks (ns …) by default — no public session form falls back (Phase 4 S1)', () => {
+    // Until Phase 4 S1, (ns …) was the canonical fallback specimen — the last
+    // form-walker-owned head. It is now a real analyzer op, so the default
+    // mode has NO public form left that falls back.
     const events: EvalEvent[] = []
     const session = createSession({
       instrumentation: { onEvent: (event) => events.push(event) },
@@ -143,14 +146,12 @@ describe('VM evaluation dispatch instrumentation', () => {
     events.length = 0
 
     expect(session.evaluate('(ns fallback.test)')).toEqual(v.nil())
+    expect(events.some((event) => event.path === 'fallback')).toBe(false)
     expect(events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          path: 'fallback',
-          mode: 'ast',
-          reason: expect.objectContaining({
-            category: 'unsupported-special-form',
-          }),
+          path: 'ast:top-level',
+          formKind: 'list:ns',
         }),
       ])
     )

@@ -13,9 +13,7 @@
  * the permanent exclusions below) and the fallback path goes dead.
  */
 
-import type { AstNode, InvokeNode } from '../analyzer/nodes'
-import { is } from '../assertions'
-import { specialFormKeywords } from '../keywords.ts'
+import type { AstNode } from '../analyzer/nodes'
 
 export const SUPPORTED_OPS: ReadonlySet<string> = new Set([
   'const',
@@ -47,38 +45,23 @@ export const SUPPORTED_OPS: ReadonlySet<string> = new Set([
   'host-field',
   'new',
   'async',
+  'ns',
 ])
 
-// Every analyzer op is walked except the permanent exclusions: 'invalid'
-// (analysis errors are classified fatal-or-fallback before walking) and
-// invokes of `ns` (form-walker-owned, mirroring the VM's
-// `unsupportedVmSpecialForms`). `async` walks since Phase 3 — the sync `:async`
-// entry hands the body to `walkNodeAsync` (walk-async.ts).
-
-const formWalkerOwnedHeads = new Set<string>([
-  specialFormKeywords['ns'],
-])
-
-function unsupportedInvokeHead(node: InvokeNode): string | null {
-  const form = node.form
-  if (!is.list(form) || form.value.length === 0) return null
-  const head = form.value[0]
-  if (!is.symbol(head) || !formWalkerOwnedHeads.has(head.name)) return null
-  return `invoke:${head.name}`
-}
+// Every analyzer op is walked except the one permanent exclusion: 'invalid'
+// (analysis errors are classified fatal-or-fallback before walking). `async`
+// walks since Phase 3 — the sync `:async` entry hands the body to
+// `walkNodeAsync` (walk-async.ts). `ns` walks since Phase 4 S1 — the last
+// form-walker-owned head is gone.
 
 /**
- * Returns the first op (or op-qualifier like `invoke:async`) the walker
- * cannot execute, or null when the whole tree is walkable. The generic
- * descent is driven by `node.children` — the analyzer's contract is that every
- * walkable child is listed there, in evaluation order.
+ * Returns the first op the walker cannot execute, or null when the whole tree
+ * is walkable. The generic descent is driven by `node.children` — the
+ * analyzer's contract is that every walkable child is listed there, in
+ * evaluation order.
  */
 export function containsUnsupportedOp(node: AstNode): string | null {
   if (!SUPPORTED_OPS.has(node.op)) return node.op
-  if (node.op === 'invoke') {
-    const headReason = unsupportedInvokeHead(node)
-    if (headReason !== null) return headReason
-  }
 
   for (const field of node.children) {
     const child = (node as unknown as Record<string, unknown>)[field]

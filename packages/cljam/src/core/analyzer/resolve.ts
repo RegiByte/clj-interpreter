@@ -773,6 +773,8 @@ function analyzeList(
         return analyzeTry(list, env, st, orig)
       case 'var':
         return analyzeTheVar(list, env, st, orig)
+      case 'ns':
+        return analyzeNs(list, env, orig)
       case 'set!':
         return analyzeSetBang(list, env, st, orig)
       case 'binding':
@@ -1383,6 +1385,27 @@ function analyzeTheVar(
     ns: ns ?? theVar?.ns ?? null,
     resolved: theVar !== undefined,
     lexicalCandidates,
+  }
+}
+
+/**
+ * All real ns work (aliases, requires, namespace switching) happens in the
+ * session/loader pre-pass BEFORE any form is evaluated. The only runtime job
+ * left is capturing the optional docstring at position 2 — mirror
+ * `evaluateNs` exactly, including its permissiveness (no shape validation).
+ */
+function analyzeNs(list: CljList, env: NodeEnv, orig: CljValue): AstNode {
+  const maybeDoc = list.value[2]
+  const docstring =
+    maybeDoc !== undefined && is.string(maybeDoc) ? maybeDoc.value : null
+  return {
+    op: 'ns',
+    form: list,
+    env,
+    children: [],
+    pos: posOf(orig, list),
+    tag: null,
+    docstring,
   }
 }
 
