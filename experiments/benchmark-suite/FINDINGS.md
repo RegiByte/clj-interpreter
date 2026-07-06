@@ -1,5 +1,21 @@
 # Findings — First Cross-Engine Benchmark Run
 
+> **⚡ UPDATE (session 352, 2026-07-06): Phase 4 complete — engines
+> retaxonomized, legacy paths deleted.** The form-walking interpreter and the
+> legacy VM compiler no longer exist; `cljam-interp` and `cljam-ast` are
+> retired as engine names. The scoreboard engines are now **cljam-walker**
+> (`vmExecutionMode: 'off'` — the AST walker, THE base engine) and
+> **cljam-vm** (`'function-body'` — fn bodies on ir-compiler bytecode).
+> Post-deletion run `runs/20260706-183941/`: **walker 12.0× SCI geomean,
+> VM 11.2×** — statistically identical to the pre-deletion profile
+> (`runs/20260705-163253/`: ast 11.8×, vm 11.6×), i.e. deleting ~4,700
+> lines of legacy engine cost nothing at runtime. Walker wins where locals
+> dominate (fib, seq/transduce pipelines, destructure, data-transform,
+> string-build); VM wins loop-sum, vector-build, atom-swap, closure-churn,
+> multimethod; try-catch still BEATS SCI on both (0.8×/0.7×). **Finding 4
+> (map-assoc anomaly) remains open and is now the worst item on the board**
+> (~105–110× SCI, both engines).
+
 > **⚡ UPDATE (session 334, 2026-06-21): Finding 2 is RESOLVED.** The vector `conj`
 > O(n²) pathology is fixed — `CljVector` now uses a 32-way trie + tail (the
 > persistent-vector arc). `vector-build`: cljam **3.67s → 130ms (interp) / 46ms (VM)**,
