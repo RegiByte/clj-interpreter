@@ -425,6 +425,9 @@ describe('VM call and frame opcodes', () => {
     emit(rootChunk, Op.Return)
 
     const ctx = createEvaluationContext()
+    // bytecodeBody-only fn: the apply hub runs it on the VM only when the
+    // mode enables VM participation ('off' would fall to the empty form body).
+    ctx.vmExecutionMode = 'function-body'
     const applyCallable = ctx.applyCallable
     ctx.applyCallable = (callable, args, callEnv) => {
       if (callable === bridgeFn) {

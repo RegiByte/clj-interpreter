@@ -182,14 +182,12 @@ function evaluateFnStar(
     arityForms = rest.slice(1)
   }
   const arities = parseArities(arityForms, env)
-  // In 'ast' mode fn bodies get an AST attachment instead of bytecode — the
-  // walker is the execution engine there, mirroring the VM's fn-body seam.
-  const canUseAstBody =
-    ctx.vmExecutionMode === 'ast' && canCompileVmFnBodyInEnv(env)
+  // The walker is the base engine, so fn bodies always get an AST attachment
+  // when the env allows it; bytecode is attached additionally per VM mode
+  // (the apply hub prefers bytecode when the mode enables it).
+  const canUseAstBody = canCompileVmFnBodyInEnv(env)
   const canUseVmBody =
-    ctx.vmExecutionMode !== 'off' &&
-    ctx.vmExecutionMode !== 'ast' &&
-    canCompileVmFnBodyInEnv(env)
+    ctx.vmExecutionMode !== 'off' && canCompileVmFnBodyInEnv(env)
   for (const arity of arities) {
     assertRecurInTailPosition(arity.body)
 

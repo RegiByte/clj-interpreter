@@ -94,11 +94,11 @@ describe('measurement utilities', () => {
     expect(expectKeywordName(entry(result, ':path'))).toBe(':vm/top-level')
   })
 
-  it('reports fallback and final interpreter path honestly (VM mode)', () => {
+  it('reports VM fallback and final walker path honestly (VM mode)', () => {
     // Under the DEFAULT mode nothing public falls back anymore (Phase 4 S1 —
-    // `ns` walks). The VM's ns refusal is the surviving fallback specimen, so
-    // the honesty contract is pinned under 'opportunistic' until S4 retires
-    // the fallback machinery entirely.
+    // `ns` walks). The VM's ns refusal is the surviving fallback specimen;
+    // since S4a the refusal lands on the WALKER (the base engine), so the
+    // honesty contract is: :fallback stage recorded, then :ast/* stages.
     const result = measure(
       '(measure* (ns measure-fallback-probe))',
       'opportunistic'
@@ -108,8 +108,10 @@ describe('measurement utilities', () => {
       (stage) => expectKeywordName(entry(stage, ':stage')) === ':fallback'
     )
 
-    expect(names).toEqual(expect.arrayContaining([':fallback', ':interpreter']))
-    expect(expectKeywordName(entry(result, ':path'))).toBe(':interpreter')
+    expect(names).toEqual(
+      expect.arrayContaining([':fallback', ':ast/analyze', ':ast/walk'])
+    )
+    expect(expectKeywordName(entry(result, ':path'))).toBe(':ast/top-level')
     expect(fallbackStage).toBeDefined()
     expect(
       expectKeywordName(entry(expectMap(entry(fallbackStage!, ':reason')), ':category'))

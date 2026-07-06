@@ -41,13 +41,14 @@ export type EvaluationMeasurement = {
 }
 
 /**
- * The engine a session runs on when the caller doesn't pick one: the AST
- * walker (Phase 2). Resolved into every context at construction
- * (`createEvaluationContext`) and at the session facade, so the direct
- * `ctx.vmExecutionMode === 'ast'` reads in apply.ts/special-forms.ts always
- * see a concrete mode.
+ * The AST walker is THE engine; `vmExecutionMode` describes VM participation
+ * only. `'off'` (the default) runs everything on the walker;
+ * `'function-body'` puts fn bodies on VM bytecode; `'opportunistic'`/
+ * `'vm-required'` add top-level VM compilation. Resolved into every context
+ * at construction (`createEvaluationContext`) and at the session facade, so
+ * direct `ctx.vmExecutionMode` reads always see a concrete mode.
  */
-export const DEFAULT_VM_EXECUTION_MODE: VmExecutionMode = 'ast'
+export const DEFAULT_VM_EXECUTION_MODE: VmExecutionMode = 'off'
 
 function vmMode(ctx: EvaluationContext): VmExecutionMode {
   return ctx.vmExecutionMode ?? DEFAULT_VM_EXECUTION_MODE
@@ -214,12 +215,12 @@ function evaluateTopLevelWithVm(
 }
 
 /**
- * Top-level AST-walker attempt (mode 'ast') — the walker analogue of
- * `evaluateTopLevelWithVm`, in the same additive-path shape: analyze, classify
- * errors (ported-malformed = fatal throw, the analyzer is the authority),
- * pre-scan the whole tree against the walker's allowlist, and only then walk.
- * Returns null to fall back to the form-walker for the WHOLE form — never
- * mid-form, so a coverage gap can't cause partial side effects.
+ * Top-level AST-walker execution — the base engine for every mode (runs after
+ * the per-mode VM attempt): analyze, classify errors (ported-malformed =
+ * fatal throw, the analyzer is the authority), pre-scan the whole tree
+ * against the walker's allowlist, and only then walk. Returns null to fall
+ * back to the form-walker for the WHOLE form — never mid-form, so a coverage
+ * gap can't cause partial side effects. (The fallback branches die in S4b.)
  */
 function evaluateTopLevelWithAst(
   expr: CljValue,
@@ -323,10 +324,8 @@ export function evaluateWithContext(
     if (depth === 0) {
       const vmResult = evaluateTopLevelWithVm(expr, env, ctx, mode)
       if (vmResult !== null) return vmResult
-      if (mode === 'ast') {
-        const astResult = evaluateTopLevelWithAst(expr, env, ctx)
-        if (astResult !== null) return astResult
-      }
+      const astResult = evaluateTopLevelWithAst(expr, env, ctx)
+      if (astResult !== null) return astResult
     }
 
     return evaluateWithContextInner(expr, env, ctx, depth === 0)

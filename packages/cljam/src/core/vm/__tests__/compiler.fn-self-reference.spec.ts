@@ -241,13 +241,11 @@ describe('VM named fn* self-reference', () => {
       )
       fn.name = 'down'
 
+      // bytecodeBody-only arity — VM participation must be opted into.
+      const ctx = createEvaluationContext()
+      ctx.vmExecutionMode = 'function-body'
       expect(
-        applyFunctionWithContext(
-          fn,
-          [v.number(10005)],
-          createEvaluationContext(),
-          env
-        )
+        applyFunctionWithContext(fn, [v.number(10005)], ctx, env)
       ).toEqual(v.number(0))
     })
 
@@ -275,13 +273,11 @@ describe('VM named fn* self-reference', () => {
       )
       fn.name = 'collect'
 
+      // bytecodeBody-only arity — VM participation must be opted into.
+      const ctx = createEvaluationContext()
+      ctx.vmExecutionMode = 'function-body'
       expect(
-        applyFunctionWithContext(
-          fn,
-          [v.number(3)],
-          createEvaluationContext(),
-          env
-        )
+        applyFunctionWithContext(fn, [v.number(3)], ctx, env)
       ).toEqual(v.list([v.number(1), v.number(11)]))
     })
   })

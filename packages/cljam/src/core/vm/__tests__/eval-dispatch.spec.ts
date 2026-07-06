@@ -113,7 +113,7 @@ describe('VM evaluation dispatch instrumentation', () => {
       expect.arrayContaining([
         expect.objectContaining({
           path: 'ast:top-level',
-          mode: 'ast',
+          mode: 'off',
           formKind: 'list:+',
         }),
       ])

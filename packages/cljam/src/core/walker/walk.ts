@@ -86,6 +86,8 @@ import {
   readJsProperty,
 } from '../evaluator/js-interop'
 import { dispatchMultiMethod } from '../evaluator/multimethod-dispatch'
+import { tryCompileVmFnBodyFromIr } from '../vm/ir-compiler'
+import { assignChunkIds } from '../vm/chunk'
 import type { EvalFrame } from './frame'
 import { walkAsyncBlock } from './walk-async'
 
@@ -564,6 +566,85 @@ function makeAstArities(
   return { arities, fillUpvalues }
 }
 
+/**
+ * The walker analogue of `evaluateFnStar`'s VM fn-body seam: when the mode
+ * enables VM participation, each arity additionally gets a `bytecodeBody`
+ * (the apply hub prefers it per mode; `astMethod` stays as the base). Only
+ * zero-capture fns qualify — the synthetic fn* is re-analyzed from `env`,
+ * where captured locals (frame slots) are invisible. The captures set is the
+ * analyzer's own verdict, so this is exact, not a heuristic.
+ */
+function maybeAttachVmBodies(
+  node: FnNode,
+  arities: Arity[],
+  env: Env,
+  ctx: EvaluationContext
+): void {
+  const mode = ctx.vmExecutionMode
+  if (mode === undefined || mode === 'off') return
+  if (node.captures.length > 0) return
+  for (const arity of arities) {
+    const vmResult = tryCompileVmFnBodyFromIr(
+      arity.params,
+      arity.restParam,
+      arity.body,
+      node.name,
+      env,
+      ctx
+    )
+    if (vmResult.ok) {
+      assignChunkIds(vmResult.chunk, ctx)
+      arity.bytecodeBody = vmResult.chunk
+      ctx.instrumentation?.onEvent({
+        path: 'vm:function-body-compiled',
+        mode,
+        formKind: 'fn*',
+        ast: node.form,
+        details: {
+          evalId: ctx.currentEvalIdentity?.id,
+          chunkId: vmResult.chunk.id,
+          functionName: node.name,
+          fixedParamCount: arity.params.length,
+          hasRestParam: arity.restParam !== null,
+        },
+      })
+      continue
+    }
+    if (vmResult.fatal === true) {
+      // Unreachable in practice: the enclosing top-level analysis already
+      // accepted this fn. Mirror evaluateFnStar — the analyzer is the
+      // authority, so a fatal re-analysis must surface, not degrade.
+      const err = new EvaluationError(
+        vmResult.reason.detail,
+        {
+          reason: vmResult.reason,
+          list: node.form,
+          env,
+          analysisError: vmResult.analysisError,
+        },
+        vmResult.analysisError?.pos ?? getPos(node.form)
+      )
+      if (vmResult.analysisError?.code !== undefined) {
+        err.code = vmResult.analysisError.code
+      }
+      throw err
+    }
+    ctx.instrumentation?.onEvent({
+      path: 'fallback',
+      mode,
+      reason: vmResult.reason,
+      formKind: 'fn*',
+      ast: node.form,
+      details: {
+        functionName: node.name,
+        fixedParamCount: arity.params.length,
+        hasRestParam: arity.restParam !== null,
+        phase: 'vm:function-body-compile',
+      },
+    })
+  }
+}
+
 function makeAstFunction(
   node: FnNode,
   frame: EvalFrame,
@@ -571,6 +652,7 @@ function makeAstFunction(
   ctx: EvaluationContext
 ): { fn: CljFunction; fillUpvalues: () => void } {
   const { arities, fillUpvalues } = makeAstArities(node, frame)
+  maybeAttachVmBodies(node, arities, env, ctx)
   const fn = v.multiArityFunction(arities, env)
   const nsName = getNamespaceEnv(env).ns?.name ?? 'user'
   const identity = ctx.allocateFunctionIdentity?.({

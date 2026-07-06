@@ -40,7 +40,7 @@ function makeAstBackend(): AstBackend {
   let topLevel = 0
   let fnBody = 0
   const session = createSessionFromSnapshot(baseline, {
-    vmExecutionMode: 'ast',
+    vmExecutionMode: 'off',
     instrumentation: {
       onEvent: (event) => {
         if (event.path === 'ast:top-level') topLevel += 1
@@ -461,7 +461,7 @@ describe('AST walker curated probes (direct assertions)', () => {
     // so this asserts an execution event for `twice` SPECIFICALLY.
     const executed: Array<string | null> = []
     const session = createSessionFromSnapshot(baseline, {
-      vmExecutionMode: 'ast',
+      vmExecutionMode: 'off',
       instrumentation: {
         onEvent: (event) => {
           if (event.path === 'ast:function-body') {
@@ -483,7 +483,7 @@ describe('AST walker curated probes (direct assertions)', () => {
     // pass on a bytecode-backed core macro.
     const executed: Array<string | null> = []
     const session = createSessionFromSnapshot(baseline, {
-      vmExecutionMode: 'ast',
+      vmExecutionMode: 'off',
       instrumentation: {
         onEvent: (event) => {
           if (event.path === 'ast:macro-body') {
@@ -508,7 +508,7 @@ describe('AST walker curated probes (direct assertions)', () => {
     const fallbacks: unknown[] = []
     let topLevel = 0
     const session = createSessionFromSnapshot(baseline, {
-      vmExecutionMode: 'ast',
+      vmExecutionMode: 'off',
       instrumentation: {
         onEvent: (event) => {
           if (event.path === 'fallback') fallbacks.push(event)
@@ -531,7 +531,7 @@ describe('AST walker curated probes (direct assertions)', () => {
     expect(printString(ast.session.evaluate('(add5 10)'))).toBe('15')
 
     const snapshot = snapshotSession(ast.session)
-    const clone = createSessionFromSnapshot(snapshot, { vmExecutionMode: 'ast' })
+    const clone = createSessionFromSnapshot(snapshot, { vmExecutionMode: 'off' })
     expect(printString(clone.evaluate('(add5 32)'))).toBe('37')
   })
 })

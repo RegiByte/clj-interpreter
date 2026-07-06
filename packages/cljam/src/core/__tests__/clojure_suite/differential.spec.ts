@@ -117,7 +117,7 @@ describe('AST walker (oracle) ⇄ VM differential', () => {
       let vm: Backend
 
       beforeAll(async () => {
-        walker = await makeBackend(file.source, 'ast')
+        walker = await makeBackend(file.source, 'off')
         vm = await makeBackend(file.source, 'function-body')
       })
 

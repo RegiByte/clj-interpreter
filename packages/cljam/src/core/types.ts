@@ -108,7 +108,7 @@ export type Arity = {
   body: CljValue[]
   bytecodeBody?: VmChunk
   vmClosure?: VmFunctionClosure
-  /** Analyzer AST body for the walker (mode 'ast'), mirroring `bytecodeBody`. */
+  /** Analyzer AST body for the walker (the base engine), mirroring `bytecodeBody`. */
   astMethod?: AstFnMethod
   /** Captured upvalues, copied at closure creation. Shared across arities. */
   astUpvalues?: CljValue[]
@@ -583,7 +583,6 @@ export type VmExecutionMode =
   | 'function-body'
   | 'opportunistic'
   | 'vm-required'
-  | 'ast'
 
 export type VmFallbackReason =
   | { category: 'unsupported-special-form'; detail: string }
