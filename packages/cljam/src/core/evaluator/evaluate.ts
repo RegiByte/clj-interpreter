@@ -1,14 +1,13 @@
 /**
  * Evaluator - Core entrypoint
  * Handles the evaluation of a single expression.
- * Delegates most of the work to domain handlers.
- * Uses the VM at top-level when possible, then falls back to the interpreter.
- * The interpreter is the source of truth for the semantics of the language.
+ * The AST walker is the engine: analyze, then walk the resolved tree.
+ * Per mode, the VM participates first at top level ('opportunistic'/
+ * 'vm-required'); its refusals land on the walker.
  */
 
 import { derefValue, getNamespaceEnv, lookup } from '../env'
 import { EvaluationError } from '../errors'
-import { v } from '../factories'
 import { valueKeywords } from '../keywords.ts'
 import { getPos } from '../positions'
 import { measureSync } from '../timing'
@@ -20,7 +19,6 @@ import type {
   EvaluationContext,
   VmCompileResult,
   VmExecutionMode,
-  VmFallbackReason,
 } from '../types'
 import { analyzeForm } from '../analyzer'
 import {
@@ -31,8 +29,6 @@ import { assignChunkIds } from '../vm/chunk'
 import { executeChunk } from '../vm/vm'
 import { makeTopLevelVmCacheKey } from '../vm/cache'
 import { containsUnsupportedOp, makeFrame, walkNode } from '../walker'
-import { evaluateMap, evaluateSet, evaluateVector } from './collections'
-import { evaluateList } from './dispatch'
 import { resolveJsDotChainSymbol } from './js-interop'
 
 export type EvaluationMeasurement = {
@@ -215,91 +211,64 @@ function evaluateTopLevelWithVm(
 }
 
 /**
- * Top-level AST-walker execution — the base engine for every mode (runs after
- * the per-mode VM attempt): analyze, classify errors (ported-malformed =
- * fatal throw, the analyzer is the authority), pre-scan the whole tree
- * against the walker's allowlist, and only then walk. Returns null to fall
- * back to the form-walker for the WHOLE form — never mid-form, so a coverage
- * gap can't cause partial side effects. (The fallback branches die in S4b.)
+ * AST-walker execution — THE engine: analyze, then walk the resolved tree.
+ * Analysis errors are ALL fatal (the analyzer is the authority; the walker
+ * allowlist is total, so there is nothing to fall back to). Instrumentation
+ * (events + measurement stages) fires only for top-level entries — nested
+ * `ctx.evaluate` calls (e.g. the `eval` native mid-walk) run silently, the
+ * same contract the form dispatch had.
  */
-function evaluateTopLevelWithAst(
+function evaluateWithAst(
   expr: CljValue,
   env: Env,
-  ctx: EvaluationContext
-): CljValue | null {
+  ctx: EvaluationContext,
+  isTopLevel: boolean
+): CljValue {
   let analysis: ReturnType<typeof analyzeForm>
-  try {
-    const measuredAnalysis =
-      ctx.measurement === undefined
-        ? null
-        : measureSync(() => analyzeForm(expr, env, ctx))
-    analysis = measuredAnalysis?.value ?? analyzeForm(expr, env, ctx)
-    if (measuredAnalysis !== null) {
-      recordMeasurementStage(ctx, ':ast/analyze', measuredAnalysis.elapsedMs)
-    }
-  } catch (error) {
-    const reason: VmFallbackReason = {
-      category: 'compile-error',
-      detail: error instanceof Error ? error.message : String(error),
-    }
-    emitEvalEvent(ctx, {
-      path: 'fallback',
-      reason,
-      formKind: formKind(expr),
-      ast: expr,
-    })
-    recordMeasurementStage(ctx, ':fallback', 0, { path: 'fallback', reason })
-    return null
+  if (isTopLevel && ctx.measurement !== undefined) {
+    const measured = measureSync(() => analyzeForm(expr, env, ctx))
+    analysis = measured.value
+    recordMeasurementStage(ctx, ':ast/analyze', measured.elapsedMs)
+  } else {
+    analysis = analyzeForm(expr, env, ctx)
   }
 
   if (analysis.errors.length > 0) {
     const result = compileResultForAnalysisErrors(analysis.errors)
-    if (result.ok) return null
-    if (result.fatal === true) {
-      emitEvalEvent(ctx, {
-        path: 'analyzer-error',
-        reason: result.reason,
-        formKind: formKind(expr),
-        ast: expr,
-      })
+    if (result.ok === false) {
+      if (isTopLevel) {
+        emitEvalEvent(ctx, {
+          path: 'analyzer-error',
+          reason: result.reason,
+          formKind: formKind(expr),
+          ast: expr,
+        })
+      }
       throwFatalVmCompileError(result, expr, env)
     }
-    emitEvalEvent(ctx, {
-      path: 'fallback',
-      reason: result.reason,
-      formKind: formKind(expr),
-      ast: expr,
-    })
-    recordMeasurementStage(ctx, ':fallback', 0, {
-      path: 'fallback',
-      reason: result.reason,
-    })
-    return null
   }
 
   const unsupportedOp = containsUnsupportedOp(analysis.node)
   if (unsupportedOp !== null) {
-    const reason: VmFallbackReason = {
-      category: 'unsupported-special-form',
-      detail: `ast-walker: no walker for op '${unsupportedOp}'`,
-    }
+    // Internal invariant: 'invalid' nodes always come with analysis errors,
+    // which threw above. Reaching this means the analyzer emitted an op the
+    // walker doesn't know — a bug, not a user error.
+    throw new EvaluationError(
+      `ast-walker: no walker for op '${unsupportedOp}' (internal invariant violation)`,
+      { expr, env },
+      getPos(expr)
+    )
+  }
+
+  if (isTopLevel) {
     emitEvalEvent(ctx, {
-      path: 'fallback',
-      reason,
+      path: 'ast:top-level',
       formKind: formKind(expr),
       ast: expr,
     })
-    recordMeasurementStage(ctx, ':fallback', 0, { path: 'fallback', reason })
-    return null
   }
-
-  emitEvalEvent(ctx, {
-    path: 'ast:top-level',
-    formKind: formKind(expr),
-    ast: expr,
-  })
   const frame = makeFrame(analysis.namedSlotCount)
-  if (ctx.measurement === undefined) {
+  if (!isTopLevel || ctx.measurement === undefined) {
     return walkNode(analysis.node, frame, env, ctx)
   }
   ctx.measurement.setPath('ast:top-level')
@@ -320,15 +289,11 @@ export function evaluateWithContext(
   const depth = ctx.evaluationDepth ?? 0
   ctx.evaluationDepth = depth + 1
   try {
-    const mode = vmMode(ctx)
     if (depth === 0) {
-      const vmResult = evaluateTopLevelWithVm(expr, env, ctx, mode)
+      const vmResult = evaluateTopLevelWithVm(expr, env, ctx, vmMode(ctx))
       if (vmResult !== null) return vmResult
-      const astResult = evaluateTopLevelWithAst(expr, env, ctx)
-      if (astResult !== null) return astResult
     }
-
-    return evaluateWithContextInner(expr, env, ctx, depth === 0)
+    return evaluateWithAst(expr, env, ctx, depth === 0)
   } finally {
     ctx.evaluationDepth = depth
   }
@@ -394,71 +359,6 @@ export function evaluateSymbolWithContext(
     }
     throw e
   }
-}
-
-function evaluateWithContextInner(
-  expr: CljValue,
-  env: Env,
-  ctx: EvaluationContext,
-  shouldEmitPathEvent: boolean
-): CljValue {
-  if (shouldEmitPathEvent) {
-    emitEvalEvent(ctx, {
-      path: 'interpreter',
-      formKind: formKind(expr),
-      ast: expr,
-    })
-    ctx.measurement?.setPath('interpreter')
-  }
-  const evaluateInterpreted = (): CljValue => {
-  switch (expr.kind) {
-    // self-evaluating forms
-    case valueKeywords.number:
-    case valueKeywords.string:
-    case valueKeywords.character:
-    case valueKeywords.keyword:
-    case valueKeywords.nil:
-    case valueKeywords.function:
-    case valueKeywords.multiMethod:
-    case valueKeywords.boolean:
-    case valueKeywords.regex:
-    case valueKeywords.delay:
-    case valueKeywords.lazySeq:
-    case valueKeywords.cons:
-    case valueKeywords.namespace:
-      return expr
-    case valueKeywords.symbol:
-      return evaluateSymbolWithContext(expr, env, ctx)
-    case valueKeywords.vector:
-      return evaluateVector(expr, env, ctx)
-    case valueKeywords.map:
-      return evaluateMap(expr, env, ctx)
-    case valueKeywords.set:
-      return evaluateSet(expr, env, ctx)
-    case valueKeywords.list:
-      return evaluateList(expr, env, ctx)
-    default:
-      throw new EvaluationError('Unexpected value', { expr, env }, getPos(expr))
-  }
-  }
-  if (!shouldEmitPathEvent || !ctx.measurement) return evaluateInterpreted()
-  const { value, elapsedMs } = measureSync(evaluateInterpreted)
-  recordMeasurementStage(ctx, ':interpreter', elapsedMs, {
-    path: 'interpreter',
-  })
-  return value
-}
-
-export function evaluateFormsWithContext(
-  forms: CljValue[],
-  env: Env,
-  ctx: EvaluationContext
-): CljValue {
-  let result: CljValue = v.nil()
-  for (const form of forms) {
-    result = ctx.evaluate(form, env)
-  }
-  return result
 }
 
 export function evaluateWithMeasurementsWithContext(

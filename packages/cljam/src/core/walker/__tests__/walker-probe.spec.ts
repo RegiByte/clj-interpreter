@@ -237,6 +237,21 @@ const probes: Probe[] = [
     expected: threw('let requires an even number of forms in binding vector'),
     expectAst: 'any',
   },
+  // Moved here from error_handling_test.clj (Phase 4 S4b): with no fallback
+  // engine, a malformed try is a FATAL analysis error at the evaluation
+  // boundary — JVM parity (CompilerException at compile time), no longer a
+  // runtime-catchable throw inside the form.
+  {
+    name: 'malformed try stays fatal (analyzer authority)',
+    forms: ['(try 42 (finally :ignored) (finally :also-ignored))'],
+    expected: threw(
+      'invalid try: finally clause must be the last in try expression',
+      '  at line 1, col 1:',
+      '  (try 42 (finally :ignored) (finally :also-ignored))',
+      '  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^'
+    ),
+    expectAst: 'none',
+  },
 
   // ── Tier 6: defmacro ──────────────────────────────────────────────────
   { name: 'defmacro define + expand', forms: ['(defmacro my-mac [x] x)', '(my-mac 41)'], expected: value('41'), expectAst: 'top' },

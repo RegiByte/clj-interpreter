@@ -1,16 +1,8 @@
 import { is } from '../assertions'
-import { extend } from '../env'
 import { EvaluationError } from '../errors'
 import { v } from '../factories'
 import { getPos } from '../positions'
-import type {
-  Arity,
-  CljSymbol,
-  CljValue,
-  CljVector,
-  Env,
-  EvaluationContext,
-} from '../types'
+import type { Arity, CljSymbol, CljValue, CljVector, Env } from '../types'
 
 const REST_SYMBOL = '&'
 
@@ -138,42 +130,6 @@ export function parseArities(forms: CljValue[], env: Env): Arity[] {
     { forms, env },
     getPos(forms[0])
   )
-}
-
-export function bindParams(
-  params: CljSymbol[],
-  restParam: CljSymbol | null,
-  args: CljValue[],
-  outerEnv: Env,
-  _ctx: EvaluationContext,
-  _bindEnv: Env
-): Env {
-  if (restParam === null) {
-    if (args.length !== params.length) {
-      throw new EvaluationError(
-        `Arguments length mismatch: fn accepts ${params.length} arguments, but ${args.length} were provided`,
-        { params, args, outerEnv }
-      )
-    }
-  } else {
-    if (args.length < params.length) {
-      throw new EvaluationError(
-        `Arguments length mismatch: fn expects at least ${params.length} arguments, but ${args.length} were provided`,
-        { params, args, outerEnv }
-      )
-    }
-  }
-
-  const names = params.map((param) => param.name)
-  const values = args.slice(0, params.length)
-
-  if (restParam !== null) {
-    const restArgs = args.slice(params.length)
-    names.push(restParam.name)
-    values.push(restArgs.length > 0 ? v.list(restArgs) : v.nil())
-  }
-
-  return extend(names, values, outerEnv)
 }
 
 export function slotValuesForArity(

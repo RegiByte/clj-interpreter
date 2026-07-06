@@ -3,7 +3,7 @@ import { CljThrownSignal, EvaluationError } from '../errors'
 import { v } from '../factories'
 import { getPos } from '../positions'
 import { printString } from '../printer'
-import type { CljList, CljValue, Env, EvaluationContext } from '../types'
+import type { CljValue, Env, EvaluationContext } from '../types'
 
 // ---------------------------------------------------------------------------
 // JS ↔ Clojure conversion
@@ -223,55 +223,3 @@ export function constructJsValue(
   return jsToClj(new ctor(...jsArgs))
 }
 
-export function evaluateDot(
-  list: CljList,
-  env: Env,
-  ctx: EvaluationContext
-): CljValue {
-  if (list.value.length < 3) {
-    throw new EvaluationError('. requires at least 2 arguments: (. obj prop)', {
-      list,
-    }, getPos(list))
-  }
-
-  const targetForm = list.value[1]
-  const target = ctx.evaluate(targetForm, env)
-
-  const propForm = list.value[2]
-  if (!is.symbol(propForm)) {
-    throw new EvaluationError(
-      `. expects a symbol for property name, got: ${propForm.kind}`,
-      { propForm },
-      getPos(propForm) ?? getPos(list)
-    )
-  }
-
-  const propName = propForm.name
-
-  if (list.value.length === 3) {
-    return readJsProperty(target, targetForm, propName)
-  }
-
-  const cljArgs = list.value.slice(3).map((a) => ctx.evaluate(a, env))
-  return callJsMethod(target, targetForm, propName, propForm, cljArgs, ctx, env)
-}
-
-// ---------------------------------------------------------------------------
-// (js/new ClassName arg1 arg2 ...)
-// ---------------------------------------------------------------------------
-
-export function evaluateNew(
-  list: CljList,
-  env: Env,
-  ctx: EvaluationContext
-): CljValue {
-  if (list.value.length < 2) {
-    throw new EvaluationError('js/new requires a constructor argument', {
-      list,
-    }, getPos(list))
-  }
-
-  const cls = ctx.evaluate(list.value[1], env)
-  const cljArgs = list.value.slice(2).map((a) => ctx.evaluate(a, env))
-  return constructJsValue(cls, list.value[1], cljArgs, ctx, env)
-}

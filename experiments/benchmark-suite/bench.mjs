@@ -10,10 +10,13 @@ import { summarize } from './lib/stats.mjs'
 const SUITE_DIR = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = join(SUITE_DIR, '..', '..')
 
+// Phase 4 taxonomy: the AST walker is THE engine; vmExecutionMode describes
+// VM participation only. The form interpreter (old 'cljam-interp') and the
+// 'ast' mode name are gone. 'cljam-walker' replaces 'cljam-ast' in the
+// runs/ scoreboard lineage.
 const ENGINES = {
-  'cljam-interp': { runner: 'runners/run-cljam.mjs', extra: { mode: 'off' } },
+  'cljam-walker': { runner: 'runners/run-cljam.mjs', extra: { mode: 'off' } },
   'cljam-vm': { runner: 'runners/run-cljam.mjs', extra: { mode: 'function-body' } },
-  'cljam-ast': { runner: 'runners/run-cljam.mjs', extra: { mode: 'ast' } },
   sci: { runner: 'runners/run-sci.mjs', extra: {} },
   js: { runner: 'runners/run-js.mjs', extra: {} },
 }

@@ -30,12 +30,11 @@
              :body
              (finally :ignored))))))
 
-(deftest try-invalid-shapes
-  (testing "finally must be the final try clause"
-    (is (thrown? :error/runtime
-                 (try 42
-                   (finally :ignored)
-                   (finally :also-ignored))))))
+;; NOTE (Phase 4 S4b): a try with a non-final finally clause is a FATAL
+;; analysis error at load time (JVM parity — CompilerException, not a
+;; runtime-catchable throw), so it cannot be asserted from within this file.
+;; The contract is pinned in walker-probe.spec.ts ('malformed try stays
+;; fatal') and analyzer.spec.ts.
 
 ;;; -- throw / catch ------------------------------------------------------------
 

@@ -289,14 +289,14 @@ describe('. — error cases', () => {
 
   it('throws when fewer than 2 args', () => {
     const session = sessionWithJs({ obj: {} })
-    expectError('(. obj)', '. requires at least 2 arguments', session)
+    expectError('(. obj)', '. requires (. target member)', session)
   })
 
   it('throws when property name is not a symbol', () => {
     const session = sessionWithJs({ obj: {} })
     expectError(
       '(. obj "foo")',
-      '. expects a symbol for property name',
+      '. member must be a symbol or method call',
       session
     )
   })

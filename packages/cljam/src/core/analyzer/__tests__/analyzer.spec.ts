@@ -246,13 +246,11 @@ describe('analyzer Phase 0 — recur validation', () => {
 // genuinely-malformed negative-test forms produce errors. An unexpected
 // `; error:` means the analyzer wrongly rejected valid code (a false positive).
 //
-// Intentionally-malformed forms the analyzer correctly rejects pre-execution
-// (e.g. a fn with two variadic arities, wrapped in `(thrown? ...)`):
-const EXPECTED_ANALYSIS_ERRORS: Record<string, string[]> = {
-  'error_handling_test.clj': [
-    'invalid try: finally clause must be the last in try expression',
-  ],
-}
+// Intentionally-malformed forms the analyzer correctly rejects pre-execution.
+// Empty since Phase 4 S4b: analysis errors are FATAL at load time (no
+// fallback engine), so suite files can no longer carry malformed negatives —
+// those live in walker-probe.spec.ts and this file's unit tests.
+const EXPECTED_ANALYSIS_ERRORS: Record<string, string[]> = {}
 
 describe('analyzer Phase 0 — suite coverage gate', () => {
   const suiteDir = join(process.cwd(), 'src/core/__tests__/clojure_suite')

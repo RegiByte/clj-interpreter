@@ -1,35 +1,15 @@
 /**
  * Shared dynamic-var logic for (binding [...] body) and (set! sym val).
  *
- * `setupBindingVars` performs the PUSH phase of `(binding [...] body)`:
- *   - validates the binding vector structure
- *   - resolves each var (unqualified or fully-qualified ns/name)
- *   - validates that each var is ^:dynamic
- *   - evaluates the new value via ctx.evaluate (always synchronous)
- *   - pushes the new value onto the var's bindingStack
- *
- * Returns `{ body, boundVars }`. The caller owns the POP phase, which must
- * always run in a `finally` block to preserve exception safety:
- *
- *   const { body, boundVars } = setupBindingVars(list, env, ctx)
- *   try {
- *     return evaluateBody(body, env, ctx)   // sync or async
- *   } finally {
- *     for (const v of boundVars) v.bindingStack!.pop()
- *   }
- *
- * Keeping push/pop in the caller makes it trivial to swap the body evaluation
- * strategy (sync in special-forms.ts, async in async-evaluator.ts) without
- * duplicating the var-resolution logic.
- *
  * The per-step helpers (`bindingPairsOrThrow`, `bindingSymbolOrThrow`,
- * `resolveDynamicBindingVar`, `resolveSetTargetVar`) are exported for the AST
- * walker, whose init expressions are resolved nodes walked against a slot
- * frame — it cannot reuse `setupBindingVars` wholesale, but the structural
- * checks and var resolution (and their exact error messages) must not drift.
+ * `resolveDynamicBindingVar`, `resolveSetTargetVar`) are what the AST walker
+ * composes: its init expressions are resolved nodes walked against a slot
+ * frame, so the caller owns eval order and the exception-safe POP phase,
+ * while the structural checks and var resolution (and their exact error
+ * messages) live here and cannot drift.
  *
  * This file has no imports from the evaluator layer, so it is safe to import
- * from special-forms.ts, async-evaluator.ts, and the walker without cycles.
+ * from the walker without cycles.
  */
 
 import { is } from '../assertions'
@@ -44,11 +24,6 @@ import type {
   Env,
   EvaluationContext,
 } from '../types'
-
-export type BindingSetup = {
-  body: CljValue[]
-  boundVars: CljVar[]
-}
 
 /** Validates the (binding [...]) vector shape and returns its raw pair items. */
 export function bindingPairsOrThrow(list: CljList, env: Env): CljValue[] {
@@ -210,30 +185,3 @@ export function resolveTheVarBySymbol(
   return targetVar
 }
 
-export function setupBindingVars(
-  list: CljList,
-  env: Env,
-  ctx: EvaluationContext
-): BindingSetup {
-  const pairs = bindingPairsOrThrow(list, env)
-  const body = list.value.slice(2)
-  const boundVars: CljVar[] = []
-
-  try {
-    for (let i = 0; i < pairs.length; i += 2) {
-      const sym = bindingSymbolOrThrow(pairs[i], list)
-      const newVal = ctx.evaluate(pairs[i + 1], env)
-      const targetVar = resolveDynamicBindingVar(sym, env, ctx)
-      targetVar.bindingStack ??= []
-      targetVar.bindingStack.push(newVal)
-      boundVars.push(targetVar)
-    }
-  } catch (e) {
-    for (let i = boundVars.length - 1; i >= 0; i--) {
-      boundVars[i].bindingStack!.pop()
-    }
-    throw e
-  }
-
-  return { body, boundVars }
-}

@@ -165,7 +165,7 @@ export function expectBothFallback(code: string): void {
  * from the legacy bytecode (e.g. RB-007-class letfn/lazy-seq capture, where the
  * analyzer captures the letfn binding instead of the legacy fn self-slot).
  * Executes the IR-compiled chunk on the VM and asserts it equals the
- * interpreter (vm mode forced `off` so the reference is interpreter-only).
+ * walker (vm mode forced `off` so the reference is walker-only).
  */
 export function expectIrVmMatchesInterpreter(code: string): void {
   const { ctx, env, form } = prepareForm(code)
@@ -175,6 +175,9 @@ export function expectIrVmMatchesInterpreter(code: string): void {
       `IR compiler fell back for: ${code} (${ir.reason.category}: ${ir.reason.detail})`
     )
   }
+  // The VM run may apply VM-created inner fns (bytecodeBody only), so the
+  // ctx must declare VM participation; the reference run flips to 'off'.
+  ctx.vmExecutionMode = 'function-body'
   const vmValue = executeChunk({ chunk: ir.chunk, env, ctx })
   ctx.vmExecutionMode = 'off'
   const interpValue = ctx.evaluate(form, env)

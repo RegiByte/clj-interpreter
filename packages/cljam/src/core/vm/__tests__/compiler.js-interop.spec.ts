@@ -306,13 +306,13 @@ describe('VM JS interop', () => {
       expectVmRequiredError('js/nilObj.prop', /nil|null/)
     })
 
-    it('falls back to the interpreter for structurally invalid dot forms in opportunistic mode', () => {
+    it('VM refusal of structurally invalid dot forms lands on the walker, which raises the analyzer error (opportunistic mode)', () => {
       const result = run('(. js/subject "name")', 'opportunistic')
 
       expect(result.ok).toBe(false)
       if (result.ok) return
       expect(result.error.message).toContain(
-        '. expects a symbol for property name'
+        '. member must be a symbol or method call'
       )
       expect(result.events).toEqual(
         expect.arrayContaining([

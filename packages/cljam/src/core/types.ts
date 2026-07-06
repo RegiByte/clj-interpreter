@@ -254,7 +254,6 @@ export type EvaluationContext = {
   evaluate: (expr: CljValue, env: Env) => CljValue
   /** Interpreter symbol resolution without the full evaluate round-trip — the AST walker's Var path. */
   evaluateSymbol: (sym: CljSymbol, env: Env) => CljValue
-  evaluateForms: (forms: CljValue[], env: Env) => CljValue
   applyFunction: (
     fn: CljFunction | CljNativeFunction,
     args: CljValue[],
@@ -617,7 +616,6 @@ export type VmCompileResult =
 
 export type EvalEvent = {
   path:
-    | 'interpreter'
     | 'vm:function-body-compiled'
     | 'vm:function-body'
     | 'vm:macro-body'
@@ -643,7 +641,6 @@ export type EvaluationMeasurementStage = {
     | ':ast/analyze'
     | ':ast/walk'
     | ':fallback'
-    | ':interpreter'
     | string
   elapsedMs: number
   path?: EvalEvent['path']

@@ -15,12 +15,7 @@ import type {
 } from '../types'
 import { executeChunk } from '../vm/vm'
 import { makeFrame, walkNode } from '../walker'
-import {
-  bindParams,
-  RecurSignal,
-  resolveArity,
-  slotValuesForArity,
-} from './arity'
+import { RecurSignal, resolveArity, slotValuesForArity } from './arity'
 import { cljToJs, jsToClj } from './js-interop'
 import { dispatchMultiMethod } from './multimethod-dispatch'
 
@@ -94,27 +89,13 @@ export function applyFunctionWithContext(
       }
     }
 
-    // Interpreter path: bindParams + RecurSignal loop.
-    let currentArgs = args
-    while (true) {
-      const localEnv = bindParams(
-        arity.params,
-        arity.restParam,
-        currentArgs,
-        fn.env,
-        ctx,
-        callEnv
-      )
-      try {
-        return ctx.evaluateForms(arity.body, localEnv)
-      } catch (e) {
-        if (e instanceof RecurSignal) {
-          currentArgs = e.args
-          continue
-        }
-        throw e
-      }
-    }
+    // Internal invariant: every fn is walker-created (astMethod) or
+    // VM-compiled (bytecodeBody, per mode). A bare-form arity means a
+    // construction path bypassed both engines — a bug, not a user error.
+    throw new EvaluationError(
+      `fn ${fn.name ?? '(anonymous)'} has no executable body for this arity (internal invariant violation)`,
+      { fn, args }
+    )
   }
 
   throw new EvaluationError(
@@ -176,15 +157,12 @@ export function applyMacroWithContext(
     return walkNode(method.body, frame, macro.env, ctx)
   }
 
-  const localEnv = bindParams(
-    arity.params,
-    arity.restParam,
-    rawArgs,
-    macro.env,
-    ctx,
-    macro.env
+  // Same invariant as applyFunctionWithContext: macros are walker-created
+  // (astMethod) or VM-compiled (bytecodeBody, per mode).
+  throw new EvaluationError(
+    `macro ${macro.name ?? '(anonymous)'} has no executable body for this arity (internal invariant violation)`,
+    { macro, rawArgs }
   )
-  return ctx.evaluateForms(arity.body, localEnv)
 }
 
 /**

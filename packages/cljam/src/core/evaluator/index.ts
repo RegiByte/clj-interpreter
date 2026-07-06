@@ -17,7 +17,6 @@ import { macroExpandAllWithContext } from './expand.ts'
 import {
   DEFAULT_VM_EXECUTION_MODE,
   type EvaluationMeasurement,
-  evaluateFormsWithContext,
   evaluateSymbolWithContext,
   evaluateWithContext,
   evaluateWithMeasurementsWithContext,
@@ -32,8 +31,6 @@ export function createEvaluationContext(): EvaluationContext {
     evaluate: (expr: CljValue, env: Env) => evaluateWithContext(expr, env, ctx),
     evaluateSymbol: (sym: CljSymbol, env: Env) =>
       evaluateSymbolWithContext(sym, env, ctx),
-    evaluateForms: (forms: CljValue[], env: Env) =>
-      evaluateFormsWithContext(forms, env, ctx),
     applyFunction: (
       fn: CljFunction | CljNativeFunction,
       args: CljValue[],
