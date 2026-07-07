@@ -242,7 +242,7 @@ describe('VM function-level recur compilation', () => {
     )
   })
 
-  it('compiles variadic function-level recur to FnRecurRest', () => {
+  it('compiles variadic function-level recur to a plain FnRecur (no gathering)', () => {
     const chunk = compileFnBodyForTest(
       ['done', 'x'],
       ['(if done more (recur true x [2 3]))'],
@@ -252,15 +252,25 @@ describe('VM function-level recur compilation', () => {
     expect(chunk).not.toBeNull()
     if (chunk === null) return
 
-    expect(disassembleChunk(chunk)).toContain('FnRecurRest 3 2 -> 0000')
+    expect(disassembleChunk(chunk)).toContain('FnRecur 3 -> 0000')
   })
 
-  it('packages the final recur arg into the rest slot (fixed+1 arity)', () => {
+  it('binds the final recur arg to the rest slot AS-IS (JVM: no gathering of rest args)', () => {
     expectVmFnBodyCompilesTo(
       ['done', 'x'],
       ['(if done more (recur true x [2 3]))'],
       [v.boolean(false), v.number(1), v.nil()],
-      v.list([v.vector([v.number(2), v.number(3)])]),
+      v.vector([v.number(2), v.number(3)]),
+      { restParam: 'more' }
+    )
+  })
+
+  it('binds nil to the rest slot when nil is the final recur arg', () => {
+    expectVmFnBodyCompilesTo(
+      ['done', 'x'],
+      ['(if done [more] (recur true x nil))'],
+      [v.boolean(false), v.number(1), v.nil()],
+      v.vector([v.nil()]),
       { restParam: 'more' }
     )
   })
@@ -288,11 +298,13 @@ describe('VM function-level recur compilation', () => {
   )
 
   it('evaluates variadic recur arguments before rewriting function slots', () => {
+    // The final arg lands in the rest slot as-is — even a non-seq value;
+    // JVM does not validate what recur passes to the rest position.
     expectVmFnBodyCompilesTo(
       ['done', 'a', 'b'],
       ['(if done [a b more] (recur true b a b))'],
       [v.boolean(false), v.number(1), v.number(2), v.nil()],
-      v.vector([v.number(2), v.number(1), v.list([v.number(2)])]),
+      v.vector([v.number(2), v.number(1), v.number(2)]),
       { restParam: 'more' }
     )
   })

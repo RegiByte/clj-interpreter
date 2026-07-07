@@ -565,14 +565,12 @@ export function emitNode(node: AstNode, st: EmitState): boolean {
         if (st.fnRecur === null) {
           return fail(st, { category: 'compile-error', detail: 'recur fn target missing' })
         }
-        if (st.fnRecur.hasRest) {
-          emit(chunk, Op.FnRecurRest, node.pos)
-          emitOperand(chunk, node.exprs.length, node.pos)
-          emitOperand(chunk, st.fnRecur.paramCount, node.pos)
-        } else {
-          emit(chunk, Op.FnRecur, node.pos)
-          emitOperand(chunk, st.fnRecur.paramCount, node.pos)
-        }
+        // recur never gathers rest args (JVM contract): a variadic target
+        // takes exactly fixed+1 exprs (analyzer-enforced) and the final one
+        // rebinds the rest slot AS-IS — so both shapes are a plain 1:1 slot
+        // rewrite. FnRecurRest (gathering) is only for tail self-CALLS.
+        emit(chunk, Op.FnRecur, node.pos)
+        emitOperand(chunk, node.exprs.length, node.pos)
         return true
       }
       return fail(st, { category: 'compile-error', detail: 'recur has no resolved target' })

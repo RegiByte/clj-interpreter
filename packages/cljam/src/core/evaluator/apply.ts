@@ -72,16 +72,19 @@ export function applyFunctionWithContext(
       })
       const frame = makeFrame(arity.astSlotCount ?? 0)
       frame.upvalues = arity.astUpvalues ?? []
-      let currentArgs = args
+      // Rest-arg gathering happens only on the initial call. recur to a
+      // variadic method takes exactly fixed+1 args (analyzer-enforced) and
+      // rebinds the rest slot AS-IS — JVM: "there is no gathering of rest
+      // args - a single seq (or null) should be passed".
+      let slotArgs = slotValuesForArity(arity, args)
       while (true) {
-        const slotArgs = slotValuesForArity(arity, currentArgs)
         for (let i = 0; i < slotArgs.length; i++) frame.slots[i] = slotArgs[i]
         if (method.self !== null) frame.slots[method.self.slot] = fn
         try {
           return walkNode(method.body, frame, fn.env, ctx)
         } catch (e) {
           if (e instanceof RecurSignal) {
-            currentArgs = e.args
+            slotArgs = e.args
             continue
           }
           throw e

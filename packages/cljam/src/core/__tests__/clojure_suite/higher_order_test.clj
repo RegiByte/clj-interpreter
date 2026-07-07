@@ -193,6 +193,23 @@
     (is (= "hi world" (local-greet "world")))
     (is (= "hi world and universe" (local-greet "world" "universe")))))
 
+(deftest variadic-recur-rest-binding
+  ;; JVM recur contract: at the top of a variadic method there is no
+  ;; gathering of rest args — the final recur arg binds to the rest slot
+  ;; as-is (a seq or nil should be passed).
+  (testing "final recur arg binds to the rest param as-is"
+    (is (= [2 3] ((fn [done x & more] (if done more (recur true x [2 3]))) false 1))))
+
+  (testing "nil final recur arg binds nil (not (nil))"
+    (is (nil? ((fn [done x & more] (if done more (recur true x nil))) false 1))))
+
+  (testing "canonical (recur ... (next more)) summation terminates"
+    (is (= 10 ((fn [acc & more]
+                 (if (seq more)
+                   (recur (+ acc (first more)) (next more))
+                   acc))
+               0 1 2 3 4)))))
+
 ;;; ── juxt ─────────────────────────────────────────────────────────────────────
 
 (deftest juxt-basic
