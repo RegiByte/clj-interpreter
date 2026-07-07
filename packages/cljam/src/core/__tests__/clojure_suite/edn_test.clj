@@ -45,3 +45,23 @@
   (is (= "true" (edn/pr-str true)))
   (doseq [x [42 "hello" nil true false :kw [1 2] {:a 1} '(1 2)]]
     (is (= x (edn/read-string (edn/pr-str x))))))
+
+;; RB-005: reader errors from runtime data parsing are catchable Clojure
+;; errors (JVM: RuntimeException), unlike program-source parse errors which
+;; fail before evaluation begins.
+(deftest reader-errors-are-catchable
+  ;; map with key but no value
+  (is (= :caught (try (edn/read-string "{:a}") (catch :default _ :caught))))
+  ;; unclosed collection
+  (is (= :caught (try (edn/read-string "(1 2") (catch :default _ :caught))))
+  ;; unterminated string (tokenizer-level failure)
+  (is (= :caught (try (edn/read-string "\"abc") (catch :default _ :caught))))
+  ;; thrown? works inside deftest bodies
+  (is (thrown? :default (edn/read-string "{:a}")))
+  ;; the caught value is an error map with a stable :type
+  (is (= :reader/malformed
+         (:type (try (edn/read-string "{:a}") (catch :default e e)))))
+  ;; clojure.core/read-string translates at the same boundary
+  (is (= :caught (try (read-string "{:a}") (catch :default _ :caught))))
+  (is (= :reader/malformed
+         (:type (try (read-string "[1 2") (catch :default e e))))))

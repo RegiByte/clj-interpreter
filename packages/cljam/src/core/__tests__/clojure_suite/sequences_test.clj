@@ -343,3 +343,32 @@
   (is (= [1 2 3 4 5] (flatten [1 [2 [3 [4 [5]]]]])))
   (is (= [1 2 3] (flatten '(1 (2 (3))))))
   (is (= [] (flatten []))))
+
+;; RB-007: letfn-bound names must stay visible inside sibling lazy-seq
+;; thunks, including the full combination shape that failed in session 302
+;; (outer let with volatiles + nested letfn + mutual step/drain reference
+;; resolved across the thunk boundary). Closed by analyzer capture sets.
+(deftest letfn-mutual-reference-across-lazy-seq-thunks
+  (is (= [1 2 3]
+         (let [pending (volatile! [])
+               finalized (volatile! false)
+               xrf (fn [acc x] (vswap! pending conj x) acc)]
+           (letfn [(drain [] (lazy-seq
+                               (when (seq @pending)
+                                 (let [head (first @pending)]
+                                   (vswap! pending subvec 1)
+                                   (cons head (drain))))))
+                   (step [s] (lazy-seq
+                               (if (seq s)
+                                 (do (xrf nil (first s))
+                                     (concat (drain) (step (rest s))))
+                                 (when-not @finalized
+                                   (vreset! finalized true)
+                                   (drain)))))]
+             (vec (step [1 2 3]))))))
+  (is (= [[3 2 1] 3]
+         (let [n (volatile! 0)]
+           (letfn [(a ([] (a 3))
+                      ([k] (lazy-seq (when (pos? k) (vswap! n inc) (cons k (b (dec k)))))))
+                   (b [k] (lazy-seq (seq (a k))))]
+             [(vec (a)) @n])))))

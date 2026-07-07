@@ -6,7 +6,7 @@ import {
   getNamespaceEnv,
   tryLookup,
 } from '../../../env'
-import { EvaluationError } from '../../../errors'
+import { EvaluationError, asRuntimeReadError } from '../../../errors'
 import { DocGroups, docMeta, v } from '../../../factories'
 import { makeGensym } from '../../../gensym'
 import {
@@ -702,8 +702,13 @@ export const utilFunctions: Record<string, CljValue> = {
           0
         )
       }
-      const tokens = tokenize(s.value)
-      const forms = readForms(tokens, undefined, undefined, s.value)
+      let forms: CljValue[]
+      try {
+        const tokens = tokenize(s.value)
+        forms = readForms(tokens, undefined, undefined, s.value)
+      } catch (e) {
+        throw asRuntimeReadError(e)
+      }
       if (forms.length === 0) return v.nil()
       return forms[0]
     })
