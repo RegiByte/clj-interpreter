@@ -11,7 +11,7 @@ A Clojure interpreter written in TypeScript. Embeds in any JS/TS project as a li
 
 ## What it is
 
-cljam is an **interpreter**. Source code is read, macro-expanded, and evaluated at runtime. An incremental compiler is built in — hot-path forms compile to native closures at definition time — but there is no Clojure → JavaScript file output today.
+cljam is an **interpreter** with a real compiler front-end. Source code is read, macro-expanded, and **analyzed** into a resolved AST (lexical slots, closure capture sets, tail positions, precise malformed-form errors). Evaluation is a tree walk over that resolved AST; a bytecode VM shares the same front-end and is kept in exact semantic agreement by a differential test harness. There is no Clojure → JavaScript file output today.
 
 It is designed to be embedded. The core session API is a plain TypeScript object: create a session, inject host capabilities, evaluate strings. The CLI and nREPL server are thin wrappers around the same session.
 
@@ -178,6 +178,7 @@ Source roots control how `require` resolves namespace files. Falls back to the c
 * Character literals: `\a`, `\space`, `\newline`, `\uXXXX`
 * EDN reader: `clojure.edn/read-string`, reader tags `#inst` and `#uuid`
 * JS interop: `js/` namespace, `.` member access, `js/new`
+* Async: `(async ...)` blocks with `@` as await, pending values as promises (`then`, `catch*`, `all`)
 
 **Standard namespaces** bundled at startup: `clojure.core` `clojure.string` `clojure.edn` `clojure.math` `clojure.test` — all implemented in Clojure itself and readable in the source tree.
 
@@ -219,6 +220,44 @@ createSession({
 
 (. path join "a" "b" "c")      ;; => "a/b/c"
 ```
+
+***
+
+## Async
+
+`(async body)` evaluates its body asynchronously and immediately returns a **pending value** — cljam's promise. Inside an `async` block, `@` (`deref`) on a pending awaits it, exactly like `await`:
+
+```clojure
+(async
+  (let [user @(fetch-user 42)]        ; awaits
+    (str "hello, " (:name user))))    ; => pending of "hello, ..."
+```
+
+```js
+(async () => {
+  const user = await fetchUser(42)    // awaits
+  return `hello, ${user.name}`        // => Promise of "hello, ..."
+})()
+```
+
+**Async is a lexical boundary, and closures never inherit it** — the JavaScript model. A `fn` defined inside an async block has a sync body; `@` there throws a teaching error, just as `await` inside a plain callback is a syntax error in JS. Give each callback its own async context and gather with `all`:
+
+```clojure
+(async
+  (let [ps (mapv (fn [x] (async @(fetch x))) xs)]  ; each call returns a pending
+    @(all ps)))                                     ; like Promise.all
+```
+
+Pendings compose without an `async` block, and `deref` takes the JVM's 3-arg timeout form:
+
+```clojure
+(then p (fn [x] (* x 10)))          ; like p.then(...)
+(catch* p (fn [e] :recovered))      ; like p.catch(...)
+(deref p 100 :timed-out)            ; timeout-ms + timeout-val
+(pending? p)
+```
+
+`try`/`catch`/`finally` work across await points; a rejected pending awaited with `@` throws the same catchable value sync code would see. Crossing the host boundary, pendings convert to real Promises (`cljToJs`) and thenables convert back.
 
 ***
 

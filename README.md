@@ -18,11 +18,11 @@ Or even better, contribute to the project, open an issue or a pull request and I
 
 ## What it is
 
-Cljam is an **interpreter**. Source code is read, macro-expanded, and evaluated at runtime. There is no compilation step and no bytecode — the evaluator walks the AST directly.
+Cljam is an **interpreter** with a real compiler front-end. Source code is read, macro-expanded, and **analyzed**: a resolver pass turns every form into a resolved AST — lexical slots, closure capture sets, tail positions — and rejects malformed forms with precise, positioned errors before anything runs.
+
+Evaluation is a tree walk over that resolved AST. A bytecode VM shares the same front-end: function bodies can additionally be compiled to bytecode and run on the VM, and a differential test harness keeps both engines in exact semantic agreement across the whole test suite. There is no Clojure → JavaScript file output; both engines are internal to the runtime.
 
 It is designed to be embedded. The core session API is a plain TypeScript object: create a session, inject host functions, evaluate strings. The CLI and nREPL server are thin wrappers around the same session.
-
-An incremental compiler is built in — hot-path forms compile to native closures at definition time, giving a meaningful speed-up over pure tree-walking. There is no Clojure → JavaScript file output today; the compiler is an internal optimization, not a code generator.
 
 ***
 
@@ -30,7 +30,7 @@ An incremental compiler is built in — hot-path forms compile to native closure
 
 ### Language
 
-* Immutable collections (no structural sharing): vectors, maps, sets, lists
+* Immutable persistent collections with structural sharing: vectors (32-way trie), maps (HAMT), sets, lists, lazy sequences
 * Namespaces with `ns`, `require`, `refer`, `alias`
 * Multi-arity and variadic functions
 * Sequential and associative destructuring, including nested patterns, `:keys`, `:syms`, `:strs`, qualified keys, and `& {:keys [...]}` kwargs
@@ -43,7 +43,7 @@ An incremental compiler is built in — hot-path forms compile to native closure
 
 ### Standard Library
 
-`clojure.core` and `clojure.string` are implemented in Clojure itself and loaded at session startup. This means the standard library is readable, forkable, and patchable without touching TypeScript.
+`clojure.core`, `clojure.string`, `clojure.edn`, `clojure.math`, and `clojure.test` are implemented in Clojure itself and loaded at session startup. This means the standard library is readable, forkable, and patchable without touching TypeScript.
 
 ### Error Handling
 
@@ -87,6 +87,52 @@ An incremental compiler is built in — hot-path forms compile to native closure
     {:msg (ex-message e) :data (ex-data e)}))
 ```
 
+### Async
+
+`(async body)` evaluates its body asynchronously and immediately returns a **pending value** — cljam's promise. Inside an `async` block, `@` (`deref`) on a pending value awaits it, exactly like `await`:
+
+```clojure
+(async
+  (let [user @(fetch-user 42)]        ; awaits
+    (str "hello, " (:name user))))    ; => pending of "hello, ..."
+```
+
+```js
+(async () => {
+  const user = await fetchUser(42)    // awaits
+  return `hello, ${user.name}`        // => Promise of "hello, ..."
+})()
+```
+
+**Async is a lexical boundary, and closures never inherit it** — the JavaScript model. `@` awaits only in code written literally inside the `(async ...)` form. A `fn` defined inside an async block has a sync body: `@` there is a sync deref and throws a teaching error, the same way `await` inside a plain callback is a syntax error in JS:
+
+```clojure
+(async (mapv (fn [x] @(fetch x)) xs))       ; ✗ fn body is sync — throws
+```
+
+```js
+async () => xs.map((x) => await fetch(x))    // ✗ SyntaxError in JS
+```
+
+Give each callback its own async context instead — a collection of pendings, like an array of Promises — and gather with `all`:
+
+```clojure
+(async
+  (let [ps (mapv (fn [x] (async @(fetch x))) xs)]  ; each call returns a pending
+    @(all ps)))                                     ; like Promise.all
+```
+
+Pendings also compose without an `async` block, and `deref` takes the JVM's 3-arg timeout form:
+
+```clojure
+(then p (fn [x] (* x 10)))          ; like p.then(...)
+(catch* p (fn [e] :recovered))      ; like p.catch(...) — e is the error value
+(deref p 100 :timed-out)            ; JVM parity: timeout-ms + timeout-val
+(pending? p)                        ; predicate
+```
+
+`try`/`catch`/`finally` work inside `async` bodies across await points, and a rejected pending awaited with `@` throws the same catchable value sync code would see. At the top level, the REPL and `session.evaluateAsync` resolve a returned pending before printing.
+
 ### nREPL Server
 
 Full TCP nREPL server with bencode transport. Supports `eval`, `load-file`, `complete`, `clone`, `close`, `describe`, and `interrupt`. Namespace switching after `load-file` is handled automatically.
@@ -126,7 +172,7 @@ Cljam is semantically close to Clojure but runs on a JavaScript host. The follow
 | Java interop (`.method`, `new Foo`, `java.lang.*`) | Not available |
 | `deftype` | Not available — `defrecord` covers most use cases |
 | `gen-class` | Not available |
-| `future`, `promise`, `agent`, `ref`, STM | Not available — use `atom` |
+| `future`, `agent`, `ref`, STM | Not available — use `atom` for state, `(async ...)` + pending values for concurrency |
 | `Long`, `BigDecimal`, ratio literals (`1/3`) | Numbers are JS floats |
 | Class-based `catch` (`catch Exception e`) | Predicate-based catch only |
 | `import`, Java class hierarchy | Not available |
@@ -261,7 +307,7 @@ Full bencode op coverage: symbol info, docstring lookup, source location, cross-
 
 ### Compiler
 
-An incremental compiler covering all hot-path forms is already built in. The long-term goal is a self-hosting compiler: the compiler written in cljam and compiled with itself.
+The analyzer → AST walker → bytecode VM pipeline is in place; the walker and the VM are kept in exact agreement by a differential harness. The long-term goal is a self-hosting compiler: the compiler written in cljam and compiled with itself.
 
 ## License
 
