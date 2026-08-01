@@ -197,11 +197,18 @@ const probes: Probe[] = [
     expectAst: 'top',
   },
   {
+    // Session 355: the entrypoint's pre-expansion used to REBUILD forms,
+    // stripping reader positions — runtime errors printed a bare frame. The
+    // analyzer now receives the original form, so the error carries caret
+    // context and positioned frames.
     name: 'arity mismatch error',
     forms: ['((fn [x] x) 1 2)'],
     expected: threw(
       'No matching arity for 2 arguments. Available arities: 1',
-      '  at <anonymous>'
+      '  at line 1, col 1:',
+      '  ((fn [x] x) 1 2)',
+      '  ^^^^^^^^^^^^^^^^',
+      '  at <anonymous> (line 1, col 1)'
     ),
     expectAst: 'top',
   },

@@ -271,7 +271,7 @@ describe('VM call and frame opcodes', () => {
     expect(() =>
       executeChunk({ chunk, env, ctx: createNoDelegateContext() })
     ).toThrow(
-      'Stack overflow: exceeded 10000 VM call frames. Use loop/recur for unbounded iteration.'
+      'Stack overflow: exceeded 100000 VM call frames. Use loop/recur for unbounded iteration.'
     )
   })
 

@@ -100,7 +100,7 @@ describe('VM evaluation dispatch instrumentation', () => {
     ).toBe(true)
   })
 
-  it('executes supported public session forms through the AST walker by default', () => {
+  it('walks top-level forms under the function-body default (session 355)', () => {
     const events: EvalEvent[] = []
     const session = createSession({
       instrumentation: { onEvent: (event) => events.push(event) },
@@ -113,7 +113,7 @@ describe('VM evaluation dispatch instrumentation', () => {
       expect.arrayContaining([
         expect.objectContaining({
           path: 'ast:top-level',
-          mode: 'off',
+          mode: 'function-body',
           formKind: 'list:+',
         }),
       ])

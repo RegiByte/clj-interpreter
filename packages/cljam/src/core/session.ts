@@ -377,8 +377,7 @@ function buildSessionFacade(
           const evalIdentity = ctx.allocateEvalIdentity?.(currentNs)
           ctx.currentEvalIdentity = evalIdentity
           try {
-            const expanded = ctx.expandAll(form, env)
-            result = ctx.evaluate(expanded, env)
+            result = ctx.evaluate(form, env)
           } finally {
             ctx.currentEvalIdentity = undefined
           }
@@ -485,8 +484,7 @@ function buildSessionFacade(
           const evalIdentity = ctx.allocateEvalIdentity?.(currentNs)
           ctx.currentEvalIdentity = evalIdentity
           try {
-            const expanded = ctx.expandAll(form, env)
-            result = ctx.evaluate(expanded, env)
+            result = ctx.evaluate(form, env)
           } finally {
             ctx.currentEvalIdentity = undefined
           }
@@ -563,8 +561,7 @@ function buildSessionFacade(
           const evalIdentity = ctx.allocateEvalIdentity?.(currentNs)
           ctx.currentEvalIdentity = evalIdentity
           try {
-            const expanded = ctx.expandAll(form, env)
-            result = ctx.evaluate(expanded, env)
+            result = ctx.evaluate(form, env)
           } finally {
             ctx.currentEvalIdentity = undefined
           }

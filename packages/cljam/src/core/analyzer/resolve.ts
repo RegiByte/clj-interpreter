@@ -159,16 +159,13 @@ function expandHead(form: CljValue, st: AnalyzeState): Expansion {
         st.ctx.applyMacro(macro, current.value.slice(1))
       )
     } catch (e) {
-      // A macro that throws (e.g. on malformed args) is a real user error:
-      // record it and stop expanding so the partially-resolved tree is still
-      // inspectable, rather than silently swallowing the failure.
-      st.errors.push({
-        message: `macro expansion of (${name} ...) failed: ${(e as Error).message}`,
-        form: current,
-        pos: getPos(current) ?? null,
-        kind: 'malformed',
-      })
-      break
+      // A macro that throws (e.g. on malformed args) is arbitrary user code
+      // failing, not an analyzer shape verdict — propagate the original
+      // signal so `(let [x] x)` surfaces the macro's own ex-info message
+      // (JVM parity: a compile-time macro throw is fatal with its cause).
+      // The st.errors accumulate path is reserved for the analyzer's own
+      // malformed-form diagnostics.
+      throw e
     }
   }
   current = toListIfSeq(current)

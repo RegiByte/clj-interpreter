@@ -425,8 +425,7 @@ function buildRuntime(
         const evalIdentity = ctx.allocateEvalIdentity?.(targetNs)
         ctx.currentEvalIdentity = evalIdentity
         try {
-          const expanded = ctx.expandAll(form, env)
-          ctx.evaluate(expanded, env)
+          ctx.evaluate(form, env)
         } finally {
           ctx.currentEvalIdentity = undefined
         }
@@ -742,8 +741,7 @@ function buildRuntime(
           const evalIdentity = ctx.allocateEvalIdentity?.(targetNs)
           ctx.currentEvalIdentity = evalIdentity
           try {
-            const expanded = ctx.expandAll(form, env)
-            ctx.evaluate(expanded, env)
+            ctx.evaluate(form, env)
           } finally {
             ctx.currentEvalIdentity = undefined
           }

@@ -38,13 +38,16 @@ export type EvaluationMeasurement = {
 
 /**
  * The AST walker is THE engine; `vmExecutionMode` describes VM participation
- * only. `'off'` (the default) runs everything on the walker;
- * `'function-body'` puts fn bodies on VM bytecode; `'opportunistic'`/
- * `'vm-required'` add top-level VM compilation. Resolved into every context
- * at construction (`createEvaluationContext`) and at the session facade, so
- * direct `ctx.vmExecutionMode` reads always see a concrete mode.
+ * only. `'function-body'` (the default) puts capture-free fn bodies on VM
+ * bytecode — its heap-allocated call frames give real recursion depth where
+ * the walker is bounded by the JS stack (~600 frames); it is also the exact
+ * configuration the differential harness certifies against the walker.
+ * `'off'` runs everything on the walker; `'opportunistic'`/`'vm-required'`
+ * add top-level VM compilation. Resolved into every context at construction
+ * (`createEvaluationContext`) and at the session facade, so direct
+ * `ctx.vmExecutionMode` reads always see a concrete mode.
  */
-export const DEFAULT_VM_EXECUTION_MODE: VmExecutionMode = 'off'
+export const DEFAULT_VM_EXECUTION_MODE: VmExecutionMode = 'function-body'
 
 function vmMode(ctx: EvaluationContext): VmExecutionMode {
   return ctx.vmExecutionMode ?? DEFAULT_VM_EXECUTION_MODE

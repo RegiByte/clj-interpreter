@@ -43,7 +43,9 @@ import {
 import { dispatchMultiMethod } from '../evaluator/multimethod-dispatch'
 import { Op, opcodeName } from './opcodes'
 
-const DEFAULT_VM_FRAME_LIMIT = 10000
+// Frames are heap-allocated, so this is a runaway-recursion guard, not a
+// memory ceiling — 100k small frames is tens of MB at worst.
+const DEFAULT_VM_FRAME_LIMIT = 100000
 
 type VmState = {
   ctx: EvaluationContext
