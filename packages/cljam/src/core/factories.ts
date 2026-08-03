@@ -255,12 +255,14 @@ export const cljProtocol = (
 export const cljRecord = (
   recordType: string,
   ns: string,
-  fields: [CljValue, CljValue][]
+  fields: [CljValue, CljValue][],
+  basis: string[]
 ): CljRecord => ({
   kind: 'record',
   recordType,
   ns,
   fields,
+  basis,
 })
 
 // --- ASYNC (experimental) ---

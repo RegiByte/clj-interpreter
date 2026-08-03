@@ -1,6 +1,7 @@
 import { is } from '../../../assertions'
 import { EvaluationError } from '../../../errors'
 import { DocGroups, docMeta, v } from '../../../factories'
+import { hashCljValue } from '../../../persistent/hash'
 import { printString } from '../../../printer'
 import { toSeq } from '../../../transformations'
 import type { CljList, CljNumber, CljValue, CljVector } from '../../../types'
@@ -1062,13 +1063,10 @@ export const arithmeticFunctions: Record<string, CljValue> = {
   // ── Hashing ───────────────────────────────────────────────────────────────
   hash: v
     .nativeFn('hash', function hashImpl(x: CljValue) {
-      // Simple hash — consistent within a session, not cryptographic
-      const s = printString(x)
-      let h = 0
-      for (let i = 0; i < s.length; i++) {
-        h = (Math.imul(31, h) + s.charCodeAt(i)) | 0
-      }
-      return v.number(h)
+      // Structural hash shared with set/map-key hashing, so the
+      // (= a b) → (= (hash a) (hash b)) contract holds. The previous
+      // printString-based hash was insertion-order-sensitive for maps/records.
+      return v.number(hashCljValue(x))
     })
     .withMeta([
       ...docMeta({

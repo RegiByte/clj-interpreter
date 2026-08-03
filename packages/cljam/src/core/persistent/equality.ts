@@ -200,9 +200,11 @@ const equalityHandlers = {
   [valueKeywords.record]: (a: CljRecord, b: CljRecord) => {
     if (a.ns !== b.ns || a.recordType !== b.recordType) return false
     if (a.fields.length !== b.fields.length) return false
-    return a.fields.every(([k, av], i) => {
-      const [bk, bv] = b.fields[i]
-      return isEqual(k, bk) && isEqual(av, bv)
+    // Key-lookup comparison, not positional: extension keys (assoc'ed beyond
+    // the basis) can arrive in different insertion orders on equal records.
+    return a.fields.every(([k, av]) => {
+      const entry = b.fields.find(([bk]) => isEqual(k, bk))
+      return entry !== undefined && isEqual(av, entry[1])
     })
   },
 }

@@ -5,6 +5,7 @@ import { getNamespaceEnv, internVar } from '../../../env'
 import { EvaluationError } from '../../../errors'
 import { docMeta, DocGroups, v } from '../../../factories'
 import { printString } from '../../../printer'
+import { toSeq } from '../../../transformations'
 import type {
   CljFunction,
   CljNativeFunction,
@@ -382,9 +383,11 @@ export const protocolFunctions: Record<string, CljValue> = {
     ]),
 
   // -------------------------------------------------------------------------
-  // make-record! record-type ns-name field-map
+  // make-record! record-type ns-name basis-keys field-map
   // Low-level record constructor — called by ->RecordType and map->RecordType.
-  // field-map: a CljMap of :keyword → value
+  // basis-keys: a CljVector of the declared field keywords, in defrecord order
+  // field-map: a CljMap of :keyword → value; keys beyond the basis are kept as
+  // extension entries (JVM extmap parity), missing basis keys default to nil
   // -------------------------------------------------------------------------
   'make-record!': v
     .nativeFn(
@@ -392,6 +395,7 @@ export const protocolFunctions: Record<string, CljValue> = {
       function makeRecordImpl(
         recordTypeVal: CljValue,
         nsNameVal: CljValue,
+        basisKeysVal: CljValue,
         fieldMapVal: CljValue
       ) {
         if (!is.string(recordTypeVal)) {
@@ -406,23 +410,43 @@ export const protocolFunctions: Record<string, CljValue> = {
             { nsNameVal }
           )
         }
+        if (!is.vector(basisKeysVal)) {
+          throw new EvaluationError(
+            `make-record!: basis-keys must be a vector, got ${basisKeysVal.kind}`,
+            { basisKeysVal }
+          )
+        }
         if (!is.map(fieldMapVal)) {
           throw new EvaluationError(
             `make-record!: field-map must be a map, got ${fieldMapVal.kind}`,
             { fieldMapVal }
           )
         }
-        return v.record(
-          recordTypeVal.value,
-          nsNameVal.value,
-          fieldMapVal.entries
-        )
+        const basisKeywords = toSeq(basisKeysVal)
+        const basis: string[] = []
+        const fields: [CljValue, CljValue][] = []
+        for (const key of basisKeywords) {
+          if (!is.keyword(key)) {
+            throw new EvaluationError(
+              `make-record!: basis keys must be keywords, got ${key.kind}`,
+              { key }
+            )
+          }
+          basis.push(key.name)
+          const entry = fieldMapVal.entries.find(([k]) => is.equal(k, key))
+          fields.push([key, entry ? entry[1] : v.nil()])
+        }
+        for (const [k, val] of fieldMapVal.entries) {
+          if (is.keyword(k) && basis.includes(k.name)) continue
+          fields.push([k, val])
+        }
+        return v.record(recordTypeVal.value, nsNameVal.value, fields, basis)
       }
     )
     .withMeta([
       ...docMeta({
         doc: 'Creates a record value. Called by generated constructors (->Name, map->Name).',
-        arglists: [['record-type', 'ns-name', 'field-map']],
+        arglists: [['record-type', 'ns-name', 'basis-keys', 'field-map']],
         docGroup: DocGroups.protocols,
         extra: { 'no-doc': true },
       }),

@@ -170,15 +170,16 @@ function hashCons(cons: CljCons): number {
   return hashSequential(items)
 }
 
-// Field order is canonical for records (positional equality), so use a rolling hash.
+// Order-independent entry accumulation (like map hashing): extension keys can
+// sit at different positions on equal records, so a rolling hash would diverge.
 // Type identity (ns + recordType) is included so records never collide with plain maps.
 function hashRecord(rec: CljRecord): number {
   const typeHash = hashString(rec.ns + '/' + rec.recordType)
-  let h = typeHash
+  let h = 0
   for (const [k, v] of rec.fields) {
-    h = (Math.imul(31, h) + (hashCljValue(k) ^ hashCljValue(v))) | 0
+    h = (h + (hashCljValue(k) ^ hashCljValue(v))) | 0
   }
-  return mix3(h)
+  return mix3((typeHash + h) | 0)
 }
 
 // ─── public API ──────────────────────────────────────────────────────────────

@@ -2213,9 +2213,9 @@
                               groups)]
     `(do
        (defn ~constructor ~fields
-         (make-record! ~type-str ~ns-str (hash-map ~@field-map-pairs)))
+         (make-record! ~type-str ~ns-str ~field-keys (hash-map ~@field-map-pairs)))
        (defn ~map-constructor [m#]
-         (make-record! ~type-str ~ns-str (select-keys m# ~field-keys)))
+         (make-record! ~type-str ~ns-str ~field-keys m#))
        ~@extend-calls)))
 
 ; reify — deferred to Phase B

@@ -486,38 +486,38 @@ describe('hashCljValue', () => {
 
   describe('records — type identity is included in hash', () => {
     it('hash(Circle{:r 5}) === hash(Circle{:r 5}) — same type, same fields', () => {
-      const r1 = v.record('Circle', 'my.shapes', [[kw(':r'), n(5)]])
-      const r2 = v.record('Circle', 'my.shapes', [[kw(':r'), n(5)]])
+      const r1 = v.record('Circle', 'my.shapes', [[kw(':r'), n(5)]], [':r'])
+      const r2 = v.record('Circle', 'my.shapes', [[kw(':r'), n(5)]], [':r'])
       expect(hashCljValue(r1)).toBe(hashCljValue(r2))
     })
 
     it('hash(Circle{:r 5}) !== hash({:r 5}) — record vs plain map', () => {
-      const rec = v.record('Circle', 'my.shapes', [[kw(':r'), n(5)]])
+      const rec = v.record('Circle', 'my.shapes', [[kw(':r'), n(5)]], [':r'])
       const map = v.map([[kw(':r'), n(5)]])
       expect(hashCljValue(rec)).not.toBe(hashCljValue(map))
     })
 
     it('hash(Circle{:r 5}) !== hash(Square{:r 5}) — different types', () => {
-      const circle = v.record('Circle', 'my.shapes', [[kw(':r'), n(5)]])
-      const square = v.record('Square', 'my.shapes', [[kw(':r'), n(5)]])
+      const circle = v.record('Circle', 'my.shapes', [[kw(':r'), n(5)]], [':r'])
+      const square = v.record('Square', 'my.shapes', [[kw(':r'), n(5)]], [':r'])
       expect(hashCljValue(circle)).not.toBe(hashCljValue(square))
     })
 
     it('hash(Circle{:r 5}) !== hash(my.shapes/Circle{:r 5} in other-ns) — namespace matters', () => {
-      const r1 = v.record('Circle', 'my.shapes', [[kw(':r'), n(5)]])
-      const r2 = v.record('Circle', 'other.ns', [[kw(':r'), n(5)]])
+      const r1 = v.record('Circle', 'my.shapes', [[kw(':r'), n(5)]], [':r'])
+      const r2 = v.record('Circle', 'other.ns', [[kw(':r'), n(5)]], [':r'])
       expect(hashCljValue(r1)).not.toBe(hashCljValue(r2))
     })
 
     it('hash(Circle{:r 5}) !== hash(Circle{:r 6}) — different field values', () => {
-      const r1 = v.record('Circle', 'my.shapes', [[kw(':r'), n(5)]])
-      const r2 = v.record('Circle', 'my.shapes', [[kw(':r'), n(6)]])
+      const r1 = v.record('Circle', 'my.shapes', [[kw(':r'), n(5)]], [':r'])
+      const r2 = v.record('Circle', 'my.shapes', [[kw(':r'), n(6)]], [':r'])
       expect(hashCljValue(r1)).not.toBe(hashCljValue(r2))
     })
 
     it('empty record fields: hash({} as record) is consistent', () => {
-      const r1 = v.record('Empty', 'my.ns', [])
-      const r2 = v.record('Empty', 'my.ns', [])
+      const r1 = v.record('Empty', 'my.ns', [], [])
+      const r2 = v.record('Empty', 'my.ns', [], [])
       expect(hashCljValue(r1)).toBe(hashCljValue(r2))
     })
   })
@@ -852,8 +852,8 @@ describe('hashCljValue', () => {
 
     it('record Circle{:r 5} === record Circle{:r 5}', () => {
       assertHashConsistency(
-        v.record('Circle', 'shapes', [[kw(':r'), n(5)]]),
-        v.record('Circle', 'shapes', [[kw(':r'), n(5)]])
+        v.record('Circle', 'shapes', [[kw(':r'), n(5)]], [':r']),
+        v.record('Circle', 'shapes', [[kw(':r'), n(5)]], [':r'])
       )
     })
   })

@@ -113,24 +113,26 @@ export const mapsSetsFunctions: Record<string, CljValue> = {
           }
           return result
         }
-        // Records: assoc on a declared field returns the same record type (JVM parity).
-        // Assoc-ing any unknown key demotes the whole result to a plain map.
+        // Records: assoc always returns the same record type (JVM parity) —
+        // unknown keys become extension entries, like the JVM's __extmap.
         if (is.record(collection)) {
           const newEntries: [CljValue, CljValue][] = [...collection.fields]
-          let hasUnknownKey = false
           for (let i = 0; i < args.length; i += 2) {
             const key = args[i]
             const value = args[i + 1]
             const entryIdx = newEntries.findIndex(([k]) => is.equal(k, key))
             if (entryIdx === -1) {
-              hasUnknownKey = true
               newEntries.push([key, value])
             } else {
               newEntries[entryIdx] = [key, value]
             }
           }
-          if (hasUnknownKey) return v.map(newEntries)
-          return v.record(collection.recordType, collection.ns, newEntries)
+          return v.record(
+            collection.recordType,
+            collection.ns,
+            newEntries,
+            collection.basis
+          )
         }
         if (is.map(collection)) {
           let result = collection
@@ -212,15 +214,27 @@ export const mapsSetsFunctions: Record<string, CljValue> = {
           }
           return v.vector(newValues)
         }
-        // Records: dissoc always returns a plain map
+        // Records: dissoc of a basis field demotes to a plain map (the JVM's
+        // record class can't represent a missing field); dissoc of an
+        // extension key keeps the record type.
         if (is.record(collection)) {
           const newEntries: [CljValue, CljValue][] = [...collection.fields]
+          let removedBasisKey = false
           for (let i = 0; i < args.length; i += 1) {
             const key = args[i]
+            if (is.keyword(key) && collection.basis.includes(key.name)) {
+              removedBasisKey = true
+            }
             const entryIdx = newEntries.findIndex(([k]) => is.equal(k, key))
             if (entryIdx !== -1) newEntries.splice(entryIdx, 1)
           }
-          return v.map(newEntries)
+          if (removedBasisKey) return v.map(newEntries)
+          return v.record(
+            collection.recordType,
+            collection.ns,
+            newEntries,
+            collection.basis
+          )
         }
         if (is.map(collection)) {
           let result = collection

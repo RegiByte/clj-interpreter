@@ -252,21 +252,86 @@ describe('defrecord', () => {
     expect(sess.evaluate('(:y (assoc p :x 5 :y 9))')).toEqual(v.number(9))
   })
 
-  it('assoc on an unknown key demotes to a plain map', () => {
+  it('assoc on an unknown key keeps the record type (extension entry)', () => {
     const sess = s()
     sess.evaluate('(defrecord Pt [x y])')
     sess.evaluate('(def p (->Pt 1 2))')
     const updated = sess.evaluate('(assoc p :z 3)')
-    expect(updated.kind).toBe('map')
+    expect(updated.kind).toBe('record')
+    expect((updated as { recordType: string }).recordType).toBe('Pt')
     expect(sess.evaluate('(:z (assoc p :z 3))')).toEqual(v.number(3))
+    expect(sess.evaluate('(keys (assoc p :z 3))')).toMatchObject(
+      v.vector([v.keyword(':x'), v.keyword(':y'), v.keyword(':z')])
+    )
   })
 
-  it('assoc with mixed known and unknown keys demotes to a plain map', () => {
+  it('assoc with mixed known and unknown keys keeps the record type', () => {
     const sess = s()
     sess.evaluate('(defrecord Pt [x y])')
     sess.evaluate('(def p (->Pt 1 2))')
     const updated = sess.evaluate('(assoc p :x 5 :z 3)')
-    expect(updated.kind).toBe('map')
+    expect(updated.kind).toBe('record')
+    expect(sess.evaluate('(:x (assoc p :x 5 :z 3))')).toEqual(v.number(5))
+    expect(sess.evaluate('(:z (assoc p :x 5 :z 3))')).toEqual(v.number(3))
+  })
+
+  it('protocol methods still dispatch after assoc of an unknown key', () => {
+    const sess = s()
+    sess.evaluate('(defprotocol Counted (cnt [_]))')
+    sess.evaluate('(defrecord MyCounted [x] Counted (cnt [_] x))')
+    sess.evaluate('(def mc (->MyCounted 42))')
+    expect(sess.evaluate('(cnt (assoc mc :new :stuff))')).toEqual(v.number(42))
+  })
+
+  it('merge onto a record keeps the record type', () => {
+    const sess = s()
+    sess.evaluate('(defrecord Pt [x y])')
+    sess.evaluate('(def p (->Pt 1 2))')
+    const merged = sess.evaluate('(merge p {:x 9 :extra true})')
+    expect(merged.kind).toBe('record')
+    expect(sess.evaluate('(:x (merge p {:x 9 :extra true}))')).toEqual(
+      v.number(9)
+    )
+    expect(sess.evaluate('(:extra (merge p {:x 9 :extra true}))')).toEqual(
+      v.boolean(true)
+    )
+  })
+
+  it('conj of a key-pair onto a record keeps the record type', () => {
+    const sess = s()
+    sess.evaluate('(defrecord Pt [x y])')
+    sess.evaluate('(def p (->Pt 1 2))')
+    const result = sess.evaluate('(conj p [:z 3])')
+    expect(result.kind).toBe('record')
+    expect(sess.evaluate('(:z (conj p [:z 3]))')).toEqual(v.number(3))
+  })
+
+  it('records with extension keys are equal regardless of insertion order', () => {
+    const sess = s()
+    sess.evaluate('(defrecord Pt [x y])')
+    sess.evaluate('(def p (->Pt 1 2))')
+    expect(
+      sess.evaluate('(= (assoc p :a 1 :b 2) (assoc p :b 2 :a 1))')
+    ).toEqual(v.boolean(true))
+    expect(
+      sess.evaluate('(= (hash (assoc p :a 1 :b 2)) (hash (assoc p :b 2 :a 1)))')
+    ).toEqual(v.boolean(true))
+  })
+
+  it('map->Name keeps extra keys and fills missing basis fields with nil', () => {
+    const sess = s()
+    sess.evaluate('(defrecord Pt [x y])')
+    const rec = sess.evaluate('(map->Pt {:x 1 :extra 5})')
+    expect(rec.kind).toBe('record')
+    expect(sess.evaluate('(:extra (map->Pt {:x 1 :extra 5}))')).toEqual(
+      v.number(5)
+    )
+    expect(sess.evaluate('(:y (map->Pt {:x 1 :extra 5}))')).toMatchObject(
+      v.nil()
+    )
+    expect(sess.evaluate('(contains? (map->Pt {}) :y)')).toEqual(
+      v.boolean(true)
+    )
   })
 
   it('update on a known field keeps the record type', () => {
@@ -278,13 +343,31 @@ describe('defrecord', () => {
     expect(sess.evaluate('(:x (update p :x inc))')).toEqual(v.number(2))
   })
 
-  it('dissoc on a record returns a plain map', () => {
+  it('dissoc of a basis field demotes the record to a plain map', () => {
     const sess = s()
     sess.evaluate('(defrecord Pt [x y])')
     sess.evaluate('(def p (->Pt 1 2))')
     const result = sess.evaluate('(dissoc p :x)')
     expect(result.kind).toBe('map')
     expect(sess.evaluate('(:y (dissoc p :x))')).toEqual(v.number(2))
+  })
+
+  it('dissoc of an extension key keeps the record type', () => {
+    const sess = s()
+    sess.evaluate('(defrecord Pt [x y])')
+    sess.evaluate('(def p (assoc (->Pt 1 2) :z 3))')
+    const result = sess.evaluate('(dissoc p :z)')
+    expect(result.kind).toBe('record')
+    expect(sess.evaluate('(= (dissoc p :z) (->Pt 1 2))')).toEqual(
+      v.boolean(true)
+    )
+  })
+
+  it('dissoc of a missing (never-assoc\'ed) key keeps the record type', () => {
+    const sess = s()
+    sess.evaluate('(defrecord Pt [x y])')
+    sess.evaluate('(def p (->Pt 1 2))')
+    expect(sess.evaluate('(dissoc p :nope)').kind).toBe('record')
   })
 
   it('seq on a record produces entry pairs (like a map)', () => {

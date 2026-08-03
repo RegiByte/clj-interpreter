@@ -252,6 +252,31 @@ export const seqFunctions: Record<string, CljValue> = {
           return result
         }
 
+        if (is.record(collection)) {
+          const newEntries = [...collection.fields]
+          for (let i = 0; i < args.length; i += 1) {
+            const pair = args[i]
+            if (!is.vector(pair) || vectorCount(pair) !== 2) {
+              throw EvaluationError.atArg(
+                `conj on records expects each argument to be a vector key-pair, got ${printString(pair)}`,
+                { pair },
+                i + 1
+              )
+            }
+            const key = vectorNth(pair, 0)
+            const value = vectorNth(pair, 1)
+            const entryIdx = newEntries.findIndex(([k]) => is.equal(k, key))
+            if (entryIdx === -1) newEntries.push([key, value])
+            else newEntries[entryIdx] = [key, value]
+          }
+          return v.record(
+            collection.recordType,
+            collection.ns,
+            newEntries,
+            collection.basis
+          )
+        }
+
         if (is.set(collection)) {
           let result = collection
           for (const val of args) {

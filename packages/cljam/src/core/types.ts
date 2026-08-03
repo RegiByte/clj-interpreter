@@ -236,6 +236,9 @@ export type CljRecord = {
   recordType: string // unqualified: 'Circle'
   ns: string // defining namespace: 'my.shapes'
   fields: [CljValue, CljValue][] // same structure as CljMap.entries
+  // Declared field keywords (':radius') in defrecord order. fields may carry
+  // extra assoc'ed entries beyond these; dissoc of a basis key demotes to a map.
+  basis: string[]
   meta?: CljMap
 }
 
