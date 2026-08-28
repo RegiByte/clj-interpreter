@@ -9,12 +9,13 @@ A Clojure interpreter written in TypeScript. Runs as a standalone CLI on Node.js
 
 ***
 
-## Disclaimer
+## Project status
 
-I am a Web developer with 12 years of experience, however, this is my first attempt at creating a language runtime. I do not recommend using this for anything serious yet. This is a learning project and I am not a Clojure expert.
+**Complete, not actively maintained.** cljam reached its design goal — a Clojure interpreter with an analyzer front-end, a tree-walking reference engine, and a bytecode VM kept in exact agreement by a differential test harness — and development stopped there at version 0.1.0. Issues and pull requests are welcome and will be reviewed, but no further features are planned.
 
-If even knowing this, you still want to use this, feel free to contact me and I will help you with your use case.
-Or even better, contribute to the project, open an issue or a pull request and I'll review it and merge if it's good.
+This was a learning project by a web developer with no prior language-runtime experience. It is not recommended for production use. The [conformance page](https://regibyte.github.io/cljam/guide/conformance) records exactly what matches JVM Clojure and what does not.
+
+***
 
 ## What it is
 
@@ -163,21 +164,20 @@ Call any JavaScript value from Clojure using the `js/` namespace. Host values cr
 
 ***
 
-## Key Differences from JVM Clojure
+## Differences from JVM Clojure
 
-Cljam is semantically close to Clojure but runs on a JavaScript host. The following are not implemented and are not planned for the interpreter phase:
+cljam runs on a JavaScript host and makes a few deliberate departures from JVM Clojure:
 
-| JVM Clojure | Cljam |
+| JVM Clojure | cljam |
 |---|---|
-| Java interop (`.method`, `new Foo`, `java.lang.*`) | Not available |
-| `deftype` | Not available — `defrecord` covers most use cases |
-| `gen-class` | Not available |
-| `future`, `agent`, `ref`, STM | Not available — use `atom` for state, `(async ...)` + pending values for concurrency |
-| `Long`, `BigDecimal`, ratio literals (`1/3`) | Numbers are JS floats |
-| Class-based `catch` (`catch Exception e`) | Predicate-based catch only |
-| `import`, Java class hierarchy | Not available |
+| Java interop, `import`, `gen-class`, `deftype`, `reify` | Not available — `js/` interop and `defrecord` instead |
+| `future`, `agent`, `ref`, STM | Not available — `atom` for state, `(async ...)` + pending values for concurrency |
+| `Long`, `BigInt`, `BigDecimal`, ratios | One IEEE-754 number type; `(= 1 1.0)` is `true` |
+| Class-based `catch` (`catch Exception e`) | Keyword / predicate discriminators; class symbols never match |
+| Chars from string traversal | `(first "a")` is a 1-char string, not `\a` |
+| `sorted-map`, `sorted-set`, `prefer-method`, `##Inf` literals | Not implemented |
 
-The core data model, namespace system, macro system, and standard library semantics match Clojure closely. Code that avoids Java interop and JVM-specific types will generally run without modification.
+Beyond the design differences, a black-box review against JVM Clojure 1.12.1 catalogued every observable divergence — silent value differences, errors where the JVM succeeds, printing differences, and missing API — with the areas that matched byte-for-byte. Read it before porting code: **[Conformance with JVM Clojure](https://regibyte.github.io/cljam/guide/conformance)** ([source](packages/docs/guide/conformance.md)).
 
 ***
 
@@ -295,19 +295,47 @@ If no config is found, it falls back to the current working directory. Source ro
 
 ***
 
-## Roadmap
+## Testing
 
-### REPL UX
+```bash
+bun install
+bun run test            # all packages
+cd packages/cljam && bun run test && bun run typecheck
+```
 
-Multiline input with bracket-depth tracking (continuation prompt `...=>`), ANSI color output, and persistent history.
+`packages/cljam` carries 134 spec files (~4800 assertions): TypeScript unit tests for the reader, analyzer, VM, printer, and namespace loader; a Clojure-language semantic suite in `clojure.test` (21 files, several mirroring the [jank](https://github.com/jank-lang/jank) suite); and a differential harness that evaluates every suite form on both the AST walker and the bytecode VM and asserts identical results, thrown values included.
 
-### nREPL Completeness
+***
 
-Full bencode op coverage: symbol info, docstring lookup, source location, cross-namespace navigation. The goal is feature parity with what Calva and CIDER expect from a production nREPL server.
+## Packages
 
-### Compiler
+| Package | Purpose |
+|---|---|
+| [`@regibyte/cljam`](packages/cljam) | Interpreter, CLI, nREPL server, Vite plugin |
+| [`@regibyte/cljam-schema`](packages/cljam-schema) | Data validation (Malli-style schemas) |
+| [`@regibyte/cljam-date`](packages/cljam-date) | Date/time utilities over the host `Date` |
+| [`@regibyte/cljam-integrant`](packages/cljam-integrant) | System lifecycle management (Integrant port) |
+| [`@regibyte/cljam-ring`](packages/cljam-ring) | Ring-style HTTP request/response handling |
+| [`@regibyte/cljam-mcp`](packages/cljam-mcp) | MCP server exposing a persistent cljam REPL to LLM agents |
 
-The analyzer → AST walker → bytecode VM pipeline is in place; the walker and the VM are kept in exact agreement by a differential harness. The long-term goal is a self-hosting compiler: the compiler written in cljam and compiled with itself.
+The satellite packages are written in Clojure and compiled into their npm bundle with `gen-library-sources`; each requires `@regibyte/cljam >= 0.1.0`.
+
+***
+
+## Repository layout
+
+```text
+packages/cljam/src/core/analyzer/    resolver + context passes → resolved AST
+packages/cljam/src/core/walker/      AST walker (reference engine) + async twin
+packages/cljam/src/core/vm/          ir-compiler.ts + vm.ts (bytecode backend)
+packages/cljam/src/core/evaluator/   shared runtime services (arity, apply, defs, interop, …)
+packages/cljam/src/core/loader/      namespace loader / linker
+packages/cljam/src/clojure/          clojure.core, clojure.string, … in Clojure
+packages/cljam/src/nrepl/            bencode nREPL server
+packages/cljam/src/cli/              cljam CLI
+packages/docs/                       VitePress site + browser playground
+experiments/benchmark-suite/         benchmark harness and findings
+```
 
 ## License
 

@@ -81,7 +81,7 @@ function withActualPort(handleVal: CljValue, server: Server): CljValue {
         : [k, val]
   )
   if (is.record(handleVal)) {
-    return v.record(handleVal.recordType, handleVal.ns, updatedEntries)
+    return v.record(handleVal.recordType, handleVal.ns, updatedEntries, handleVal.basis)
   }
   return v.map(updatedEntries)
 }

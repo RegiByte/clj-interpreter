@@ -1,6 +1,6 @@
 {
   "name": "@regibyte/cljam-date",
-  "version": "0.1.6",
+  "version": "0.2.0",
   "private": false,
   "type": "module",
   "description": "Date handling library for cljam",
@@ -32,7 +32,7 @@
     "tsconfig.json"
   ],
   "peerDependencies": {
-    "@regibyte/cljam": ">=0.0.21"
+    "@regibyte/cljam": ">=0.1.0"
   },
   "devDependencies": {
     "@regibyte/cljam": "file:../cljam",

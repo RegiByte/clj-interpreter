@@ -3,6 +3,8 @@
 [![npm](https://img.shields.io/npm/v/%40regibyte%2Fcljam)](https://www.npmjs.com/package/@regibyte/cljam)
 [![license](https://img.shields.io/npm/l/%40regibyte%2Fcljam)](LICENSE)
 
+> **Status:** complete, not actively maintained (v0.1.0). Issues and PRs are reviewed; no further features are planned.
+
 A Clojure interpreter written in TypeScript. Embeds in any JS/TS project as a library, runs as a standalone CLI on Node.js 18+ or Bun, and exposes a full nREPL server compatible with Calva, Cursive, and CIDER.
 
 **[Try it in the browser →](https://regibyte.github.io/cljam/)**
@@ -327,7 +329,7 @@ For libraries with native TypeScript modules (wrapping JS APIs), see `@regibyte/
 (area (->Rect 4 6))   ;; => 24
 ```
 
-Type tags are keywords of the form `:ns/RecordName` for records, and `:string` `:int` `:boolean` etc. for built-in types. Use `(type x)` to get the tag for any value.
+Type tags are keywords of the form `:ns/RecordName` for records, and `:string` `:number` `:boolean` etc. for built-in types. Use `(type x)` to get the tag for any value.
 
 ***
 
@@ -366,12 +368,16 @@ export default { plugins: [cljTestPlugin()] }
 |---|---|
 | Java interop (`.method`, `new Foo`, `java.lang.*`) | Not available — use `js/` namespace |
 | `defrecord`, `defprotocol`, `extend-protocol` | Available — dispatch on keyword type tags, not Java classes |
-| `deftype` | Not available |
+| `deftype`, `reify` | Not available |
 | `future`, `agent`, STM (`ref`, `dosync`) | Not available — use `(async ...)` with `@deref` as await |
-| `Long`, `BigDecimal`, ratio literals (`1/3`) | Numbers are IEEE-754 floats |
-| Class-based `catch` (`catch Exception e`) | Predicate/keyword discriminators only |
+| `Long`, `BigDecimal`, ratio literals (`1/3`) | One IEEE-754 number type; `(= 1 1.0)` is `true` |
+| Class-based `catch` (`catch Exception e`) | Predicate/keyword discriminators only; class symbols never match |
 | `import`, Java class hierarchy | Not available |
-| `##NaN`, `##Inf`, `##-Inf` reader literals | Not yet — use `(clojure.math/sqrt -1)` for NaN, `(clojure.math/log 0)` for -∞ |
+| `##NaN`, `##Inf`, `##-Inf` reader literals | Not available — `(require '[clojure.math :as math])` then `(math/sqrt -1)` for NaN, `(math/log 0)` for -∞ |
+| Chars from string traversal | `(first "a")` is a 1-char string, not `\a` |
+| `sorted-map`, `sorted-set`, `prefer-method`, `eduction`, reader conditionals | Not implemented |
+
+The full catalogue of divergences — silent value differences, errors where the JVM succeeds, printing differences, missing API, and what matches exactly — is in [Conformance with JVM Clojure](https://regibyte.github.io/cljam/guide/conformance).
 
 ***
 
