@@ -1,7 +1,7 @@
 {
   "name": "@regibyte/cljam",
   "private": false,
-  "version": "0.0.21",
+  "version": "0.1.0",
   "type": "module",
   "repository": {
     "type": "git",
@@ -24,6 +24,7 @@
     "prepublishOnly": "bun run gen:core-source && node scripts/gen-version.mjs && node scripts/build-npm-library.mjs && node scripts/build-npm-bin.mjs && node scripts/build-nrepl.mjs && node scripts/build-vite-plugin.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest",
+    "release-blockers": "bun run scripts/release-blockers/run-repros.ts",
     "gen:core-source": "bun run scripts/gen-core-source.mjs",
     "gen:version": "node scripts/gen-version.mjs"
   },
@@ -44,6 +45,7 @@
       "default": "./dist-nrepl/index.mjs"
     },
     "./vite-plugin": {
+      "types": "./src/vite-plugin-cljam/index.ts",
       "bun": "./src/vite-plugin-cljam/index.ts",
       "default": "./dist-vite-plugin/index.mjs"
     },
@@ -77,6 +79,8 @@
   "devDependencies": {
     "@types/bun": "^1.3.10",
     "@types/node": "^25.3.5",
+    "@vitest/browser-playwright": "^4.1.6",
+    "@vitest/browser-preview": "^4.1.6",
     "@vitest/coverage-v8": "^4.0.18",
     "@vitest/ui": "^4.0.18",
     "esbuild": "^0.27.0",

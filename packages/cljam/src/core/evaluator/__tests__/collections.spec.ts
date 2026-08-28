@@ -60,8 +60,8 @@ describe('rest', () => {
   it.each([
     ['(rest (quote (1 2 3)))', v.list([v.number(2), v.number(3)])],
     ['(rest [1 2 3])', v.vector([v.number(2), v.number(3)])],
-    ['(rest {"a" 1 "b" 2})', v.map([[v.string('b'), v.number(2)]])],
-    ['(rest {})', v.map([])],
+    ['(rest {"a" 1 "b" 2})', v.list([v.mapEntry(v.string('b'), v.number(2))])],
+    ['(rest {})', v.list([])],
     ['(rest [])', v.vector([])],
     ["(rest '())", v.list([])],
     ['(rest "hello")', v.list([v.string('e'), v.string('l'), v.string('l'), v.string('o')])],
@@ -73,7 +73,9 @@ describe('rest', () => {
     (code, expected) => {
       const session = freshSession()
       const result = session.evaluate(code)
-      expect(result).toMatchObject(toCljValue(expected))
+      // rest over a list now yields an indexed-seq view (Phase C); materialize
+      // realizes seq results so we compare contents, not the wrapper kind.
+      expect(materialize(result)).toMatchObject(toCljValue(expected))
     }
   )
 })
@@ -361,7 +363,9 @@ describe('seq', () => {
     (code, expected) => {
       const session = freshSession()
       const result = session.evaluate(code)
-      expect(result).toMatchObject(toCljValue(expected))
+      // seq over a vector/string/map yields an indexed-seq view (Phase C);
+      // materialize realizes it so we compare contents, not the wrapper kind.
+      expect(materialize(result)).toMatchObject(toCljValue(expected))
     }
   )
 

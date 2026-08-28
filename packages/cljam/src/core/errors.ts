@@ -25,6 +25,28 @@ export class ReaderError extends Error {
 // instanceof when the error may cross a module boundary (e.g. from a library).
 const EVALUATION_ERROR_BRAND = Symbol.for('@regibyte/cljam/EvaluationError')
 
+/**
+ * read-string and edn/read-string parse USER DATA at runtime — a malformed
+ * string there is a catchable runtime error (JVM: RuntimeException), not a
+ * host fault. Natives that invoke the reader as a runtime service pass parse
+ * throws through this translation at their boundary; anything that isn't a
+ * parse error (e.g. a throw from a user data-reader fn) returns unchanged.
+ * Program-source parse errors never reach a translation site — they throw
+ * before evaluation begins, so no `try` can observe them (JVM parity).
+ */
+export function asRuntimeReadError(e: unknown): unknown {
+  if (e instanceof ReaderError || e instanceof TokenizerError) {
+    const err = new EvaluationError(
+      e.message,
+      e.context,
+      e instanceof ReaderError ? e.pos : undefined
+    )
+    err.code = 'reader/malformed'
+    return err
+  }
+  return e
+}
+
 export class EvaluationError extends Error {
   readonly [EVALUATION_ERROR_BRAND] = true
   context: unknown

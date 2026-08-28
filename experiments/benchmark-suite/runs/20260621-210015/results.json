@@ -1,0 +1,138 @@
+{
+  "meta": {
+    "date": "2026-06-21T21:00:15.477Z",
+    "node": "v22.14.0",
+    "platform": "darwin 25.5.0",
+    "arch": "arm64",
+    "cpu": "Apple M1 Max",
+    "gitSha": "a9fe155",
+    "gitDirty": true,
+    "nbbVersion": "1.4.207",
+    "measure": {
+      "samples": 5,
+      "warmupMinCalls": 3,
+      "warmupMinMs": 100,
+      "targetBatchMs": 15
+    }
+  },
+  "engines": [
+    "cljam-interp",
+    "cljam-vm",
+    "sci",
+    "js"
+  ],
+  "workloads": [
+    {
+      "name": "vector-assoc",
+      "kind": "micro",
+      "subsystem": "persistent vector assoc (path-copy update on a large vector)",
+      "expected": 949995000
+    }
+  ],
+  "pairs": [
+    {
+      "workload": "vector-assoc",
+      "engine": "cljam-interp",
+      "wallMs": 3074.485834,
+      "ok": true,
+      "pass": true,
+      "checksum": 949995000,
+      "expected": 949995000,
+      "setupMs": 54.747625000000006,
+      "warmupCalls": 3,
+      "batchSize": 1,
+      "batchesMs": [
+        278.59516600000006,
+        272.78041600000006,
+        274.2687500000002,
+        290.5728330000002,
+        289.76900000000023
+      ],
+      "perCallMs": [
+        278.59516600000006,
+        272.78041600000006,
+        274.2687500000002,
+        290.5728330000002,
+        289.76900000000023
+      ]
+    },
+    {
+      "workload": "vector-assoc",
+      "engine": "cljam-vm",
+      "wallMs": 1448.247625,
+      "ok": true,
+      "pass": true,
+      "checksum": 949995000,
+      "expected": 949995000,
+      "setupMs": 78.326875,
+      "warmupCalls": 3,
+      "batchSize": 1,
+      "batchesMs": [
+        109.73058300000002,
+        113.85424999999998,
+        121.58520899999996,
+        109.05375000000004,
+        106.78874999999994
+      ],
+      "perCallMs": [
+        109.73058300000002,
+        113.85424999999998,
+        121.58520899999996,
+        109.05375000000004,
+        106.78874999999994
+      ]
+    },
+    {
+      "workload": "vector-assoc",
+      "engine": "sci",
+      "wallMs": 660.7044580000002,
+      "ok": true,
+      "pass": true,
+      "checksum": 949995000,
+      "expected": 949995000,
+      "setupMs": 12.407083999999998,
+      "warmupCalls": 3,
+      "batchSize": 1,
+      "batchesMs": [
+        36.989125,
+        37.14908299999996,
+        35.58320900000001,
+        34.76012499999996,
+        34.525125
+      ],
+      "perCallMs": [
+        36.989125,
+        37.14908299999996,
+        35.58320900000001,
+        34.76012499999996,
+        34.525125
+      ]
+    },
+    {
+      "workload": "vector-assoc",
+      "engine": "js",
+      "wallMs": 424.7182920000005,
+      "ok": true,
+      "pass": true,
+      "checksum": 949995000,
+      "expected": 949995000,
+      "setupMs": 0.34087499999999693,
+      "warmupCalls": 526,
+      "batchSize": 128,
+      "batchesMs": [
+        18.61574999999999,
+        19.097791,
+        18.595416,
+        19.000666999999964,
+        18.760917000000006
+      ],
+      "perCallMs": [
+        0.14543554687499993,
+        0.1492014921875,
+        0.1452766875,
+        0.14844271093749972,
+        0.14656966406250005
+      ]
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 // Sequence abstraction: list, seq, first, rest, cons, conj, count, empty?, empty,
-// nth, get, contains?, last, reverse, repeat*, range*, concat*
+// nth, get, contains?, last, reverse, repeat*, concat*
 //
 // These are the "core sequence protocol" operations — they apply uniformly across
 // all collection types. conj lives here because it implements the sequence
@@ -9,6 +9,24 @@
 import { is } from '../../../assertions.ts'
 import { EvaluationError } from '../../../errors.ts'
 import { DocGroups, docMeta, v } from '../../../factories.ts'
+import {
+  mapAssoc,
+  mapContains,
+  mapCount,
+  mapGet,
+  NOT_FOUND,
+  setContains,
+  setConj,
+  setValues,
+} from '../../../persistent/map-helpers.ts'
+import {
+  vectorConj,
+  vectorCount,
+  vectorNth,
+  vectorPeek,
+  vectorSlice,
+  vectorToArray,
+} from '../../../persistent/vector-helpers.ts'
 import { printString } from '../../../printer.ts'
 import { realizeLazySeq, toSeq } from '../../../transformations.ts'
 import {
@@ -39,24 +57,35 @@ export const seqFunctions: Record<string, CljValue> = {
     ]),
 
   seq: v
-    .nativeFn('seq', function seqImpl(coll: CljValue): CljValue {
-      if (is.nil(coll)) return v.nil()
-      if (is.lazySeq(coll)) {
-        const realized = realizeLazySeq(coll)
-        if (is.nil(realized)) return v.nil()
-        return seqImpl(realized)
+    .nativeFnCtx(
+      'seq',
+      function seqImpl(ctx, callEnv, coll: CljValue): CljValue {
+        if (is.nil(coll)) return v.nil()
+        if (is.lazySeq(coll)) {
+          const realized = realizeLazySeq(coll, ctx, callEnv)
+          if (is.nil(realized)) return v.nil()
+          return seqImpl(ctx, callEnv, realized)
+        }
+        if (is.cons(coll)) return coll
+        if (is.indexedSeq(coll)) return coll
+        // A list is already its own seq (Clojure parity: (seq a-list) returns the
+        // list itself, (list? (seq '(1 2 3))) → true). Empty → nil per the seq
+        // contract. The O(1) indexed-seq win lands on the first `rest`, not here.
+        if (is.list(coll)) return coll.value.length === 0 ? v.nil() : coll
+        if (!is.seqable(coll)) {
+          throw EvaluationError.atArg(
+            `seq expects a collection, string, or nil, got ${printString(coll)}`,
+            { collection: coll },
+            0
+          )
+        }
+        // toSeq returns the live backing array for a list (no copy) and a once-
+        // materialized array for a vector/string — wrap it in an O(1) indexed-seq
+        // view so downstream first/rest stepping stays O(1) per step.
+        const items = toSeq(coll)
+        return items.length === 0 ? v.nil() : v.indexedSeq(items, 0)
       }
-      if (is.cons(coll)) return coll
-      if (!is.seqable(coll)) {
-        throw EvaluationError.atArg(
-          `seq expects a collection, string, or nil, got ${printString(coll)}`,
-          { collection: coll },
-          0
-        )
-      }
-      const items = toSeq(coll)
-      return items.length === 0 ? v.nil() : v.list(items)
-    })
+    )
     .withMeta([
       ...docMeta({
         doc: 'Returns a sequence of the given collection or string. Strings yield a sequence of single-character strings.',
@@ -66,24 +95,37 @@ export const seqFunctions: Record<string, CljValue> = {
     ]),
 
   first: v
-    .nativeFn('first', function firstImpl(collection: CljValue): CljValue {
-      if (is.nil(collection)) return v.nil()
-      if (is.lazySeq(collection)) {
-        const realized = realizeLazySeq(collection)
-        if (is.nil(realized)) return v.nil()
-        return firstImpl(realized)
+    .nativeFnCtx(
+      'first',
+      function firstImpl(ctx, callEnv, collection: CljValue): CljValue {
+        if (is.nil(collection)) return v.nil()
+        if (is.lazySeq(collection)) {
+          const realized = realizeLazySeq(collection, ctx, callEnv)
+          if (is.nil(realized)) return v.nil()
+          return firstImpl(ctx, callEnv, realized)
+        }
+        if (is.cons(collection)) return collection.head
+        // O(1) head read; the factory invariant guarantees offset is in-bounds.
+        if (is.indexedSeq(collection))
+          return collection.array[collection.offset]
+        // INV-1: read the head straight off the trie — never seq/materialize a
+        // vector just to look at one element.
+        if (is.vector(collection)) {
+          return vectorCount(collection) === 0
+            ? v.nil()
+            : vectorNth(collection, 0)
+        }
+        if (!is.seqable(collection)) {
+          throw EvaluationError.atArg(
+            'first expects a collection or string',
+            { collection },
+            0
+          )
+        }
+        const entries = toSeq(collection)
+        return entries.length === 0 ? v.nil() : entries[0]
       }
-      if (is.cons(collection)) return collection.head
-      if (!is.seqable(collection)) {
-        throw EvaluationError.atArg(
-          'first expects a collection or string',
-          { collection },
-          0
-        )
-      }
-      const entries = toSeq(collection)
-      return entries.length === 0 ? v.nil() : entries[0]
-    })
+    )
     .withMeta([
       ...docMeta({
         doc: 'Returns the first element of the given collection or string.',
@@ -93,46 +135,58 @@ export const seqFunctions: Record<string, CljValue> = {
     ]),
 
   rest: v
-    .nativeFn('rest', function restImpl(collection: CljValue): CljValue {
-      if (is.nil(collection)) return v.list([])
-      if (is.lazySeq(collection)) {
-        const realized = realizeLazySeq(collection)
-        if (is.nil(realized)) return v.list([])
-        return restImpl(realized)
-      }
-      if (is.cons(collection)) return collection.tail
-      if (!is.seqable(collection)) {
+    .nativeFnCtx(
+      'rest',
+      function restImpl(ctx, callEnv, collection: CljValue): CljValue {
+        if (is.nil(collection)) return v.list([])
+        if (is.lazySeq(collection)) {
+          const realized = realizeLazySeq(collection, ctx, callEnv)
+          if (is.nil(realized)) return v.list([])
+          return restImpl(ctx, callEnv, realized)
+        }
+        if (is.cons(collection)) return collection.tail
+        if (is.indexedSeq(collection)) {
+          // O(1) step: bump the offset over the shared immutable array. At the end
+          // of the view, rest yields () (empty list) — Clojure's rest-vs-next rule.
+          const nextOffset = collection.offset + 1
+          return nextOffset >= collection.array.length
+            ? v.list([])
+            : v.indexedSeq(collection.array, nextOffset)
+        }
+        if (!is.seqable(collection)) {
+          throw EvaluationError.atArg(
+            'rest expects a collection or string',
+            { collection },
+            0
+          )
+        }
+        if (is.list(collection)) {
+          // Return an O(1) view over the (immutable) backing array instead of the
+          // O(n) slice(1) copy — this is the read-side cure for the lazy-seq O(n²)
+          // pathology (every filter/map step did a full-array copy here).
+          if (collection.value.length <= 1) {
+            return v.list([])
+          }
+          return v.indexedSeq(collection.value, 1)
+        }
+        if (is.vector(collection)) {
+          return v.vector(vectorSlice(collection, 1))
+        }
+        if (is.map(collection) || is.record(collection)) {
+          const entries = toSeq(collection)
+          return v.list(entries.slice(1))
+        }
+        if (is.string(collection)) {
+          const chars = toSeq(collection)
+          return v.list(chars.slice(1))
+        }
         throw EvaluationError.atArg(
-          'rest expects a collection or string',
+          `rest expects a collection or string, got ${printString(collection)}`,
           { collection },
           0
         )
       }
-      if (is.list(collection)) {
-        if (collection.value.length === 0) {
-          return collection // return the empty list
-        }
-        return v.list(collection.value.slice(1))
-      }
-      if (is.vector(collection)) {
-        return v.vector(collection.value.slice(1))
-      }
-      if (is.map(collection)) {
-        if (collection.entries.length === 0) {
-          return collection // return the empty map
-        }
-        return v.map(collection.entries.slice(1))
-      }
-      if (is.string(collection)) {
-        const chars = toSeq(collection)
-        return v.list(chars.slice(1))
-      }
-      throw EvaluationError.atArg(
-        `rest expects a collection or string, got ${printString(collection)}`,
-        { collection },
-        0
-      )
-    })
+    )
     .withMeta([
       ...docMeta({
         doc: 'Returns a sequence of the given collection or string excluding the first element.',
@@ -172,16 +226,13 @@ export const seqFunctions: Record<string, CljValue> = {
           return v.list([...newItems, ...collection.value])
         }
         if (is.vector(collection)) {
-          return v.vector([...collection.value, ...args])
+          return vectorConj(collection, ...args)
         }
         if (is.map(collection)) {
-          // each argument should be a vector key-pair
-          const newEntries: [CljValue, CljValue][] = [...collection.entries]
+          let result = collection
           for (let i = 0; i < args.length; i += 1) {
             const pair = args[i] as CljVector
-            // pair args start at index 1 in the call (collection is index 0)
             const pairArgIndex = i + 1
-
             if (!is.vector(pair)) {
               throw EvaluationError.atArg(
                 `conj on maps expects each argument to be a vector key-pair for maps, got ${printString(pair)}`,
@@ -189,34 +240,49 @@ export const seqFunctions: Record<string, CljValue> = {
                 pairArgIndex
               )
             }
-            if (pair.value.length !== 2) {
+            if (vectorCount(pair) !== 2) {
               throw EvaluationError.atArg(
                 `conj on maps expects each argument to be a vector key-pair for maps, got ${printString(pair)}`,
                 { pair },
                 pairArgIndex
               )
             }
-            const key = pair.value[0]
-            const keyIdx = newEntries.findIndex(function findKeyEntry(entry) {
-              return is.equal(entry[0], key)
-            })
-            if (keyIdx === -1) {
-              newEntries.push([key, pair.value[1]])
-            } else {
-              newEntries[keyIdx] = [key, pair.value[1]]
-            }
+            result = mapAssoc(result, vectorNth(pair, 0), vectorNth(pair, 1))
           }
-          return v.map([...newEntries])
+          return result
+        }
+
+        if (is.record(collection)) {
+          const newEntries = [...collection.fields]
+          for (let i = 0; i < args.length; i += 1) {
+            const pair = args[i]
+            if (!is.vector(pair) || vectorCount(pair) !== 2) {
+              throw EvaluationError.atArg(
+                `conj on records expects each argument to be a vector key-pair, got ${printString(pair)}`,
+                { pair },
+                i + 1
+              )
+            }
+            const key = vectorNth(pair, 0)
+            const value = vectorNth(pair, 1)
+            const entryIdx = newEntries.findIndex(([k]) => is.equal(k, key))
+            if (entryIdx === -1) newEntries.push([key, value])
+            else newEntries[entryIdx] = [key, value]
+          }
+          return v.record(
+            collection.recordType,
+            collection.ns,
+            newEntries,
+            collection.basis
+          )
         }
 
         if (is.set(collection)) {
-          const newValues = [...collection.values]
-          for (const v of args) {
-            if (!newValues.some((existing) => is.equal(existing, v))) {
-              newValues.push(v)
-            }
+          let result = collection
+          for (const val of args) {
+            result = setConj(result, val)
           }
-          return v.set(newValues)
+          return result
         }
 
         throw new EvaluationError(
@@ -235,8 +301,10 @@ export const seqFunctions: Record<string, CljValue> = {
 
   cons: v
     .nativeFn('cons', function consImpl(x: CljValue, xs: CljValue) {
-      // When tail is lazy-seq or cons, create a cons cell to preserve laziness
-      if (is.lazySeq(xs) || is.cons(xs)) {
+      // When tail is lazy-seq, cons, or an indexed-seq view, create a cons cell
+      // (preserves laziness for lazy-seq; for indexed-seq keeps the O(1) view intact
+      // rather than materializing its backing array)
+      if (is.lazySeq(xs) || is.cons(xs) || is.indexedSeq(xs)) {
         return v.cons(x, xs)
       }
       if (is.nil(xs)) {
@@ -258,7 +326,8 @@ export const seqFunctions: Record<string, CljValue> = {
       }
 
       const wrap = is.list(xs) ? v.list : v.vector
-      const newItems = [x, ...xs.value]
+      const tail = is.vector(xs) ? vectorToArray(xs) : xs.value
+      const newItems = [x, ...tail]
 
       return wrap(newItems)
     })
@@ -278,13 +347,8 @@ export const seqFunctions: Record<string, CljValue> = {
 
         switch (target.kind) {
           case valueKeywords.map: {
-            const entries = target.entries
-            for (const [k, v] of entries) {
-              if (is.equal(k, key)) {
-                return v
-              }
-            }
-            return defaultValue
+            const found = mapGet(target as CljMap, key)
+            return found === NOT_FOUND ? defaultValue : found
           }
           case valueKeywords.record: {
             for (const [k, val] of target.fields) {
@@ -293,17 +357,19 @@ export const seqFunctions: Record<string, CljValue> = {
             return defaultValue
           }
           case valueKeywords.vector: {
-            const values = target.value
             if (!is.number(key)) {
               throw new EvaluationError(
                 'get on vectors expects a 0-based index as parameter',
                 { key }
               )
             }
-            if (key.value < 0 || key.value >= values.length) {
+            // Index through the trie (O(log₃₂ n)) instead of materializing the whole
+            // vector to read its length and one slot, as `target.value` would.
+            const vec = target as CljVector
+            if (key.value < 0 || key.value >= vectorCount(vec)) {
               return defaultValue
             }
-            return values[key.value]
+            return vectorNth(vec, key.value)
           }
           default:
             return defaultValue
@@ -322,9 +388,15 @@ export const seqFunctions: Record<string, CljValue> = {
     ]),
 
   nth: v
-    .nativeFn(
+    .nativeFnCtx(
       'nth',
-      function nthImpl(coll: CljValue, n: CljValue, notFound?: CljValue) {
+      function nthImpl(
+        _ctx,
+        callEnv,
+        coll: CljValue,
+        n: CljValue,
+        notFound?: CljValue
+      ) {
         if (n === undefined || !is.number(n)) {
           throw new EvaluationError(
             `nth expects a number index${n !== undefined ? `, got ${printString(n)}` : ''}`,
@@ -348,7 +420,7 @@ export const seqFunctions: Record<string, CljValue> = {
           while (true) {
             // Peel any lazy-seq wrappers before inspecting the head
             while (is.lazySeq(current)) {
-              current = realizeLazySeq(current)
+              current = realizeLazySeq(current, _ctx, callEnv)
             }
             if (is.nil(current)) {
               // Sequence ended before reaching index
@@ -366,20 +438,33 @@ export const seqFunctions: Record<string, CljValue> = {
               i++
               continue
             }
-            // Sequence terminated in a realized list or vector — index into it directly
-            if (is.list(current) || is.vector(current)) {
+            // Sequence terminated in a realized list, vector, or indexed-seq view
+            // (a cons tail can now be an indexed-seq) — index into it directly.
+            if (
+              is.list(current) ||
+              is.vector(current) ||
+              is.indexedSeq(current)
+            ) {
               const relativeIndex = index - i
-              const items = current.value
-              if (relativeIndex < 0 || relativeIndex >= items.length) {
+              const length = is.vector(current)
+                ? vectorCount(current)
+                : is.indexedSeq(current)
+                  ? current.array.length - current.offset
+                  : current.value.length
+              if (relativeIndex < 0 || relativeIndex >= length) {
                 if (notFound !== undefined) return notFound
                 const err = new EvaluationError(
-                  `nth index ${index} is out of bounds for collection of length ${i + items.length}`,
+                  `nth index ${index} is out of bounds for collection of length ${i + length}`,
                   { coll, n }
                 )
                 err.data = { argIndex: 1 }
                 throw err
               }
-              return items[relativeIndex]
+              return is.vector(current)
+                ? vectorNth(current, relativeIndex)
+                : is.indexedSeq(current)
+                  ? current.array[current.offset + relativeIndex]
+                  : current.value[relativeIndex]
             }
             // Non-sequential terminal (shouldn't happen in well-formed sequences)
             if (notFound !== undefined) return notFound
@@ -391,23 +476,38 @@ export const seqFunctions: Record<string, CljValue> = {
             throw err
           }
         }
+        if (is.indexedSeq(coll)) {
+          const absoluteIndex = coll.offset + index
+          if (index < 0 || absoluteIndex >= coll.array.length) {
+            if (notFound !== undefined) return notFound
+            const err = new EvaluationError(
+              `nth index ${index} is out of bounds for collection of length ${coll.array.length - coll.offset}`,
+              { coll, n }
+            )
+            err.data = { argIndex: 1 }
+            throw err
+          }
+          return coll.array[absoluteIndex]
+        }
         if (!is.list(coll) && !is.vector(coll)) {
           throw new EvaluationError(
             `nth expects a list or vector, got ${printString(coll)}`,
             { coll }
           )
         }
-        const items = coll.value
-        if (index < 0 || index >= items.length) {
+        // Vectors index through the trie (O(log₃₂ n)) instead of materializing the
+        // whole structure just to read one slot, which `.value[i]` would do.
+        const length = is.vector(coll) ? vectorCount(coll) : coll.value.length
+        if (index < 0 || index >= length) {
           if (notFound !== undefined) return notFound
           const err = new EvaluationError(
-            `nth index ${index} is out of bounds for collection of length ${items.length}`,
+            `nth index ${index} is out of bounds for collection of length ${length}`,
             { coll, n }
           )
           err.data = { argIndex: 1 }
           throw err
         }
-        return items[index]
+        return is.vector(coll) ? vectorNth(coll, index) : coll.value[index]
       }
     )
     .withMeta([
@@ -425,6 +525,9 @@ export const seqFunctions: Record<string, CljValue> = {
           `last expects a list or vector${coll !== undefined ? `, got ${printString(coll)}` : ''}`,
           { coll }
         )
+      }
+      if (is.vector(coll)) {
+        return vectorCount(coll) === 0 ? v.nil() : vectorPeek(coll)
       }
       const items = coll.value
       return items.length === 0 ? v.nil() : items[items.length - 1]
@@ -446,7 +549,11 @@ export const seqFunctions: Record<string, CljValue> = {
           0
         )
       }
-      return v.list([...coll.value].reverse())
+      // vectorToArray returns the live items array for the array rep, so copy
+      // before the in-place .reverse() (gotchas.md #1 — the old [...coll.value]
+      // did this implicitly).
+      const items = is.vector(coll) ? vectorToArray(coll) : coll.value
+      return v.list([...items].reverse())
     })
     .withMeta([
       ...docMeta({
@@ -500,21 +607,17 @@ export const seqFunctions: Record<string, CljValue> = {
         }
         if (is.nil(coll)) return v.boolean(false)
         if (is.map(coll)) {
-          return v.boolean(
-            coll.entries.some(function checkKeyMatch([k]) {
-              return is.equal(k, key)
-            })
-          )
+          return v.boolean(mapContains(coll, key))
         }
         if (is.record(coll)) {
           return v.boolean(coll.fields.some(([k]) => is.equal(k, key)))
         }
         if (is.vector(coll)) {
           if (!is.number(key)) return v.boolean(false)
-          return v.boolean(key.value >= 0 && key.value < coll.value.length)
+          return v.boolean(key.value >= 0 && key.value < vectorCount(coll))
         }
         if (is.set(coll)) {
-          return v.boolean(coll.values.some((v) => is.equal(v, key)))
+          return v.boolean(setContains(coll, key))
         }
         throw EvaluationError.atArg(
           `contains? expects a map, record, set, vector, or nil, got ${printString(coll)}`,
@@ -553,73 +656,6 @@ export const seqFunctions: Record<string, CljValue> = {
       }),
     ]),
 
-  // ── Range ────────────────────────────────────────────────────────────────
-
-  'range*': v
-    .nativeFn('range*', function rangeImpl(...args: CljValue[]) {
-      if (args.length === 0 || args.length > 3) {
-        throw new EvaluationError(
-          'range expects 1, 2, or 3 arguments: (range n), (range start end), or (range start end step)',
-          { args }
-        )
-      }
-      const badIdx = args.findIndex(function checkIsNumber(a) {
-        return !is.number(a)
-      })
-      if (badIdx !== -1) {
-        throw EvaluationError.atArg(
-          'range expects number arguments',
-          { args },
-          badIdx
-        )
-      }
-      let start: number
-      let end: number
-      let step: number
-      if (args.length === 1) {
-        start = 0
-        end = (args[0] as CljNumber).value
-        step = 1
-      } else if (args.length === 2) {
-        start = (args[0] as CljNumber).value
-        end = (args[1] as CljNumber).value
-        step = 1
-      } else {
-        start = (args[0] as CljNumber).value
-        end = (args[1] as CljNumber).value
-        step = (args[2] as CljNumber).value
-      }
-      if (step === 0) {
-        // step is always the last arg: index args.length - 1
-        throw EvaluationError.atArg(
-          'range step cannot be zero',
-          { args },
-          args.length - 1
-        )
-      }
-      const result: CljValue[] = []
-      if (step > 0) {
-        for (let i = start; i < end; i += step) {
-          result.push(v.number(i))
-        }
-      } else {
-        for (let i = start; i > end; i += step) {
-          result.push(v.number(i))
-        }
-      }
-      return v.list(result)
-    })
-    .withMeta([
-      ...docMeta({
-        doc: 'Returns a finite sequence of numbers (native helper).',
-        arglists: [['n'], ['start', 'end'], ['start', 'end', 'step']],
-        docGroup: DocGroups.sequences,
-        extra: {
-          'no-doc': true,
-        },
-      }),
-    ]),
-
   // ── Quasiquote bootstrap helper ──────────────────────────────────────────
   // Used internally by quasiquote-expanded splice code (e.g. `(a ~@xs b)).
   // Eager unlike the lazy clojure.core/concat — safe because the result is
@@ -631,11 +667,11 @@ export const seqFunctions: Record<string, CljValue> = {
       for (const arg of args) {
         if (is.nil(arg)) continue
         if (is.list(arg) || is.vector(arg)) {
-          result.push(...arg.value)
-        } else if (is.cons(arg) || is.lazySeq(arg)) {
+          result.push(...(is.vector(arg) ? vectorToArray(arg) : arg.value))
+        } else if (is.cons(arg) || is.lazySeq(arg) || is.indexedSeq(arg)) {
           result.push(...toSeq(arg))
         } else if (is.set(arg)) {
-          result.push(...arg.values)
+          result.push(...setValues(arg))
         } else {
           throw new EvaluationError(
             `concat* expects seqable arguments, got ${printString(arg)}`,
@@ -662,6 +698,9 @@ export const seqFunctions: Record<string, CljValue> = {
       if (is.lazySeq(countable) || is.cons(countable)) {
         return v.number(toSeq(countable).length)
       }
+      if (is.indexedSeq(countable)) {
+        return v.number(countable.array.length - countable.offset)
+      }
       if (
         !(
           [
@@ -685,13 +724,13 @@ export const seqFunctions: Record<string, CljValue> = {
         case valueKeywords.list:
           return v.number((countable as CljList).value.length)
         case valueKeywords.vector:
-          return v.number((countable as CljVector).value.length)
+          return v.number(vectorCount(countable as CljVector))
         case valueKeywords.map:
-          return v.number((countable as CljMap).entries.length)
+          return v.number(mapCount(countable as CljMap))
         case valueKeywords.record:
           return v.number(countable.fields.length)
         case valueKeywords.set:
-          return v.number((countable as CljSet).values.length)
+          return v.number(mapCount((countable as CljSet)._map))
         case valueKeywords.string:
           return v.number((countable as CljString).value.length)
         default:

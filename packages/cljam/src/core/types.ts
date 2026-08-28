@@ -6,20 +6,95 @@ export type CljKeyword = { kind: 'keyword'; name: string }
 export type CljNil = { kind: 'nil'; value: null }
 export type CljSymbol = { kind: 'symbol'; name: string; meta?: CljMap }
 export type CljList = { kind: 'list'; value: CljValue[]; meta?: CljMap }
-export type CljVector = { kind: 'vector'; value: CljValue[]; meta?: CljMap }
+export type CljVector = {
+  kind: 'vector'
+  _data: CljVectorData
+  meta?: CljMap
+  /** Internal marker for vector-like map entries. Not a public CljValue kind. */
+  __cljamMapEntry?: true
+  // Compatibility bridge — materializes elements from _data on every call.
+  // Array rep returns its items directly (O(1)); trie rep materializes (O(n)).
+  // Hot paths must use vectorNth/vectorConj/... from vector-helpers.ts.
+  readonly value: CljValue[]
+}
+export type CljMapEntry = CljVector & { __cljamMapEntry: true }
+import type { HamtNode } from './persistent/hamt-kernel.ts'
+import type { TrieNode } from './persistent/vector-kernel.ts'
+// Type-only import (like TrieNode/HamtNode above): analyzer/nodes.ts imports
+// value types from here, but the cycle is erased at compile time.
+import type { FnMethodNode as AstFnMethod } from './analyzer/nodes.ts'
+
+// ─── CljVector internal representation ──────────────────────────────────────
+// Dual rep mirroring CljMap's small|hamt: a flat array for ≤32 elements (the
+// overwhelming common case — zero overhead, identical to the old behavior) and a
+// 32-way bitmapped trie + tail buffer for larger vectors (O(1) amortized conj).
+// TrieNode stays kernel-owned and is imported type-only here, exactly as HamtNode
+// is above; TrieVectorData lives here so it can join the CljVectorData union.
+export type ArrayVectorData = { kind: 'array'; items: CljValue[] }
+export type TrieVectorData = {
+  kind: 'trie'
+  count: number
+  shift: number
+  root: TrieNode
+  tail: CljValue[]
+  _hash?: number
+}
+export type CljVectorData = ArrayVectorData | TrieVectorData
+
+// ─── CljMap internal representation ─────────────────────────────────────────
+
+export type SmallMapData = { kind: 'small'; entries: [CljValue, CljValue][] }
+export type HamtMapData = {
+  kind: 'hamt'
+  root: HamtNode<CljValue, CljValue>
+  size: number
+}
+export type CljMapData = SmallMapData | HamtMapData
+
 export type CljMap = {
   kind: 'map'
-  entries: [CljValue, CljValue][]
+  _data: CljMapData
   meta?: CljMap
+  // Compatibility bridge — materializes entries from _data on every call.
+  // Hot paths must use mapGet/mapAssoc/mapEntries/mapCount from map-helpers.ts.
+  readonly entries: [CljValue, CljValue][]
 }
 export type CljNamespace = {
   kind: 'namespace'
   name: string
+  id?: number
+  version: number
   vars: Map<string, CljVar> // user defs from (def ...)
   aliases: Map<string, CljNamespace> // :as namespace aliases
   readerAliases: Map<string, string> // :as-alias reader aliases
   doc?: string
 }
+
+export type RuntimeEvalIdentity = {
+  id: number
+  nsName: string
+}
+
+export type RuntimeFunctionIdentity = {
+  id: number
+  evalId?: number
+  displayName: string
+}
+
+export type FunctionIdentityInput = {
+  nsName: string
+  name?: string
+  evalIdentity?: RuntimeEvalIdentity
+}
+
+export type NamespaceMutationReason =
+  | 'def'
+  | 'defmacro'
+  | 'alter-var-root'
+  | 'defmulti'
+  | 'defmethod'
+  | 'require'
+  | 'host-require'
 
 export type Env = {
   bindings: Map<string, CljValue> // native fns, macros, multimethods, local values
@@ -27,14 +102,18 @@ export type Env = {
   ns?: CljNamespace // set on namespace-root envs only
 }
 
-export type DestructurePattern = CljSymbol | CljVector | CljMap
-
 export type Arity = {
-  params: DestructurePattern[]
-  restParam: DestructurePattern | null
+  params: CljSymbol[]
+  restParam: CljSymbol | null
   body: CljValue[]
-  compiledBody?: CompiledExpr
-  paramSlots?: SlotRef[] // Phase 4b: set when body compiled with param slots
+  bytecodeBody?: VmChunk
+  vmClosure?: VmFunctionClosure
+  /** Analyzer AST body for the walker (the base engine), mirroring `bytecodeBody`. */
+  astMethod?: AstFnMethod
+  /** Captured upvalues, copied at closure creation. Shared across arities. */
+  astUpvalues?: CljValue[]
+  /** Frame size for `astMethod` (the analyzer's `namedSlotCount`). */
+  astSlotCount?: number
 }
 
 export type CljFunction = {
@@ -42,6 +121,9 @@ export type CljFunction = {
   arities: Arity[]
   env: Env
   name?: string // set for named fn: (fn my-name [x] x)
+  id?: number
+  evalId?: number
+  displayName?: string
   meta?: CljMap
 }
 
@@ -50,6 +132,9 @@ export type CljMacro = {
   arities: Arity[]
   env: Env
   name?: string // set for named defmacro
+  id?: number
+  evalId?: number
+  displayName?: string
   meta?: CljMap
 }
 
@@ -59,7 +144,7 @@ export type CljAtom = {
   meta?: CljMap
   watches?: Map<
     string,
-    { key: CljValue; fn: CljValue; ctx: EvaluationContext; callEnv: Env }
+    { key: CljValue; fn: CljValue; callEnv: Env }
   >
   validator?: CljValue
 }
@@ -67,11 +152,17 @@ export type CljReduced = { kind: 'reduced'; value: CljValue }
 export type CljVolatile = { kind: 'volatile'; value: CljValue }
 export type CljRegex = { kind: 'regex'; pattern: string; flags: string }
 
-export type CljSet = { kind: 'set'; values: CljValue[] }
+export type CljSet = {
+  kind: 'set'
+  _map: CljMap
+  meta?: CljMap
+}
 
 export type CljDelay = {
   kind: 'delay'
   thunk: () => CljValue
+  thunkFn?: CljValue
+  callEnv?: Env
   realized: boolean
   value?: CljValue
 }
@@ -79,6 +170,8 @@ export type CljDelay = {
 export type CljLazySeq = {
   kind: 'lazy-seq'
   thunk: (() => CljValue) | null
+  thunkFn?: CljValue
+  callEnv?: Env
   realized: boolean
   value?: CljValue // nil, list, cons, or another lazy-seq after realization
 }
@@ -87,6 +180,17 @@ export type CljCons = {
   kind: 'cons'
   head: CljValue
   tail: CljValue // can be list, vector, lazy-seq, cons, or nil
+  meta?: CljMap
+}
+
+// A view over a SHARED, immutable array: { which array, where in it }.
+// Internal-only — produced by seq/rest/next over array-backed sources to give
+// O(1) first/rest without copying. INVARIANT: 0 <= offset < array.length (an
+// empty view never exists; the sole factory normalizes empty → nil).
+export type CljIndexedSeq = {
+  kind: 'indexed-seq'
+  array: CljValue[]
+  offset: number
   meta?: CljMap
 }
 
@@ -129,9 +233,12 @@ export type CljProtocol = {
 
 export type CljRecord = {
   kind: 'record'
-  recordType: string           // unqualified: 'Circle'
-  ns: string                   // defining namespace: 'my.shapes'
+  recordType: string // unqualified: 'Circle'
+  ns: string // defining namespace: 'my.shapes'
   fields: [CljValue, CljValue][] // same structure as CljMap.entries
+  // Declared field keywords (':radius') in defrecord order. fields may carry
+  // extra assoc'ed entries beyond these; dissoc of a basis key demotes to a map.
+  basis: string[]
   meta?: CljMap
 }
 
@@ -148,13 +255,14 @@ export type IOContext = {
 
 export type EvaluationContext = {
   evaluate: (expr: CljValue, env: Env) => CljValue
-  evaluateForms: (forms: CljValue[], env: Env) => CljValue
+  /** Interpreter symbol resolution without the full evaluate round-trip — the AST walker's Var path. */
+  evaluateSymbol: (sym: CljSymbol, env: Env) => CljValue
   applyFunction: (
     fn: CljFunction | CljNativeFunction,
     args: CljValue[],
     callEnv: Env
   ) => CljValue
-  /** Invokes any IFn value: functions, native functions, keywords, and maps. */
+  /** Invokes any IFn value: functions, native functions, keywords, collections, vars, and host callables. */
   applyCallable: (fn: CljValue, args: CljValue[], callEnv: Env) => CljValue
   applyMacro: (macro: CljMacro, rawArgs: CljValue[]) => CljValue
   expandAll: (form: CljValue, env: Env) => CljValue
@@ -228,6 +336,38 @@ export type EvaluationContext = {
    *   string[]        — only specifiers that exactly match or start with one of these prefixes
    */
   allowedHostModules?: string[] | 'all'
+  /**
+   * Controls VM participation in sync evaluation.
+   *
+   * - function-body: top-level evaluation uses the interpreter, but bytecode-backed function bodies may run.
+   * - opportunistic: outer evaluation forms try top-level VM first, then fall back.
+   * - vm-required: outer evaluation forms must compile to VM or throw.
+   * - off: bypass VM execution where the current dispatch can do so.
+   */
+  vmExecutionMode?: VmExecutionMode
+  /**
+   * Optional execution decision sink. This is deliberately opt-in so normal
+   * evaluation keeps the existing value-oriented API.
+   */
+  instrumentation?: {
+    onEvent: (event: EvalEvent) => void
+  }
+  measurement?: EvaluationMeasurementRecorder
+  allocateEvalIdentity?: (nsName: string) => RuntimeEvalIdentity
+  allocateFunctionIdentity?: (
+    input: FunctionIdentityInput
+  ) => RuntimeFunctionIdentity
+  allocateChunkIdentity?: (chunk: VmChunk) => number
+  getCachedTopLevelVmChunk?: (key: string) => VmChunk | undefined
+  setCachedTopLevelVmChunk?: (key: string, chunk: VmChunk) => void
+  touchNamespace?: (ns: CljNamespace, reason: NamespaceMutationReason) => void
+  currentEvalIdentity?: RuntimeEvalIdentity
+  /**
+   * Internal recursion guard used to keep first top-level VM integration at the
+   * whole-form boundary instead of opportunistically compiling interpreter
+   * subexpressions.
+   */
+  evaluationDepth?: number
 }
 
 export type CljNativeFunction = {
@@ -279,6 +419,7 @@ export type CljValue =
   | CljDelay
   | CljLazySeq
   | CljCons
+  | CljIndexedSeq
   | CljNamespace
   | CljPending
   | CljJsValue
@@ -291,14 +432,20 @@ export type Cursor = {
   offset: number
 }
 
-export type Pos = { start: number; end: number; source?: string; lineOffset?: number; colOffset?: number } // absolute char offsets; source+lineOffset+colOffset enable file-relative display
+export type Pos = {
+  start: number
+  end: number
+  source?: string
+  lineOffset?: number
+  colOffset?: number
+} // absolute char offsets; source+lineOffset+colOffset enable file-relative display
 
 export interface StackFrame {
-  fnName: string | null   // symbol name at the call site, null for non-symbol heads (anonymous calls)
-  line: number | null     // 1-indexed line of call site, null when source is unavailable
-  col: number | null      // 1-indexed col of call site, null when source is unavailable
-  source: string | null   // ctx.currentFile at push time
-  pos: Pos | null         // raw byte-offset position in ctx.currentSource; enables session-level display fallback
+  fnName: string | null // symbol name at the call site, null for non-symbol heads (anonymous calls)
+  line: number | null // 1-indexed line of call site, null when source is unavailable
+  col: number | null // 1-indexed col of call site, null when source is unavailable
+  source: string | null // ctx.currentFile at push time
+  pos: Pos | null // raw byte-offset position in ctx.currentSource; enables session-level display fallback
 }
 
 export type TokenLParen = {
@@ -427,38 +574,213 @@ export type Token = (
   | TokenCharacter
 ) & { start: Cursor; end: Cursor }
 
-/** Compiler */
-
 /**
- * A compiled expression takes runtime env + ctx, returns a CljValue.
- * Signature includes ctx even though we don't use it yet
- * Phases 2+ (if, fn*, apply) will need it. We keep the shape fixed now.
+ * VM Types
  */
-export type CompiledExpr = (env: Env, ctx: EvaluationContext) => CljValue
 
-/**
- * A compile function takes a node and an optional compile-time env. It returns a compiled expression
- * when it can't compile a node, it returns null, falling back to the interpreter
- * we have this definition here so that recursive compiler functions such as compileIf,
- * and compileDo can reference the "root dispatcher" when compiling sub-forms.
- * It's a clean way to prevent cyclical dependencies. Only recursive compiler fns need this.
- */
-export type CompileFn = (
-  node: CljValue,
-  env: CompileEnv | null
-) => CompiledExpr | null
+export type OpCode = number
 
-/**
- * A mutable box. Allocated at compile time.
- * Read by compiled symbols that reference the slot binding.
- */
-export type SlotRef = { value: CljValue | null }
+export type VmExecutionMode =
+  | 'off'
+  | 'function-body'
+  | 'opportunistic'
+  | 'vm-required'
 
-export type CompileEnv = {
-  bindings: Map<string, SlotRef>
-  outer: CompileEnv | null
-  loop?: {
-    slots: SlotRef[]
-    recurTarget: { args: CljValue[] | null }
-  }
+export type VmFallbackReason =
+  | { category: 'unsupported-special-form'; detail: string }
+  | { category: 'unsupported-binding-form'; detail: string }
+  | { category: 'unsupported-callee'; detail: string }
+  | { category: 'unsupported-top-level-mutation'; detail: string }
+  | { category: 'unexpanded-macro'; detail: string }
+  | { category: 'unsupported-js-interop'; detail: string }
+  | { category: 'compile-error'; detail: string }
+
+export type VmCompileAnalysisError = {
+  message: string
+  pos: Pos | null
+  kind: 'malformed' | 'unsupported'
+  code?: string
+}
+
+export type VmCompileResult =
+  | { ok: true; chunk: VmChunk }
+  | {
+      ok: false
+      reason: VmFallbackReason
+      fatal?: false
+      analysisError?: VmCompileAnalysisError
+    }
+  | {
+      ok: false
+      reason: VmFallbackReason
+      fatal: true
+      analysisError?: VmCompileAnalysisError
+    }
+
+export type EvalEvent = {
+  path:
+    | 'vm:function-body-compiled'
+    | 'vm:function-body'
+    | 'vm:macro-body'
+    | 'vm:top-level'
+    | 'ast:top-level'
+    | 'ast:function-body'
+    | 'ast:macro-body'
+    | 'analyzer-error'
+    | 'fallback'
+  mode: VmExecutionMode
+  reason?: VmFallbackReason
+  formKind?: string
+  ast?: CljValue
+  details?: Record<string, unknown>
+}
+
+export type EvaluationMeasurementStage = {
+  stage:
+    | ':macroexpand'
+    | ':vm/compile'
+    | ':vm/execute'
+    | ':vm/cache-hit'
+    | ':ast/analyze'
+    | ':ast/walk'
+    | ':fallback'
+    | string
+  elapsedMs: number
+  path?: EvalEvent['path']
+  reason?: VmFallbackReason
+}
+
+export type EvaluationMeasurementRecorder = {
+  recordStage: (stage: EvaluationMeasurementStage) => void
+  setPath: (path: EvalEvent['path']) => void
+}
+
+export type VmUpvalueDescriptor = {
+  isLocal: boolean
+  index: number
+}
+
+export type VmLexicalVarCandidate = {
+  kind: 'local' | 'upvalue'
+  slot: number
+}
+
+export type VmLexicalVarLookup = {
+  symbol: CljSymbol
+  candidates: VmLexicalVarCandidate[]
+}
+
+export type VmCallFrame = {
+  chunk: VmChunk
+  env: Env
+  locals: CljValue[]
+  ip: number
+  stackBase: number
+  fnName: string | null
+  callPos: Pos | null
+  closure: VmFunctionClosure | null
+  unwindStack: VmUnwindRecord[]
+}
+
+export type VmAbrupt = {
+  kind: 'throw'
+  thrown: CljValue
+  original: unknown
+  catchable: boolean
+}
+
+export type VmTryRecord = {
+  kind: 'try'
+  stackDepth: number
+  catchTableIndex: number
+  finallyIp: number
+  afterIp: number
+}
+
+export type VmFinallyContinuationRecord = {
+  kind: 'finally-continuation'
+  stackDepth: number
+  afterIp: number
+  pendingAbrupt: VmAbrupt | null
+}
+
+export type VmBindingFrameRecord = {
+  kind: 'binding-frame'
+  stackDepth: number
+  boundVars: CljVar[]
+}
+
+export type VmUnwindRecord =
+  | VmTryRecord
+  | VmFinallyContinuationRecord
+  | VmBindingFrameRecord
+
+export type VmUpvalue = {
+  frame: VmCallFrame | null
+  slot: number
+  closedValue: CljValue | null
+}
+
+export type VmFunctionClosure = {
+  env: Env
+  upvalues: VmUpvalue[]
+  name?: string
+}
+
+export type VmArityTemplate = {
+  params: CljSymbol[]
+  restParam: CljSymbol | null
+  body: CljValue[]
+  chunk: VmChunk
+}
+
+export type VmFunctionTemplate = {
+  arities: VmArityTemplate[]
+  upvalueDescriptors: VmUpvalueDescriptor[]
+  name?: string
+  meta?: CljMap
+}
+
+export type VmCatchClause = {
+  discriminator: CljValue
+  // -1: evaluate discriminator AST at catch time
+  // >= 0: local slot holds a pre-instantiated closure (inline fn that closes over VM locals)
+  discriminatorSlot: number
+  bindingSlot: number
+  bodyIp: number
+}
+
+export type VmCatchTable = {
+  clauses: VmCatchClause[]
+}
+
+export type VmChunk = {
+  id?: number
+  code: number[]
+  constants: CljValue[]
+  globalVarCache: Array<
+    | {
+        ns: CljNamespace
+        var: CljVar
+      }
+    | undefined
+  >
+  positions: Array<Pos | null>
+  callArgPositions: Array<Array<Pos | null> | undefined>
+  name?: string
+  maxStack: number
+  localCount: number
+  innerFunctions: VmFunctionTemplate[]
+  catchTables: VmCatchTable[]
+  lexicalVarLookups: VmLexicalVarLookup[]
+  selfSlot: number
+}
+
+export type VmExecuteInput = {
+  chunk: VmChunk
+  env: Env
+  ctx: EvaluationContext
+  locals?: CljValue[]
+  rootFnName?: string | null
+  closure?: VmFunctionClosure | null
 }

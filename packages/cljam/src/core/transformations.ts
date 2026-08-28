@@ -2,13 +2,18 @@ import { is } from './assertions'
 import { EvaluationError } from './errors'
 import { v } from './factories'
 import { valueKeywords } from './keywords'
+import { setValues } from './persistent/map-helpers'
+import { vectorToArray } from './persistent/vector-helpers'
 import { getPrintContext, printString } from './printer'
 import {
   type CljCons,
   type CljDelay,
   type CljLazySeq,
   type CljMultiMethod,
+  type CljSet,
   type CljValue,
+  type Env,
+  type EvaluationContext,
 } from './types'
 
 export function valueToString(value: CljValue): string {
@@ -53,10 +58,9 @@ export function valueToString(value: CljValue): string {
     }
     case valueKeywords.set: {
       const { printLength } = getPrintContext()
-      const items =
-        printLength !== null ? value.values.slice(0, printLength) : value.values
-      const suffix =
-        printLength !== null && value.values.length > printLength ? ' ...' : ''
+      const allItems = setValues(value as CljSet)
+      const items = printLength !== null ? allItems.slice(0, printLength) : allItems
+      const suffix = printLength !== null && allItems.length > printLength ? ' ...' : ''
       return `#{${items.map(valueToString).join(' ')}${suffix}}`
     }
     case valueKeywords.function: {
@@ -147,15 +151,27 @@ export function valueToString(value: CljValue): string {
 }
 
 /** Realize a delay: evaluate thunk once, cache result. */
-export function realizeDelay(d: CljDelay): CljValue {
+export function realizeDelay(
+  d: CljDelay,
+  ctx?: EvaluationContext,
+  callEnv?: Env
+): CljValue {
   if (d.realized) return d.value!
-  d.value = d.thunk()
+  if (ctx && d.thunkFn) {
+    d.value = ctx.applyCallable(d.thunkFn, [], d.callEnv ?? callEnv!)
+  } else {
+    d.value = d.thunk()
+  }
   d.realized = true
   return d.value!
 }
 
 /** Realize a lazy-seq: evaluate thunk once, cache result. Trampolines through chained lazy-seqs. */
-export function realizeLazySeq(ls: CljLazySeq): CljValue {
+export function realizeLazySeq(
+  ls: CljLazySeq,
+  ctx?: EvaluationContext,
+  callEnv?: Env
+): CljValue {
   let current: CljValue = ls
   while (current.kind === 'lazy-seq') {
     const lazy = current as CljLazySeq
@@ -164,7 +180,11 @@ export function realizeLazySeq(ls: CljLazySeq): CljValue {
       continue
     }
     if (lazy.thunk) {
-      lazy.value = lazy.thunk()
+      if (ctx && lazy.thunkFn) {
+        lazy.value = ctx.applyCallable(lazy.thunkFn, [], lazy.callEnv ?? callEnv!)
+      } else {
+        lazy.value = lazy.thunk()
+      }
       lazy.thunk = null
       lazy.realized = true
       current = lazy.value!
@@ -180,16 +200,16 @@ export const toSeq = (collection: CljValue): CljValue[] => {
     return collection.value
   }
   if (is.vector(collection)) {
-    return collection.value
+    return vectorToArray(collection)
   }
   if (is.map(collection)) {
-    return collection.entries.map(([key, value]) => v.vector([key, value]))
+    return collection.entries.map(([key, value]) => v.mapEntry(key, value))
   }
   if (is.record(collection)) {
-    return collection.fields.map(([key, value]) => v.vector([key, value]))
+    return collection.fields.map(([key, value]) => v.mapEntry(key, value))
   }
   if (is.set(collection)) {
-    return collection.values
+    return setValues(collection)
   }
   if (is.string(collection)) {
     return [...collection.value].map(v.string)
@@ -201,6 +221,9 @@ export const toSeq = (collection: CljValue): CljValue[] => {
   }
   if (is.cons(collection)) {
     return consToArray(collection)
+  }
+  if (is.indexedSeq(collection)) {
+    return collection.array.slice(collection.offset)
   }
   throw new EvaluationError(
     `toSeq expects a collection or string, got ${printString(collection)}`,
@@ -228,7 +251,11 @@ export function consToArray(c: CljCons): CljValue[] {
       break
     }
     if (is.vector(tail)) {
-      result.push(...tail.value)
+      result.push(...vectorToArray(tail))
+      break
+    }
+    if (is.indexedSeq(tail)) {
+      result.push(...tail.array.slice(tail.offset))
       break
     }
     // Other seqable types — fall through to toSeq
@@ -236,4 +263,43 @@ export function consToArray(c: CljCons): CljValue[] {
     break
   }
   return result
+}
+
+/**
+ * Stream a (possibly lazy) seq element-by-element, realizing exactly one cell
+ * per step. Unlike `toSeq`/`consToArray`, the tail is never materialized up
+ * front: a consumer that stops early (e.g. on `reduced`) leaves the rest of the
+ * source unrealized. This is what lets `reduce`/`transduce` honor an
+ * early-terminating transducer over a lazy source without forcing all of it.
+ */
+export function* streamSeq(collection: CljValue): Generator<CljValue> {
+  let cur: CljValue = collection
+  while (true) {
+    if (is.lazySeq(cur)) {
+      cur = realizeLazySeq(cur)
+      continue
+    }
+    if (is.nil(cur)) return
+    if (is.cons(cur)) {
+      yield cur.head
+      cur = cur.tail
+      continue
+    }
+    if (is.list(cur)) {
+      yield* cur.value
+      return
+    }
+    if (is.vector(cur)) {
+      yield* vectorToArray(cur)
+      return
+    }
+    if (is.indexedSeq(cur)) {
+      const { array, offset } = cur
+      for (let i = offset; i < array.length; i++) yield array[i]
+      return
+    }
+    // Other seqable types (map/record/set/string) — concrete, materialize.
+    yield* toSeq(cur)
+    return
+  }
 }

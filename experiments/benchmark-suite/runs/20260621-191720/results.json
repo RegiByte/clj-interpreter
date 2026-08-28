@@ -1,0 +1,111 @@
+{
+  "meta": {
+    "date": "2026-06-21T19:17:20.849Z",
+    "node": "v22.14.0",
+    "platform": "darwin 25.5.0",
+    "arch": "arm64",
+    "cpu": "Apple M1 Max",
+    "gitSha": "a9fe155",
+    "gitDirty": true,
+    "nbbVersion": "1.4.207",
+    "measure": {
+      "samples": 5,
+      "warmupMinCalls": 3,
+      "warmupMinMs": 100,
+      "targetBatchMs": 15
+    }
+  },
+  "engines": [
+    "cljam-interp",
+    "cljam-vm",
+    "sci"
+  ],
+  "workloads": [
+    {
+      "name": "vector-build",
+      "kind": "micro",
+      "subsystem": "persistent vector conj/nth/peek/reduce",
+      "expected": 1250099999
+    }
+  ],
+  "pairs": [
+    {
+      "workload": "vector-build",
+      "engine": "cljam-interp",
+      "wallMs": 47579.518083,
+      "ok": true,
+      "pass": true,
+      "checksum": 1250099999,
+      "expected": 1250099999,
+      "setupMs": 56.72087500000001,
+      "warmupCalls": 3,
+      "batchSize": 1,
+      "batchesMs": [
+        4686.145499999999,
+        4731.582708000002,
+        4794.249499999998,
+        4674.913874999998,
+        4739.730959
+      ],
+      "perCallMs": [
+        4686.145499999999,
+        4731.582708000002,
+        4794.249499999998,
+        4674.913874999998,
+        4739.730959
+      ]
+    },
+    {
+      "workload": "vector-build",
+      "engine": "cljam-vm",
+      "wallMs": 45944.473542,
+      "ok": true,
+      "pass": true,
+      "checksum": 1250099999,
+      "expected": 1250099999,
+      "setupMs": 81.351166,
+      "warmupCalls": 3,
+      "batchSize": 1,
+      "batchesMs": [
+        4591.186375000001,
+        4568.034334,
+        4535.353583000004,
+        4590.201083,
+        4554.480291
+      ],
+      "perCallMs": [
+        4591.186375000001,
+        4568.034334,
+        4535.353583000004,
+        4590.201083,
+        4554.480291
+      ]
+    },
+    {
+      "workload": "vector-build",
+      "engine": "sci",
+      "wallMs": 484.4774169999873,
+      "ok": true,
+      "pass": true,
+      "checksum": 1250099999,
+      "expected": 1250099999,
+      "setupMs": 10.624417000000008,
+      "warmupCalls": 12,
+      "batchSize": 2,
+      "batchesMs": [
+        16.69425000000001,
+        16.113959000000023,
+        15.963833000000022,
+        15.968833000000018,
+        16.19312500000001
+      ],
+      "perCallMs": [
+        8.347125000000005,
+        8.056979500000011,
+        7.981916500000011,
+        7.984416500000009,
+        8.096562500000005
+      ]
+    }
+  ]
+}

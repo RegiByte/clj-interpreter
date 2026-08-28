@@ -202,8 +202,10 @@ describe('stdlib macros', () => {
       expect(session().evaluate('(next (list 1))')).toEqual(v.nil())
     })
 
-    it('returns rest as a list for multi-element list', () => {
-      expect(session().evaluate('(next (list 1 2 3))')).toEqual(
+    it('returns rest as a seq for multi-element list', () => {
+      // (next coll) yields a seq (an indexed-seq view post-Phase-C), not a list;
+      // materialize realizes it to compare contents.
+      expect(materialize(session().evaluate('(next (list 1 2 3))'))).toEqual(
         session().evaluate("'(2 3)")
       )
     })
@@ -212,8 +214,8 @@ describe('stdlib macros', () => {
       expect(session().evaluate('(next [])')).toEqual(v.nil())
     })
 
-    it('returns rest as list for multi-element vector', () => {
-      expect(session().evaluate('(next [1 2 3])')).toEqual(
+    it('returns rest as a seq for multi-element vector', () => {
+      expect(materialize(session().evaluate('(next [1 2 3])'))).toEqual(
         session().evaluate("'(2 3)")
       )
     })
@@ -336,39 +338,51 @@ describe('stdlib macros', () => {
 
 describe('range', () => {
   it('(range n) returns 0 to n-1', () => {
-    expect(session().evaluate('(range 5)')).toEqual(
+    expect(materialize(session().evaluate('(range 5)'))).toEqual(
       session().evaluate("'(0 1 2 3 4)")
     )
   })
 
   it('(range 0) returns empty list', () => {
-    expect(session().evaluate('(range 0)')).toEqual(session().evaluate("'()"))
+    expect(materialize(session().evaluate('(range 0)'))).toEqual(
+      session().evaluate("'()")
+    )
   })
 
   it('(range start end) returns start to end-1', () => {
-    expect(session().evaluate('(range 2 6)')).toEqual(
+    expect(materialize(session().evaluate('(range 2 6)'))).toEqual(
       session().evaluate("'(2 3 4 5)")
     )
   })
 
   it('(range start end step) uses custom step', () => {
-    expect(session().evaluate('(range 0 10 2)')).toEqual(
+    expect(materialize(session().evaluate('(range 0 10 2)'))).toEqual(
       session().evaluate("'(0 2 4 6 8)")
     )
   })
 
   it('negative step counts down', () => {
-    expect(session().evaluate('(range 5 0 -1)')).toEqual(
+    expect(materialize(session().evaluate('(range 5 0 -1)'))).toEqual(
       session().evaluate("'(5 4 3 2 1)")
     )
   })
 
   it('returns empty list when start >= end with positive step', () => {
-    expect(session().evaluate('(range 5 3)')).toEqual(session().evaluate("'()"))
+    expect(materialize(session().evaluate('(range 5 3)'))).toEqual(
+      session().evaluate("'()")
+    )
   })
 
-  it('throws on zero step', () => {
-    expect(() => session().evaluate('(range 0 10 0)')).toThrow()
+  it('zero step yields an infinite seq of start (Clojure parity)', () => {
+    expect(materialize(session().evaluate('(take 5 (range 0 10 0))'))).toEqual(
+      session().evaluate("'(0 0 0 0 0)")
+    )
+  })
+
+  it('zero step with start == end is empty', () => {
+    expect(materialize(session().evaluate('(range 5 5 0)'))).toEqual(
+      session().evaluate("'()")
+    )
   })
 
   it('works with map — returns seq', () => {

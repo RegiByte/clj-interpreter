@@ -140,22 +140,9 @@ describe('cljToJs', () => {
     })
 
     it('converts CljFunction to callable JS function', () => {
-      const env = makeEnv()
-      env.bindings.set(
-        '+',
-        v.nativeFn('+', (a: CljValue, b: CljValue) => {
-          if (a.kind !== 'number' || b.kind !== 'number')
-            throw new Error('expected numbers')
-          return v.number(a.value + b.value)
-        })
-      )
-
-      const fn = v.function(
-        [v.symbol('x')],
-        null,
-        [v.list([v.symbol('+'), v.symbol('x'), v.number(10)])],
-        env
-      )
+      // Evaluated in the session so the fn carries a real executable body
+      // (astMethod) — raw-factory form-only fns have no engine since S4b.
+      const fn = session.evaluate('(fn [x] (+ x 10))')
 
       const jsFn = session.cljToJs(fn) as (...args: unknown[]) => unknown
       expect(typeof jsFn).toBe('function')

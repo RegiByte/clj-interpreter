@@ -2,6 +2,8 @@ import { is } from '../assertions'
 import { EvaluationError } from '../errors'
 import { cljNil } from '../factories'
 import { valueKeywords } from '../keywords'
+import { mapGet, NOT_FOUND, setContains } from '../persistent/map-helpers'
+import { vectorCount, vectorNth } from '../persistent/vector-helpers'
 import { printString } from '../printer'
 import type {
   CljFunction,
@@ -11,8 +13,11 @@ import type {
   Env,
   EvaluationContext,
 } from '../types'
-import { bindParams, RecurSignal, resolveArity } from './arity'
+import { executeChunk } from '../vm/vm'
+import { makeFrame, walkNode } from '../walker'
+import { RecurSignal, resolveArity, slotValuesForArity } from './arity'
 import { cljToJs, jsToClj } from './js-interop'
+import { dispatchMultiMethod } from './multimethod-dispatch'
 
 export function applyFunctionWithContext(
   fn: CljFunction | CljNativeFunction,
@@ -30,49 +35,70 @@ export function applyFunctionWithContext(
   if (fn.kind === valueKeywords.function) {
     const arity = resolveArity(fn.arities, args.length)
 
-    // Phase 4b fast path: param slots compiled into body — no Env allocation,
-    // no lookup chain walks, no RecurSignal (while(true) is inside compiledBody).
-    // Save/restore handles reentrancy for mutual and non-tail-recursive calls.
-    if (arity.compiledBody && arity.paramSlots) {
-      const slots = arity.paramSlots
-      const savedValues: (CljValue | null)[] = new Array(slots.length)
-      for (let i = 0; i < slots.length; i++) {
-        savedValues[i] = slots[i].value // save for reentrancy
-        slots[i].value = args[i] // write call args
+    if (arity.bytecodeBody && ctx.vmExecutionMode !== 'off') {
+      const chunk = arity.bytecodeBody
+      let locals = slotValuesForArity(arity, args)
+      while (locals.length < chunk.localCount) {
+        locals.push(cljNil())
       }
-      try {
-        return arity.compiledBody(fn.env, ctx)
-      } finally {
-        for (let i = 0; i < slots.length; i++) {
-          slots[i].value = savedValues[i] // restore on exit
+      if (chunk.selfSlot >= 0) {
+        locals[chunk.selfSlot] = fn
+      }
+      ctx.instrumentation?.onEvent({
+        path: 'vm:function-body',
+        mode: ctx.vmExecutionMode ?? 'function-body',
+        formKind: 'fn*',
+      })
+      return executeChunk({
+        chunk,
+        env: fn.env,
+        ctx,
+        locals,
+        rootFnName: fn.name ?? null,
+        closure: arity.vmClosure ?? null,
+      })
+    }
+
+    // AST-walker path — the base engine. Frame layout matches the analyzer's
+    // slot plan: args at 0..n-1 (variadic rest packed at n), self after
+    // params, everything else nil until written.
+    if (arity.astMethod) {
+      const method = arity.astMethod
+      ctx.instrumentation?.onEvent({
+        path: 'ast:function-body',
+        mode: ctx.vmExecutionMode ?? 'off',
+        formKind: 'fn*',
+        details: { functionName: fn.name ?? null },
+      })
+      const frame = makeFrame(arity.astSlotCount ?? 0)
+      frame.upvalues = arity.astUpvalues ?? []
+      // Rest-arg gathering happens only on the initial call. recur to a
+      // variadic method takes exactly fixed+1 args (analyzer-enforced) and
+      // rebinds the rest slot AS-IS — JVM: "there is no gathering of rest
+      // args - a single seq (or null) should be passed".
+      let slotArgs = slotValuesForArity(arity, args)
+      while (true) {
+        for (let i = 0; i < slotArgs.length; i++) frame.slots[i] = slotArgs[i]
+        if (method.self !== null) frame.slots[method.self.slot] = fn
+        try {
+          return walkNode(method.body, frame, fn.env, ctx)
+        } catch (e) {
+          if (e instanceof RecurSignal) {
+            slotArgs = e.args
+            continue
+          }
+          throw e
         }
       }
     }
 
-    // Original path: bindParams + RecurSignal loop (rest params, uncompiled bodies)
-    let currentArgs = args
-    while (true) {
-      const localEnv = bindParams(
-        arity.params,
-        arity.restParam,
-        currentArgs,
-        fn.env,
-        ctx,
-        callEnv
-      )
-      try {
-        if (arity.compiledBody) {
-          return arity.compiledBody(localEnv, ctx)
-        }
-        return ctx.evaluateForms(arity.body, localEnv)
-      } catch (e) {
-        if (e instanceof RecurSignal) {
-          currentArgs = e.args
-          continue
-        }
-        throw e
-      }
-    }
+    // Internal invariant: every fn is walker-created (astMethod) or
+    // VM-compiled (bytecodeBody, per mode). A bare-form arity means a
+    // construction path bypassed both engines — a bug, not a user error.
+    throw new EvaluationError(
+      `fn ${fn.name ?? '(anonymous)'} has no executable body for this arity (internal invariant violation)`,
+      { fn, args }
+    )
   }
 
   throw new EvaluationError(
@@ -90,19 +116,61 @@ export function applyMacroWithContext(
   ctx: EvaluationContext
 ): CljValue {
   const arity = resolveArity(macro.arities, rawArgs.length)
-  const localEnv = bindParams(
-    arity.params,
-    arity.restParam,
-    rawArgs,
-    macro.env,
-    ctx,
-    macro.env
+
+  if (arity.bytecodeBody && ctx.vmExecutionMode !== 'off') {
+    const chunk = arity.bytecodeBody
+    let locals = slotValuesForArity(arity, rawArgs)
+    while (locals.length < chunk.localCount) {
+      locals.push(cljNil())
+    }
+    if (chunk.selfSlot >= 0) {
+      locals[chunk.selfSlot] = macro
+    }
+    ctx.instrumentation?.onEvent({
+      path: 'vm:macro-body',
+      mode: ctx.vmExecutionMode ?? 'function-body',
+      formKind: 'defmacro',
+    })
+    return executeChunk({
+      chunk,
+      env: macro.env,
+      ctx,
+      locals,
+      rootFnName: macro.name ?? null,
+      closure: arity.vmClosure ?? null,
+    })
+  }
+
+  // AST-walker path — parallel of the fn astMethod branch, minus the
+  // RecurSignal loop: the interpreter's macro path has none either (a
+  // fn-level recur in a macro body propagates out on both paths).
+  if (arity.astMethod) {
+    const method = arity.astMethod
+    ctx.instrumentation?.onEvent({
+      path: 'ast:macro-body',
+      mode: ctx.vmExecutionMode ?? 'off',
+      formKind: 'defmacro',
+      details: { macroName: macro.name ?? null },
+    })
+    const frame = makeFrame(arity.astSlotCount ?? 0)
+    frame.upvalues = arity.astUpvalues ?? []
+    const slotArgs = slotValuesForArity(arity, rawArgs)
+    for (let i = 0; i < slotArgs.length; i++) frame.slots[i] = slotArgs[i]
+    if (method.self !== null) frame.slots[method.self.slot] = macro
+    return walkNode(method.body, frame, macro.env, ctx)
+  }
+
+  // Same invariant as applyFunctionWithContext: macros are walker-created
+  // (astMethod) or VM-compiled (bytecodeBody, per mode).
+  throw new EvaluationError(
+    `macro ${macro.name ?? '(anonymous)'} has no executable body for this arity (internal invariant violation)`,
+    { macro, rawArgs }
   )
-  return ctx.evaluateForms(arity.body, localEnv)
 }
 
 /**
- * Invokes any IFn value — functions, native functions, keywords, and maps.
+ * Invokes any IFn value — functions, native functions, keywords, collections,
+ * vars, and host callables.
  * Used by comp, partial, and any other HOF that needs to call an arbitrary
  * callable without going through the full list-evaluation dispatch.
  */
@@ -130,14 +198,41 @@ export function applyCallableWithContext(
     const target = args[0]
     const defaultVal = args.length > 1 ? args[1] : cljNil()
     if (is.map(target)) {
-      const entry = target.entries.find(([k]) => is.equal(k, fn))
-      return entry ? entry[1] : defaultVal
+      const found = mapGet(target, fn)
+      return found === NOT_FOUND ? defaultVal : found
     }
     if (is.record(target)) {
       const entry = target.fields.find(([k]) => is.equal(k, fn))
       return entry ? entry[1] : defaultVal
     }
     return defaultVal
+  }
+  if (is.vector(fn)) {
+    if (args.length !== 1) {
+      throw new EvaluationError(
+        `Vector used as function requires exactly one argument, got ${args.length}`,
+        { fn, args }
+      )
+    }
+    const index = args[0]
+    if (!is.number(index) || !Number.isInteger(index.value)) {
+      const err = new EvaluationError(
+        `Vector used as function expects a number index, got ${printString(index)}`,
+        { fn, args }
+      )
+      err.data = { argIndex: 0 }
+      throw err
+    }
+    const count = vectorCount(fn)
+    if (index.value < 0 || index.value >= count) {
+      const err = new EvaluationError(
+        `nth index ${index.value} is out of bounds for collection of length ${count}`,
+        { fn, args }
+      )
+      err.data = { argIndex: 0 }
+      throw err
+    }
+    return vectorNth(fn, index.value)
   }
   if (is.record(fn)) {
     if (args.length === 0) {
@@ -160,8 +255,8 @@ export function applyCallableWithContext(
     }
     const key = args[0]
     const defaultVal = args.length > 1 ? args[1] : cljNil()
-    const entry = fn.entries.find(([k]) => is.equal(k, key))
-    return entry ? entry[1] : defaultVal
+    const found = mapGet(fn, key)
+    return found === NOT_FOUND ? defaultVal : found
   }
   if (is.set(fn)) {
     if (args.length === 0) {
@@ -171,13 +266,15 @@ export function applyCallableWithContext(
       )
     }
     const key = args[0]
-    const found = fn.values.some((v) => is.equal(v, key))
-    return found ? key : cljNil()
+    return setContains(fn, key) ? key : cljNil()
   }
   // Vars are IFn — deref to current value and delegate. This makes #'handler
   // hot-swappable: the var is captured, not the value at capture time.
   if (is.var(fn)) {
     return applyCallableWithContext(fn.value, args, ctx, callEnv)
+  }
+  if (is.multiMethod(fn)) {
+    return dispatchMultiMethod(fn, args, ctx, callEnv)
   }
   throw new EvaluationError(`${printString(fn)} is not a callable value`, {
     fn,

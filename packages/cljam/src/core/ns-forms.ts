@@ -1,6 +1,6 @@
 import { is } from './assertions'
 import { tokenKeywords } from './keywords'
-import type { CljValue, Token, TokenSymbol } from './types'
+import type { CljList, CljValue, Token, TokenSymbol } from './types'
 
 // ---------------------------------------------------------------------------
 // Token scan helpers — lightweight pre-parse scans for ns form metadata.
@@ -85,16 +85,19 @@ export function extractAliasMapFromTokens(
   return aliases
 }
 
-function findNsForm(forms: CljValue[]) {
-  const nsForm = forms.find(
-    (f) =>
-      is.list(f) &&
-      f.value.length > 0 &&
-      is.symbol(f.value[0]) &&
-      f.value[0].name === 'ns'
+export function isNsForm(form: CljValue): boolean {
+  return (
+    is.list(form) &&
+    form.value.length > 0 &&
+    is.symbol(form.value[0]) &&
+    form.value[0].name === 'ns'
   )
-  if (!nsForm || !is.list(nsForm)) return null
-  return nsForm
+}
+
+function findNsForm(forms: CljValue[]) {
+  const nsForm = forms.find(isNsForm)
+  if (!nsForm) return null
+  return nsForm as CljList
 }
 
 export function extractRequireClauses(forms: CljValue[]): CljValue[][] {

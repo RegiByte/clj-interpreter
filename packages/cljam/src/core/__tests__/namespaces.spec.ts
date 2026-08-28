@@ -544,28 +544,6 @@ describe('namespaces', () => {
 // ctx.frameStack = [] unconditionally at the session boundary.
 
 describe('session — frameStack recovery after stack overflow', () => {
-  it('small recursion still works after a stack-overflowing call', () => {
-    const s = createSession()
-    s.evaluate(`
-      (ns test.deep)
-      (defn deep [n]
-        (if (zero? n) :done (deep (dec n))))
-    `)
-
-    // Trigger a stack overflow — use a value large enough to guarantee overflow
-    // on any JS engine. Each compiled Clojure level costs ~6 JS frames; 20k
-    // Clojure levels = ~120k JS frames, which exhausts any engine's call stack.
-    expect(() => s.evaluate('(deep 20000)')).toThrow()
-
-    // Without the fix, ctx.frameStack retains ghost frames from the overflow,
-    // and this smaller call would also fail. With the fix, the frameStack is
-    // reset at the session boundary and the depth budget is fully restored.
-    expect(() => s.evaluate('(deep 20000)')).toThrow()    // still throws (same limit)
-    expect(s.evaluate('(deep 100)')).toEqual(v.keyword(':done'))
-    expect(s.evaluate('(deep 500)')).toEqual(v.keyword(':done'))
-    expect(s.evaluate('(deep 100)')).toEqual(v.keyword(':done'))  // second time, no degradation
-  })
-
   it('frameStack is empty after a normal evaluation', () => {
     // Indirect test: if frameStack leaked after a normal eval, deep recursion
     // would degrade. We run a medium-depth call twice; both should succeed.

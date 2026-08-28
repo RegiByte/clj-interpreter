@@ -1,5 +1,5 @@
 import { EvaluationError } from './errors'
-import type { CljCons, CljKeyword, CljLazySeq } from './types'
+import type { CljCons, CljKeyword, CljLazySeq, CljSet } from './types'
 import {
   type CljMultiMethod,
   type CljValue,
@@ -9,6 +9,7 @@ import { derefValue } from './env'
 import { specialFormKeywords, valueKeywords } from './keywords.ts'
 import { is } from './assertions.ts'
 import { v } from './factories.ts'
+import { setValues } from './persistent/map-helpers.ts'
 
 const LAZY_PRINT_CAP = 100
 
@@ -64,6 +65,13 @@ function collectSeqElements(
       for (const v of current.value) {
         if (items.length >= limit) break
         items.push(printString(v, depth + 1))
+      }
+      break
+    }
+    if (is.indexedSeq(current)) {
+      for (let i = current.offset; i < current.array.length; i++) {
+        if (items.length >= limit) break
+        items.push(printString(current.array[i], depth + 1))
       }
       break
     }
@@ -123,7 +131,8 @@ export function printString(value: CljValue, _depth = 0): string {
       is.map(value) ||
       is.set(value) ||
       is.cons(value) ||
-      is.lazySeq(value)
+      is.lazySeq(value) ||
+      is.indexedSeq(value)
     )
       return '#'
   }
@@ -251,20 +260,7 @@ function printStringImpl(value: CljValue, depth: number): string {
       return `{${entries.map(([key, v]) => `${printString(key, depth + 1)} ${printString(v, depth + 1)}`).join(' ')}${suffix}}`
     }
     case valueKeywords.function: {
-      if (value.arities.length === 1) {
-        const a = value.arities[0]
-        const params = a.restParam
-          ? [...a.params, v.symbol('&'), a.restParam]
-          : a.params
-        return `(fn [${params.map(printString).join(' ')}] ${a.body.map(printString).join(' ')})`
-      }
-      const clauses = value.arities.map((a) => {
-        const params = a.restParam
-          ? [...a.params, v.symbol('&'), a.restParam]
-          : a.params
-        return `([${params.map(printString).join(' ')}] ${a.body.map(printString).join(' ')})`
-      })
-      return `(fn ${clauses.join(' ')})`
+      return `#function[${value.displayName ?? value.name ?? 'anonymous'}]`
     }
     case valueKeywords.nativeFunction:
       return `(native-fn ${value.name})`
@@ -285,10 +281,10 @@ function printStringImpl(value: CljValue, depth: number): string {
       return `#'${value.ns}/${value.name}`
     case valueKeywords.set: {
       const { printLength } = _printCtx
-      const items =
-        printLength !== null ? value.values.slice(0, printLength) : value.values
+      const allItems = setValues(value as CljSet)
+      const items = printLength !== null ? allItems.slice(0, printLength) : allItems
       const suffix =
-        printLength !== null && value.values.length > printLength ? ' ...' : ''
+        printLength !== null && allItems.length > printLength ? ' ...' : ''
       return `#{${items.map((v) => printString(v, depth + 1)).join(' ')}${suffix}}`
     }
     case valueKeywords.delay:
@@ -296,6 +292,7 @@ function printStringImpl(value: CljValue, depth: number): string {
         return `#<Delay @${printString(value.value!, depth + 1)}>`
       return '#<Delay pending>'
     case valueKeywords.lazySeq:
+    case valueKeywords.indexedSeq:
     case valueKeywords.cons: {
       const { printLength } = _printCtx
       const limit = printLength !== null ? printLength : LAZY_PRINT_CAP
@@ -428,10 +425,11 @@ function pp(value: CljValue, col: number, maxWidth: number): string {
     case valueKeywords.map:
       return ppMap(value.entries, col, maxWidth)
     case valueKeywords.set:
-      return ppSet(value.values, col, maxWidth)
+      return ppSet(setValues(value as CljSet), col, maxWidth)
     case valueKeywords.record:
       return ppRecord(value.fields, value.ns, value.recordType, col, maxWidth)
     case valueKeywords.lazySeq:
+    case valueKeywords.indexedSeq:
     case valueKeywords.cons:
       // Flat representation is already computed above; no deeper pretty-print needed
       return flat

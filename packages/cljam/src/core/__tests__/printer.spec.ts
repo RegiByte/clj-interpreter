@@ -154,7 +154,7 @@ describe('printer', () => {
           makeEnv()
         )
       )
-    ).toBe('(fn [x y] (+ x y))')
+    ).toBe('#function[anonymous]')
   })
 
   it('should print atoms', () => {
@@ -294,22 +294,30 @@ describe('printer', () => {
 
   describe('record printing', () => {
     it('includes qualified ns/TypeName in the tag', () => {
-      const rec = v.record('Circle', 'user', [
-        [v.keyword(':radius'), v.number(5)],
-      ])
+      const rec = v.record(
+        'Circle',
+        'user',
+        [[v.keyword(':radius'), v.number(5)]],
+        [':radius']
+      )
       expect(printString(rec)).toBe('#user/Circle{:radius 5}')
     })
 
     it('uses the actual defining namespace, not user', () => {
-      const rec = v.record('Point', 'geometry', [
-        [v.keyword(':x'), v.number(1)],
-        [v.keyword(':y'), v.number(2)],
-      ])
+      const rec = v.record(
+        'Point',
+        'geometry',
+        [
+          [v.keyword(':x'), v.number(1)],
+          [v.keyword(':y'), v.number(2)],
+        ],
+        [':x', ':y']
+      )
       expect(printString(rec)).toBe('#geometry/Point{:x 1 :y 2}')
     })
 
     it('prints an empty record', () => {
-      const rec = v.record('Tag', 'user', [])
+      const rec = v.record('Tag', 'user', [], [])
       expect(printString(rec)).toBe('#user/Tag{}')
     })
   })
@@ -357,18 +365,26 @@ describe('printer', () => {
     }
 
     it('pretty-prints a record flat when it fits', () => {
-      const rec = v.record('Circle', 'user', [
-        [v.keyword(':radius'), v.number(5)],
-      ])
+      const rec = v.record(
+        'Circle',
+        'user',
+        [[v.keyword(':radius'), v.number(5)]],
+        [':radius']
+      )
       expect(prettyPrintString(rec, 80)).toBe('#user/Circle{:radius 5}')
     })
 
     it('pretty-prints a record with line breaks when fields overflow', () => {
-      const rec = v.record('Vehicle', 'fleet', [
-        [v.keyword(':make'), v.string('Toyota')],
-        [v.keyword(':model'), v.string('Camry')],
-        [v.keyword(':year'), v.number(2024)],
-      ])
+      const rec = v.record(
+        'Vehicle',
+        'fleet',
+        [
+          [v.keyword(':make'), v.string('Toyota')],
+          [v.keyword(':model'), v.string('Camry')],
+          [v.keyword(':year'), v.number(2024)],
+        ],
+        [':make', ':model', ':year']
+      )
       const result = prettyPrintString(rec, 30)
       expect(result).toContain('\n')
       expect(result).toMatch(/^#fleet\/Vehicle\{/)

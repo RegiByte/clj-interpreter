@@ -15,7 +15,12 @@ export type {
 export type { CljamLibrary } from './library'
 
 // Preset functions — plain SessionOptions objects for common environments
-export { nodePreset, browserPreset, sandboxPreset, resolveSessionProfile } from '../presets'
+export {
+  nodePreset,
+  browserPreset,
+  sandboxPreset,
+  resolveSessionProfile,
+} from '../presets'
 export type { SessionPresetName, SessionProfile } from '../presets'
 
 // Runtime API (advanced embedding)
@@ -25,6 +30,7 @@ export type { Runtime, RuntimeSnapshot, RuntimeOptions } from './runtime'
 // Module system
 export { resolveModuleOrder } from './module'
 export { makeCoreModule } from './modules/core'
+export { makeVmModule } from './modules/vm'
 export type {
   RuntimeModule,
   NamespaceDeclaration,
@@ -33,18 +39,27 @@ export type {
   ModuleContext,
 } from './module'
 
+// clojure.test bridge (shared by codegen, bridge spec, and the differential harness)
+export {
+  installTestBridge,
+  composeEachFixture,
+  runDeftest,
+} from './testing/clojure-test-bridge'
+
 // Conversions
 export { cljToJs, jsToClj, ConversionError } from './conversions'
 export type { FunctionApplier } from './conversions'
 
 // Evaluator
-export {
-  applyFunction,
-  evaluateWithMeasurements,
-} from './evaluator'
+export { applyFunction, evaluateWithMeasurements } from './evaluator'
 
 // Errors
-export { EvaluationError, ReaderError, TokenizerError, isEvaluationError } from './errors'
+export {
+  EvaluationError,
+  ReaderError,
+  TokenizerError,
+  isEvaluationError,
+} from './errors'
 
 // Factories
 export {

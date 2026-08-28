@@ -62,7 +62,6 @@
 (declare loop*)
 (declare let*)
 (declare repeat*)
-(declare range*)
 (declare seen-rest?)
 (declare pprint)
 (declare hierarchy-descendants-global)
@@ -75,6 +74,44 @@
 (declare hierarchy-parents-global)
 (declare hierarchy-ancestors-global)
 (declare describe*)
+(declare disassemble*-impl)
+(declare analyze*-impl)
+(declare ast*-impl)
+
+(defmacro
+  ^{:doc-group "Runtime"}
+  measure*
+  "Evaluates body and returns a map with the final :value, total :elapsed-ms, selected :path, and ordered timing :stages."
+  [& body]
+  `(measure*-impl '~body))
+
+(defmacro
+  ^{:doc-group "Runtime"}
+  time
+  "Evaluates body, prints elapsed time, and returns the final value."
+  [& body]
+  `(time*-impl '~body))
+
+(defmacro
+  ^{:doc-group "Runtime"}
+  disassemble*
+  "Returns formatted VM bytecode disassembly lines for form or a bytecode-backed function, var, or macro target. Does not evaluate the target form."
+  [form]
+  `(disassemble*-impl '~form))
+
+(defmacro
+  ^{:doc-group "Runtime"}
+  analyze*
+  "Returns the human-readable analyzer AST printout for form. Does not evaluate the form."
+  [form]
+  `(analyze*-impl '~form))
+
+(defmacro
+  ^{:doc-group "Runtime"}
+  ast*
+  "Returns the faithful analyzer AST as cljam data for form. Does not evaluate the form."
+  [form]
+  `(ast*-impl '~form))
 
 (defmacro
   ^{:doc-group "Functions"}
@@ -122,6 +159,15 @@
   "Takes a body of expressions and yields a Delay object that will invoke the body only the first time it is forced (via force or deref/@), and will cache the result and return it on all subsequent force calls."
   [& body]
   `(make-delay (fn* [] ~@body)))
+
+;; lazy-seq: wraps body in a zero-arg fn and defers evaluation until realized.
+;; make-lazy-seq is a native primitive that creates the CljLazySeq value.
+(defmacro
+  ^{:doc-group "Sequences"}
+  lazy-seq
+  "Takes a body of expressions that returns a seq or nil, and yields a LazySeq that will invoke the body only the first time it is realized."
+  [& body]
+  `(make-lazy-seq (fn* lazy-seq-thunk [] ~@body)))
 
 
 (defn
@@ -626,16 +672,50 @@
   ([to from] (reduce conj to from))
   ([to xf from] (transduce xf conj to from)))
 
-;; sequence: materialise a transducer over a collection into a seq (list)
 (defn
   ^{:doc-group "Sequences"}
   sequence
   "Coerces coll to a (possibly empty) sequence, if it is not already
-  one. Will not force a seq. (sequence nil) yields (), When a
+  one. Will not force a lazy seq. (sequence nil) yields (). When a
   transducer is supplied, returns a lazy sequence of applications of
-  the transform to the items in coll"
-  ([coll] (apply list (into [] coll)))
-  ([xf coll] (apply list (into [] xf coll))))
+  the transform to the items in coll."
+  ([coll]
+   (if (seq? coll)
+     coll
+     (or (seq coll) '())))
+  ([xf coll]
+   ;; Pull/push adapter: pulls source items one at a time, pushes through xf,
+   ;; and yields outputs lazily. Handles stateful transducers (partition-all),
+   ;; early termination (take), and infinite sources.
+   ;;
+   ;; After finalization, (step nil) drains the pending buffer naturally:
+   ;; (when-not @finalized) blocks further source pulling, so we only yield
+   ;; remaining buffered items and then return nil.
+   (let [pending   (volatile! [])
+         finalized (volatile! false)
+         xrf (xf (fn
+                   ([] nil)
+                   ([_] nil)
+                   ([_ x] (vswap! pending conj x) nil)))
+         step (fn step [s]
+                (lazy-seq
+                  (if (seq @pending)
+                    (let [item (first @pending)]
+                      (vswap! pending (fn [v] (subvec v 1)))
+                      (cons item (step s)))
+                    (when-not @finalized
+                      (if-let [s (seq s)]
+                        (let [res (xrf nil (first s))]
+                          (if (reduced? res)
+                            (do (vreset! finalized true)
+                                (xrf (unreduced res))
+                                (step nil))
+                            (step (rest s))))
+                        (do (vreset! finalized true)
+                            (xrf nil)
+                            (step nil)))))))]
+     (or (seq (step coll)) '()))))
+
 
 (defn
   ^{:doc-group "Sequences"}
@@ -930,7 +1010,12 @@
                 (vreset! buf nb)
                 result))))))))
   ([n coll]
-   (sequence (partition-all n) coll)))
+   (partition-all n n coll))
+  ([n step coll]
+   (lazy-seq
+     (when-let [s (seq coll)]
+       (let [seg (vec (take n s))]
+         (cons seg (partition-all n step (nthrest s step))))))))
 
 ;; ── Documentation ────────────────────────────────────────────────────────────
 
@@ -1242,12 +1327,21 @@
 (defn
   ^{:doc-group "Sequences"}
   range
-  "Returns a lazy infinite sequence of integers from 0.
-  With args, returns a finite sequence (delegates to native range*)."
+  "Returns a lazy seq of nums from start (inclusive) to end (exclusive),
+  by step, where start defaults to 0, step to 1, and end to infinity.
+  With no args, returns an infinite lazy seq of integers from 0. When step
+  is zero and start does not equal end, returns an infinite seq of start
+  (Clojure parity)."
   ([] (iterate inc 0))
-  ([end] (range* end))
-  ([start end] (range* start end))
-  ([start end step] (range* start end step)))
+  ([end] (range 0 end 1))
+  ([start end] (range start end 1))
+  ([start end step]
+   (lazy-seq
+    (when (cond
+            (pos? step) (< start end)
+            (neg? step) (> start end)
+            :else       (not= start end))
+      (cons start (range (+ start step) end step))))))
 
 (defn
   ^{:doc-group "IO"}
@@ -1290,7 +1384,9 @@
               (rf result input)
               result)))))))
   ([n coll]
-   (sequence (take-nth n) coll)))
+   (lazy-seq
+     (when-let [s (seq coll)]
+       (cons (first s) (take-nth n (drop n s)))))))
 
 (defn
   ^{:doc-group "Sequences"}
@@ -1696,15 +1792,18 @@
                    pvec
                    (fn [bvec b val]
                      (let* [gvec     (gensym "vec__")
+                            graw     (gensym "raw__")
                             gseq     (gensym "seq__")
                             gfirst   (gensym "first__")
                             has-rest (some #{'&} b)]
-                       (loop [ret (let [ret (conj bvec gvec
-                                                  (list 'if (list 'or (list 'nil? val) (list 'sequential? val))
-                                                        val
-                                                        (list 'throw (list 'ex-info
-                                                                           (list 'str "Cannot destructure " (list 'pr-str val) " as a sequential collection")
-                                                                           (hash-map)))))]
+                       (loop [ret (let [ret (-> bvec
+                                               (conj graw val)
+                                               (conj gvec
+                                                     (list 'if (list 'or (list 'nil? graw) (list 'sequential? graw))
+                                                           graw
+                                                           (list 'throw (list 'ex-info
+                                                                              (list 'str "Cannot destructure " (list 'pr-str graw) " as a sequential collection")
+                                                                              (hash-map))))))]
                                     (if has-rest
                                       (conj ret gseq (list 'seq gvec))
                                       ret))
@@ -1744,6 +1843,8 @@
                    pmap
                    (fn [bvec b v]
                      (let* [gmap     (gensym "map__")
+                            graw     (gensym "raw__")
+                            source   (if (symbol? v) v graw)
                             defaults (:or b)
                             ;; Expand :keys/:strs/:syms shorthands into direct
                             ;; {sym lookup-key} entries before the main loop.
@@ -1785,14 +1886,16 @@
                        ;; be turned into a map before we can do key lookups.
                        ;; Non-map, non-nil, non-sequential values throw a clear
                        ;; error rather than leaking (apply hash-map ...) internals.
-                       (loop [ret     (-> bvec
+                       (loop [ret     (-> (if (symbol? v)
+                                             bvec
+                                             (conj bvec graw v))
                                           (conj gmap)
-                                          (conj (list 'if (list 'map? v) v
-                                                      (list 'if (list 'nil? v) (hash-map)
-                                                            (list 'if (list 'sequential? v)
-                                                                  (list 'apply 'hash-map v)
+                                          (conj (list 'if (list 'map? source) source
+                                                      (list 'if (list 'nil? source) (hash-map)
+                                                            (list 'if (list 'sequential? source)
+                                                                  (list 'apply 'hash-map source)
                                                                   (list 'throw (list 'ex-info
-                                                                                     (list 'str "Cannot destructure " (list 'pr-str v) " as a map")
+                                                                                     (list 'str "Cannot destructure " (list 'pr-str source) " as a map")
                                                                                      (hash-map)))))))
                                           ((fn [r]
                                              (if (:as b)
@@ -2110,9 +2213,9 @@
                               groups)]
     `(do
        (defn ~constructor ~fields
-         (make-record! ~type-str ~ns-str (hash-map ~@field-map-pairs)))
+         (make-record! ~type-str ~ns-str ~field-keys (hash-map ~@field-map-pairs)))
        (defn ~map-constructor [m#]
-         (make-record! ~type-str ~ns-str (select-keys m# ~field-keys)))
+         (make-record! ~type-str ~ns-str ~field-keys m#))
        ~@extend-calls)))
 
 ; reify — deferred to Phase B

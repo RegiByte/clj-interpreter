@@ -1,5 +1,5 @@
-// Associative and set operations: hash-map, assoc, dissoc, keys, vals, zipmap,
-// hash-set, set, set?, disj
+// Associative and set operations: hash-map, assoc, dissoc, find, key, val,
+// keys, vals, zipmap, hash-set, set, set?, disj
 //
 // assoc and dissoc handle both maps and vectors (by numeric index). They live
 // here because their primary semantic is associative (key→value update/remove);
@@ -8,6 +8,8 @@
 import { is } from '../../../assertions'
 import { EvaluationError } from '../../../errors'
 import { DocGroups, docMeta, v } from '../../../factories'
+import { mapAssoc, mapDissoc, mapEntries, setDisj } from '../../../persistent/map-helpers'
+import { vectorAssoc, vectorCount, vectorNth, vectorToArray } from '../../../persistent/vector-helpers'
 import { printString } from '../../../printer'
 import { toSeq } from '../../../transformations'
 import { type CljNumber, type CljValue } from '../../../types'
@@ -60,6 +62,12 @@ export const mapsSetsFunctions: Record<string, CljValue> = {
             { collection }
           )
         }
+        if (is.indexedSeq(collection)) {
+          throw new EvaluationError(
+            'assoc on sequences is not supported, use vectors instead',
+            { collection }
+          )
+        }
         if (!is.collection(collection)) {
           throw EvaluationError.atArg(
             `assoc expects a collection, got ${printString(collection)}`,
@@ -81,7 +89,10 @@ export const mapsSetsFunctions: Record<string, CljValue> = {
           )
         }
         if (is.vector(collection)) {
-          const newValues = [...collection.value]
+          // Path-copy assoc (O(log₃₂ n)) instead of materializing the whole vector
+          // to a flat array and rebuilding (O(n)). vectorAssoc allows index === count
+          // as an append, matching Clojure (and the `> count` bound check below).
+          let result = collection
           for (let i = 0; i < args.length; i += 2) {
             const index = args[i]
             if (!is.number(index)) {
@@ -91,54 +102,44 @@ export const mapsSetsFunctions: Record<string, CljValue> = {
                 i + 1
               )
             }
-            if (index.value > newValues.length) {
+            if (index.value > vectorCount(result)) {
               throw EvaluationError.atArg(
-                `assoc index ${index.value} is out of bounds for vector of length ${newValues.length}`,
+                `assoc index ${index.value} is out of bounds for vector of length ${vectorCount(result)}`,
                 { index, collection },
                 i + 1
               )
             }
-            newValues[(index as CljNumber).value] = args[i + 1]
+            result = vectorAssoc(result, (index as CljNumber).value, args[i + 1])
           }
-          return v.vector(newValues)
+          return result
         }
-        // Records: assoc on a declared field returns the same record type (JVM parity).
-        // Assoc-ing any unknown key demotes the whole result to a plain map.
+        // Records: assoc always returns the same record type (JVM parity) —
+        // unknown keys become extension entries, like the JVM's __extmap.
         if (is.record(collection)) {
           const newEntries: [CljValue, CljValue][] = [...collection.fields]
-          let hasUnknownKey = false
           for (let i = 0; i < args.length; i += 2) {
             const key = args[i]
             const value = args[i + 1]
             const entryIdx = newEntries.findIndex(([k]) => is.equal(k, key))
             if (entryIdx === -1) {
-              hasUnknownKey = true
               newEntries.push([key, value])
             } else {
               newEntries[entryIdx] = [key, value]
             }
           }
-          if (hasUnknownKey) return v.map(newEntries)
-          return v.record(collection.recordType, collection.ns, newEntries)
+          return v.record(
+            collection.recordType,
+            collection.ns,
+            newEntries,
+            collection.basis
+          )
         }
         if (is.map(collection)) {
-          const newEntries: [CljValue, CljValue][] = [...collection.entries]
-          // need to find the entry with the same key and replace it, if it doesn't exist, add it
+          let result = collection
           for (let i = 0; i < args.length; i += 2) {
-            const key = args[i]
-            const value = args[i + 1]
-            const entryIdx = newEntries.findIndex(
-              function findEntryByKey(entry) {
-                return is.equal(entry[0], key)
-              }
-            )
-            if (entryIdx === -1) {
-              newEntries.push([key, value])
-            } else {
-              newEntries[entryIdx] = [key, value]
-            }
+            result = mapAssoc(result, args[i], args[i + 1])
           }
-          return v.map(newEntries)
+          return result
         }
         throw new EvaluationError(
           `unhandled collection type, got ${printString(collection)}`,
@@ -171,6 +172,13 @@ export const mapsSetsFunctions: Record<string, CljValue> = {
             0
           )
         }
+        if (is.indexedSeq(collection)) {
+          throw EvaluationError.atArg(
+            'dissoc on sequences is not supported, use vectors instead',
+            { collection },
+            0
+          )
+        }
         if (!is.collection(collection)) {
           throw EvaluationError.atArg(
             `dissoc expects a collection, got ${printString(collection)}`,
@@ -179,10 +187,13 @@ export const mapsSetsFunctions: Record<string, CljValue> = {
           )
         }
         if (is.vector(collection)) {
-          if (collection.value.length === 0) {
+          if (vectorCount(collection) === 0) {
             return collection // return the empty vector
           }
-          const newValues = [...collection.value]
+          // dissoc on a vector removes at an arbitrary index, which shifts every
+          // following element — inherently O(n), no trie shortcut. Materialize once
+          // (copy, since splice mutates) and rebuild.
+          const newValues = [...vectorToArray(collection)]
           for (let i = 0; i < args.length; i += 1) {
             const index = args[i]
             if (!is.number(index)) {
@@ -203,34 +214,34 @@ export const mapsSetsFunctions: Record<string, CljValue> = {
           }
           return v.vector(newValues)
         }
-        // Records: dissoc always returns a plain map
+        // Records: dissoc of a basis field demotes to a plain map (the JVM's
+        // record class can't represent a missing field); dissoc of an
+        // extension key keeps the record type.
         if (is.record(collection)) {
           const newEntries: [CljValue, CljValue][] = [...collection.fields]
+          let removedBasisKey = false
           for (let i = 0; i < args.length; i += 1) {
             const key = args[i]
+            if (is.keyword(key) && collection.basis.includes(key.name)) {
+              removedBasisKey = true
+            }
             const entryIdx = newEntries.findIndex(([k]) => is.equal(k, key))
             if (entryIdx !== -1) newEntries.splice(entryIdx, 1)
           }
-          return v.map(newEntries)
+          if (removedBasisKey) return v.map(newEntries)
+          return v.record(
+            collection.recordType,
+            collection.ns,
+            newEntries,
+            collection.basis
+          )
         }
         if (is.map(collection)) {
-          if (collection.entries.length === 0) {
-            return collection // return the empty map
-          }
-          const newEntries: [CljValue, CljValue][] = [...collection.entries]
+          let result = collection
           for (let i = 0; i < args.length; i += 1) {
-            const key = args[i]
-            const entryIdx = newEntries.findIndex(
-              function findEntryByKey(entry) {
-                return is.equal(entry[0], key)
-              }
-            )
-            if (entryIdx === -1) {
-              continue // key not present — skip, don't bail
-            }
-            newEntries.splice(entryIdx, 1)
+            result = mapDissoc(result, args[i])
           }
-          return v.map(newEntries)
+          return result
         }
         throw new EvaluationError(
           `unhandled collection type, got ${printString(collection)}`,
@@ -277,6 +288,66 @@ export const mapsSetsFunctions: Record<string, CljValue> = {
       }),
     ]),
 
+  find: v
+    .nativeFn('find', function findImpl(m: CljValue, key: CljValue) {
+      if (m === undefined || is.nil(m)) return v.nil()
+      if (!is.map(m) && !is.record(m)) {
+        throw EvaluationError.atArg(
+          `find expects a map, record, or nil${m !== undefined ? `, got ${printString(m)}` : ''}`,
+          { m },
+          0
+        )
+      }
+      const entries = is.record(m) ? m.fields : mapEntries(m)
+      const found = entries.find(([entryKey]) => is.equal(entryKey, key))
+      return found === undefined ? v.nil() : v.mapEntry(found[0], found[1])
+    })
+    .withMeta([
+      ...docMeta({
+        doc: 'Returns the map entry for key in m, or nil if key is not present.',
+        arglists: [['m', 'key']],
+        docGroup: DocGroups.maps,
+      }),
+    ]),
+
+  key: v
+    .nativeFn('key', function keyImpl(entry: CljValue) {
+      if (entry === undefined || !is.mapEntry(entry)) {
+        throw EvaluationError.atArg(
+          `key expects a map entry${entry !== undefined ? `, got ${printString(entry)}` : ''}`,
+          { entry },
+          0
+        )
+      }
+      return vectorNth(entry, 0)
+    })
+    .withMeta([
+      ...docMeta({
+        doc: 'Returns the key from a map entry.',
+        arglists: [['entry']],
+        docGroup: DocGroups.maps,
+      }),
+    ]),
+
+  val: v
+    .nativeFn('val', function valImpl(entry: CljValue) {
+      if (entry === undefined || !is.mapEntry(entry)) {
+        throw EvaluationError.atArg(
+          `val expects a map entry${entry !== undefined ? `, got ${printString(entry)}` : ''}`,
+          { entry },
+          0
+        )
+      }
+      return vectorNth(entry, 1)
+    })
+    .withMeta([
+      ...docMeta({
+        doc: 'Returns the value from a map entry.',
+        arglists: [['entry']],
+        docGroup: DocGroups.maps,
+      }),
+    ]),
+
   keys: v
     .nativeFn('keys', function keysImpl(m: CljValue) {
       if (m === undefined || (!is.map(m) && !is.record(m))) {
@@ -286,7 +357,7 @@ export const mapsSetsFunctions: Record<string, CljValue> = {
           0
         )
       }
-      const entries = is.record(m) ? m.fields : m.entries
+      const entries = is.record(m) ? m.fields : mapEntries(m)
       return v.vector(
         entries.map(function extractKey([k]) {
           return k
@@ -310,7 +381,7 @@ export const mapsSetsFunctions: Record<string, CljValue> = {
           0
         )
       }
-      const entries = is.record(m) ? m.fields : m.entries
+      const entries = is.record(m) ? m.fields : mapEntries(m)
       return v.vector(
         entries.map(function extractVal([, val]) {
           return val
@@ -385,10 +456,11 @@ export const mapsSetsFunctions: Record<string, CljValue> = {
           0
         )
       }
-      const newValues = s.values.filter(
-        (v) => !items.some((item) => is.equal(item, v))
-      )
-      return v.set(newValues)
+      let result = s
+      for (const item of items) {
+        result = setDisj(result, item)
+      }
+      return result
     })
     .withMeta([
       ...docMeta({

@@ -21,7 +21,11 @@ import type { CljValue, Env, EvaluationContext } from '../../../types'
  * old CljVar objects, not the session's freshly cloned ones. resolveNs goes
  * through the runtime registry and always returns the session's own var.
  */
-function emitToOut(ctx: EvaluationContext, callEnv: Env, text: string): void {
+export function emitToOut(
+  ctx: EvaluationContext,
+  callEnv: Env,
+  text: string
+): void {
   const outVar = ctx.resolveNs('clojure.core')?.vars.get('*out*')
   const out = outVar ? derefValue(outVar) : undefined
   if (out && is.aFunction(out)) {

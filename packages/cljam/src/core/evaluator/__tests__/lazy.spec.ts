@@ -334,9 +334,9 @@ describe('backward compatibility', () => {
     )
   })
 
-  it('(range 5) — finite range still works', () => {
+  it('(range 5) — finite range is lazy, realizes correctly', () => {
     const session = freshSession()
-    const result = session.evaluate('(range 5)')
+    const result = materialize(session.evaluate('(range 5)'))
     expect(result).toMatchObject(
       v.list([v.number(0), v.number(1), v.number(2), v.number(3), v.number(4)])
     )
@@ -344,7 +344,7 @@ describe('backward compatibility', () => {
 
   it('(range 1 4) — finite range with start/end', () => {
     const session = freshSession()
-    const result = session.evaluate('(range 1 4)')
+    const result = materialize(session.evaluate('(range 1 4)'))
     expect(result).toMatchObject(
       v.list([v.number(1), v.number(2), v.number(3)])
     )

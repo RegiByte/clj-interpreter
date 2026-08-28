@@ -8,9 +8,7 @@
  * This matches JVM Clojure convention and makes (first (:frames e)) point at
  * the failure site.
  *
- * Frame tracking covers both the interpreter path (dispatch.ts) and the
- * compiled path (compiler/callable.ts), so tests work regardless of whether
- * the compiler optimizes the code under test.
+ * Frame tracking covers interpreter calls and bytecode-backed function bodies.
  */
 
 import { describe, expect, it } from 'vitest'

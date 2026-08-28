@@ -1,6 +1,6 @@
 {
   "name": "@regibyte/cljam-mcp",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": false,
   "type": "module",
   "description": "MCP server for cljam — give LLMs a persistent, interactive Clojure REPL",
@@ -28,13 +28,13 @@
     "README.md"
   ],
   "peerDependencies": {
-    "@regibyte/cljam": ">=0.0.21"
+    "@regibyte/cljam": ">=0.1.0"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0"
   },
   "devDependencies": {
-    "@regibyte/cljam": "file:../cljam",
+    "@regibyte/cljam": "workspace:*",
     "vitest": "^4.0.18",
     "typescript": "~5.9.3",
     "@types/node": "^25.3.5"

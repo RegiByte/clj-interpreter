@@ -1,6 +1,6 @@
 # Cljam-JS — Roadmap
 
-> **This is the north star document.** It describes what cljam is, where it stands today, and where it is going. Update it when decisions change. Read it at the start of every work session.
+> **Historical document.** Written early in development as the project's north star. The project concluded at v0.1.0 (2026-08); this file is kept as a design record and is no longer updated. For the current state see the root README and the [conformance page](../packages/docs/guide/conformance.md).
 
 ---
 

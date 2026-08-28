@@ -1,15 +1,13 @@
 (ns demo.utils
   (:require [clojure.string :as str]
-            ["node:path" :as path]
-            ["node:http" :as http]
-            ["node:fs" :as fs]
             [cljam.date :as date]
             [cljam.integrant.core :as ig]
             [clojure.math :as math]
             [clojure.walk :as walk]
             [clojure.edn :as edn]
-            [clojure.math :as math]
-            [js :as js]))
+            ["node:path" :as path]
+            ["node:http" :as http]
+            ["node:fs" :as fs]))
 
 
 (defn file-ext
@@ -67,7 +65,7 @@
 
   (def config-str (slurp "system.config.edn"))
 
-  
+
   (meta #'+)
 
   (meta #'filter)

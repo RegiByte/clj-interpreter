@@ -1,6 +1,6 @@
-import type { Arity, DestructurePattern } from '../core/types'
-import { isSymbol } from '../core/assertions'
-import { extractNsName, extractNsRequires, extractStringRequires } from './namespace-utils'
+import type { Arity } from '../core/types'
+import { extractNsName, extractNsRequires } from './namespace-utils'
+import { graphNeedsAsync } from './namespace-graph'
 import { readNamespaceVars, readDeftestNames } from './static-analysis'
 
 export interface CodegenContext {
@@ -8,27 +8,44 @@ export interface CodegenContext {
   coreIndexPath: string
   virtualSessionId: string
   resolveDepPath: (depNs: string) => string | null
+  /**
+   * Read a dependency namespace's source for transitive graph analysis (S7).
+   * Returns null when the namespace has no locatable source. Used by
+   * {@link graphNeedsAsync} to discover host imports declared only in transitive
+   * dependencies, so the sync-vs-async load decision matches the runtime loader.
+   */
+  readDepSource?: (depNs: string) => string | null
 }
 
 export function generateModuleCode(
   ctx: CodegenContext,
   nsNameFromPath: string,
-  source: string,
-  filePath?: string
+  source: string
 ): string {
   const nsName = extractNsName(source) ?? nsNameFromPath
 
-  // Detect string requires from AST — determines sync vs async load call.
-  const hasStringRequires = extractStringRequires(source, filePath).length > 0
+  // Graph-aware sync-vs-async decision (S7): the module needs async loading if
+  // the file OR any namespace in its transitive closure declares a host import.
+  // This mirrors the runtime loader's graphNeedsAsync; without it a purely
+  // transitive host dependency would be missed and the bundle would break.
+  const needsAsync = graphNeedsAsync(source, ctx)
 
   const requires = extractNsRequires(source)
   const depImports = requires
     .map((depNs) => {
       const depPath = ctx.resolveDepPath(depNs)
-      if (depPath) return `import ${JSON.stringify(depPath)};`
-      return null
+      // A declared dependency that cannot be resolved is a build error, not a
+      // silent skip — a dropped import would surface later as a confusing
+      // runtime "namespace not found". Fail fast with a clear message.
+      if (!depPath) {
+        throw new Error(
+          `cljam: namespace "${nsName}" requires "${depNs}", but no source file ` +
+            `was found for it under any configured source root ` +
+            `(${ctx.sourceRoots.join(', ')}).`
+        )
+      }
+      return `import ${JSON.stringify(depPath)};`
     })
-    .filter(Boolean)
     .join('\n')
 
   // Static analysis: pure AST walk, no execution.
@@ -60,9 +77,9 @@ export function generateModuleCode(
   }
 
   const escapedSource = JSON.stringify(source)
-  // Files with string requires need async loading (top-level await, requires target: esnext).
-  // Files without string requires use the sync path — no top-level await overhead.
-  const loadCall = hasStringRequires
+  // Graphs that touch a host import need async loading (top-level await, requires
+  // target: esnext). Pure Clojure graphs use the sync path — no TLA overhead.
+  const loadCall = needsAsync
     ? `await __session.loadFileAsync(${escapedSource}, ${JSON.stringify(nsName)});`
     : `__session.loadFile(${escapedSource}, ${JSON.stringify(nsName)});`
 
@@ -185,33 +202,18 @@ export function generateTestModuleCode(
 
   const nsName = extractNsName(source) ?? nsNameFromPath
   const deftestNames = readDeftestNames(source)
-  const hasStringRequires = extractStringRequires(source).length > 0
+  // Graph-aware async decision (S7), same as generateModuleCode — a transitive
+  // host import in a required namespace must drive the async load call too.
+  const needsAsync = graphNeedsAsync(source, ctx)
 
   const escapedSource = JSON.stringify(source)
-  const loadCall = hasStringRequires
+  const loadCall = needsAsync
     ? `await __session.loadFileAsync(${escapedSource}, ${JSON.stringify(nsName)});`
     : `__session.loadFile(${escapedSource}, ${JSON.stringify(nsName)});`
 
   const testImport = testFramework === 'bun:test'
     ? `import { test } from 'bun:test';`
     : `import { test } from 'vitest';`
-
-  // Clojure expressions used to install the test-framework failure bridge.
-  // JSON.stringify handles escaping for embedding in JS string literals.
-  const failOverride = [
-    '(defmethod clojure.test/report :fail [m]',
-    '  (swap! __vt_failures conj',
-    '    (str',
-    '      (when (:message m) (str (:message m) "\\n"))',
-    '      "expected: " (pr-str (:expected m)) "\\n"',
-    '      "  actual: " (pr-str (:actual m)))))',
-  ].join(' ')
-
-  const errorOverride = [
-    '(defmethod clojure.test/report :error [m]',
-    '  (swap! __vt_failures conj',
-    '    (str "error: " (pr-str (:actual m)))))',
-  ].join(' ')
 
   // --- session creation lines (optionally seeded from user factory) ----------
   const sessionLines: string[] = entrypointPath
@@ -227,7 +229,7 @@ export function generateTestModuleCode(
 
   const lines: string[] = [
     testImport,
-    `import { createSession, cljToJs } from ${JSON.stringify(ctx.coreIndexPath)};`,
+    `import { createSession, installTestBridge, composeEachFixture, runDeftest } from ${JSON.stringify(ctx.coreIndexPath)};`,
     ...(entrypointPath
       ? [`import __sessionFactory from ${JSON.stringify(entrypointPath)};`]
       : []),
@@ -239,38 +241,21 @@ export function generateTestModuleCode(
     `const __loadedNs = ${loadCall.replace(/;$/, '')};`,
     `__session.setNs(__loadedNs);`,
     ``,
-    `// Ensure clojure.test is available for override installation.`,
-    `__session.evaluate("(require '[clojure.test])");`,
-    ``,
-    `// Test-framework failure bridge: override :fail/:error to accumulate strings in an atom.`,
-    `// All other report methods are silenced — the test runner controls the output.`,
-    `__session.evaluate("(def __vt_failures (atom []))");`,
-    `__session.evaluate(${JSON.stringify(failOverride)});`,
-    `__session.evaluate(${JSON.stringify(errorOverride)});`,
-    `__session.evaluate("(defmethod clojure.test/report :pass [_] nil)");`,
-    `__session.evaluate("(defmethod clojure.test/report :begin-test-var [_] nil)");`,
-    `__session.evaluate("(defmethod clojure.test/report :end-test-var [_] nil)");`,
-    `__session.evaluate("(defmethod clojure.test/report :begin-test-ns [_] nil)");`,
-    `__session.evaluate("(defmethod clojure.test/report :end-test-ns [_] nil)");`,
-    `__session.evaluate("(defmethod clojure.test/report :summary [_] nil)");`,
-    ``,
-    `// Compose the :each fixture chain once for this file.`,
-    `// join-fixtures of [] → default-fixture → (fn [f] (f)), so zero-fixture files pay no overhead.`,
-    `// use-fixtures calls populate fixture-registry at loadFile time, so this runs after registration.`,
-    `__session.evaluate(${JSON.stringify(`(def __vt_each_fixture (clojure.test/join-fixtures (get @clojure.test/fixture-registry [${JSON.stringify(nsName)} :each] [])))`)}); `,
+    `// Test-framework failure bridge + :each fixture chain. The wiring lives in a`,
+    `// shared runtime helper (core/testing/clojure-test-bridge) so codegen, the`,
+    `// bridge spec, and the differential harness stay in lockstep.`,
+    `installTestBridge(__session);`,
+    `composeEachFixture(__session, ${JSON.stringify(nsName)});`,
     ``,
   ]
 
   for (const testName of deftestNames) {
     lines.push(
       `test(${JSON.stringify(testName)}, async () => {`,
-      `  __session.evaluate("(reset! __vt_failures [])");`,
-      `  // evaluateAsync awaits CljPending results (returned by (async ...) blocks),`,
-      `  // and returns synchronously for ordinary deftests — no overhead either way.`,
-      `  // __vt_each_fixture applies any :each fixtures registered via (use-fixtures :each ...).`,
-      `  await __session.evaluateAsync(${JSON.stringify(`(__vt_each_fixture (fn [] (${testName})))`)});`,
-      `  const __failures = cljToJs(__session.evaluate("@__vt_failures"), __session);`,
-      `  if (Array.isArray(__failures) && __failures.length > 0) {`,
+      `  // runDeftest resets __vt_failures, runs the deftest through the :each fixture`,
+      `  // chain (awaiting any CljPending result), and returns the collected failures.`,
+      `  const __failures = await runDeftest(__session, ${JSON.stringify(testName)});`,
+      `  if (__failures.length > 0) {`,
       `    throw new Error(__failures.join('\\n\\n'));`,
       `  }`,
       `});`,
@@ -285,23 +270,13 @@ export function generateTestModuleCode(
 // Signature helpers
 // ---------------------------------------------------------------------------
 
-type ArityShape = { params: DestructurePattern[]; restParam: DestructurePattern | null }
-
-function patternName(p: Arity['params'][number], index: number): string {
-  if (isSymbol(p)) return safeJsIdentifier(p.name)
-  return `arg${index}`
-}
-
-function arityToSignature(arity: ArityShape): string {
+function arityToSignature(arity: Arity): string {
   const fixedParams = arity.params
-    .map((p, i) => `${patternName(p, i)}: unknown`)
+    .map((p) => `${safeJsIdentifier(p.name)}: unknown`)
     .join(', ')
 
   if (arity.restParam) {
-    const restName =
-      isSymbol(arity.restParam)
-        ? safeJsIdentifier(arity.restParam.name)
-        : 'rest'
+    const restName = safeJsIdentifier(arity.restParam.name)
     const params = fixedParams
       ? `${fixedParams}, ...${restName}: unknown[]`
       : `...${restName}: unknown[]`

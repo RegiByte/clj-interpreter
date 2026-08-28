@@ -26,9 +26,14 @@ function validateAtom(
   }
 }
 
-function notifyWatches(a: CljAtom, oldVal: CljValue, newVal: CljValue) {
+function notifyWatches(
+  ctx: EvaluationContext,
+  a: CljAtom,
+  oldVal: CljValue,
+  newVal: CljValue
+) {
   if (a.watches) {
-    for (const [, { key, fn, ctx, callEnv }] of a.watches) {
+    for (const [, { key, fn, callEnv }] of a.watches) {
       ctx.applyFunction(
         fn as CljFunction | CljNativeFunction,
         [key, v.atom(newVal), oldVal, newVal],
@@ -52,11 +57,11 @@ export const atomFunctions: Record<string, CljValue> = {
     ]),
 
   deref: v
-    .nativeFn('deref', function deref(value: CljValue) {
+    .nativeFnCtx('deref', function deref(ctx, callEnv, value: CljValue) {
       if (is.atom(value)) return value.value
       if (is.volatile(value)) return value.value
       if (is.reduced(value)) return value.value
-      if (is.delay(value)) return realizeDelay(value)
+      if (is.delay(value)) return realizeDelay(value, ctx, callEnv)
       // --- ASYNC (experimental) ---
       if (is.pending(value)) {
         throw EvaluationError.atArg(
@@ -109,7 +114,7 @@ export const atomFunctions: Record<string, CljValue> = {
         const newVal = ctx.applyFunction(fn, [oldVal, ...extraArgs], callEnv)
         validateAtom(a, newVal, ctx, callEnv)
         a.value = newVal
-        notifyWatches(a, oldVal, newVal)
+        notifyWatches(ctx, a, oldVal, newVal)
         return newVal
       }
     )
@@ -136,7 +141,7 @@ export const atomFunctions: Record<string, CljValue> = {
         const oldVal = a.value
         validateAtom(a, newVal, ctx, callEnv)
         a.value = newVal
-        notifyWatches(a, oldVal, newVal)
+        notifyWatches(ctx, a, oldVal, newVal)
         return newVal
       }
     )
@@ -256,7 +261,7 @@ export const atomFunctions: Record<string, CljValue> = {
     .nativeFnCtx(
       'add-watch',
       function addWatch(
-        ctx,
+        _ctx,
         callEnv: Env,
         atomVal: CljValue,
         key: CljValue,
@@ -279,7 +284,7 @@ export const atomFunctions: Record<string, CljValue> = {
         const a = atomVal as CljAtom
         if (!a.watches) a.watches = new Map()
         // Store a wrapper that calls the user fn through the evaluator
-        a.watches.set(printString(key), { key, fn, ctx, callEnv })
+        a.watches.set(printString(key), { key, fn, callEnv })
         return atomVal
       }
     )

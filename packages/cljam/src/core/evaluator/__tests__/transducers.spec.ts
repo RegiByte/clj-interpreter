@@ -224,7 +224,7 @@ describe('sequence', () => {
 
   it('(sequence xf coll) applies transducer and returns a seq (list)', () => {
     const s = freshSession()
-    expect(s.evaluate('(sequence (map inc) [1 2 3])')).toMatchObject(
+    expect(materialize(s.evaluate('(sequence (map inc) [1 2 3])'))).toMatchObject(
       v.list([v.number(2), v.number(3), v.number(4)])
     )
   })
@@ -309,7 +309,7 @@ describe('drop-while transducer', () => {
 describe('take-last transducer', () => {
   it('(take-last 2 [1 2 3 4]) takes the last 2 elements', () => {
     const s = freshSession()
-    expect(s.evaluate('(take-last 2 [1 2 3 4])')).toMatchObject(
+    expect(materialize(s.evaluate('(take-last 2 [1 2 3 4])'))).toMatchObject(
       v.list([v.number(3), v.number(4)])
     )
   })
@@ -338,7 +338,7 @@ describe('map-indexed transducer', () => {
 describe('dedupe transducer', () => {
   it('(dedupe [1 1 2 3 3 3 4]) removes consecutive duplicates', () => {
     const s = freshSession()
-    expect(s.evaluate('(dedupe [1 1 2 3 3 3 4])')).toMatchObject(
+    expect(materialize(s.evaluate('(dedupe [1 1 2 3 3 3 4])'))).toMatchObject(
       v.list([v.number(1), v.number(2), v.number(3), v.number(4)])
     )
   })
@@ -350,14 +350,14 @@ describe('dedupe transducer', () => {
 
   it('non-consecutive duplicates are kept', () => {
     const s = freshSession()
-    expect(s.evaluate('(dedupe [1 2 1 2])')).toMatchObject(
+    expect(materialize(s.evaluate('(dedupe [1 2 1 2])'))).toMatchObject(
       v.list([v.number(1), v.number(2), v.number(1), v.number(2)])
     )
   })
 
   it('nil values handled correctly', () => {
     const s = freshSession()
-    expect(s.evaluate('(dedupe [nil nil 1 nil])')).toMatchObject(
+    expect(materialize(s.evaluate('(dedupe [nil nil 1 nil])'))).toMatchObject(
       v.list([v.nil(), v.number(1), v.nil()])
     )
   })
@@ -366,7 +366,7 @@ describe('dedupe transducer', () => {
 describe('partition-all transducer', () => {
   it('(partition-all 2 [1 2 3 4]) groups into pairs', () => {
     const s = freshSession()
-    expect(s.evaluate('(partition-all 2 [1 2 3 4])')).toMatchObject(
+    expect(materialize(s.evaluate('(partition-all 2 [1 2 3 4])'))).toMatchObject(
       v.list([
         v.vector([v.number(1), v.number(2)]),
         v.vector([v.number(3), v.number(4)]),
@@ -376,7 +376,7 @@ describe('partition-all transducer', () => {
 
   it('flushes partial partition at completion', () => {
     const s = freshSession()
-    expect(s.evaluate('(partition-all 2 [1 2 3])')).toMatchObject(
+    expect(materialize(s.evaluate('(partition-all 2 [1 2 3])'))).toMatchObject(
       v.list([v.vector([v.number(1), v.number(2)]), v.vector([v.number(3)])])
     )
   })
@@ -388,7 +388,7 @@ describe('partition-all transducer', () => {
 
   it('empty collection produces empty result', () => {
     const s = freshSession()
-    expect(s.evaluate('(partition-all 3 [])')).toMatchObject(v.list([]))
+    expect(materialize(s.evaluate('(partition-all 3 [])'))).toMatchObject(v.list([]))
   })
 
   it('can compose with other transducers', () => {

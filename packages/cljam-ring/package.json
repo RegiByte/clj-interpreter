@@ -32,7 +32,7 @@
     "tsconfig.json"
   ],
   "peerDependencies": {
-    "@regibyte/cljam": ">=0.0.21"
+    "@regibyte/cljam": ">=0.1.0"
   },
   "devDependencies": {
     "@regibyte/cljam": "file:../cljam",

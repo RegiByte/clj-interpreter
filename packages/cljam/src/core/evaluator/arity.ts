@@ -1,17 +1,8 @@
 import { is } from '../assertions'
-import { extend } from '../env'
 import { EvaluationError } from '../errors'
 import { v } from '../factories'
 import { getPos } from '../positions'
-import type {
-  Arity,
-  CljValue,
-  CljVector,
-  DestructurePattern,
-  Env,
-  EvaluationContext,
-} from '../types'
-import { destructureBindings } from './destructure'
+import type { Arity, CljSymbol, CljValue, CljVector, Env } from '../types'
 
 const REST_SYMBOL = '&'
 
@@ -27,14 +18,14 @@ export class RecurSignal {
 export function parseParamVector(
   args: CljVector,
   env: Env
-): { params: DestructurePattern[]; restParam: DestructurePattern | null } {
+): { params: CljSymbol[]; restParam: CljSymbol | null } {
   const ampIdx = args.value.findIndex(
     (a) => is.symbol(a) && a.name === REST_SYMBOL
   )
-  let params: DestructurePattern[] = []
-  let restParam: DestructurePattern | null = null
+  let rawParams: CljValue[] = []
+  let rawRestParam: CljValue | null = null
   if (ampIdx === -1) {
-    params = args.value as DestructurePattern[]
+    rawParams = args.value
   } else {
     const ampsCount = args.value.filter(
       (a) => is.symbol(a) && a.name === REST_SYMBOL
@@ -55,8 +46,31 @@ export function parseParamVector(
         getPos(args)
       )
     }
-    params = args.value.slice(0, ampIdx) as DestructurePattern[]
-    restParam = args.value[ampIdx + 1] as DestructurePattern
+    rawParams = args.value.slice(0, ampIdx)
+    rawRestParam = args.value[ampIdx + 1]
+  }
+
+  const params = rawParams.map((param) => {
+    if (!is.symbol(param)) {
+      throw new EvaluationError(
+        'fn* only supports simple symbol params; use fn for destructuring',
+        { param, env },
+        getPos(param) ?? getPos(args)
+      )
+    }
+    return param
+  })
+
+  let restParam: CljSymbol | null = null
+  if (rawRestParam !== null) {
+    if (!is.symbol(rawRestParam)) {
+      throw new EvaluationError(
+        'fn* only supports simple symbol rest param; use fn for destructuring',
+        { restParam: rawRestParam, env },
+        getPos(rawRestParam) ?? getPos(args)
+      )
+    }
+    restParam = rawRestParam
   }
   return { params, restParam }
 }
@@ -118,56 +132,15 @@ export function parseArities(forms: CljValue[], env: Env): Arity[] {
   )
 }
 
-export function bindParams(
-  params: DestructurePattern[],
-  restParam: DestructurePattern | null,
-  args: CljValue[],
-  outerEnv: Env,
-  ctx: EvaluationContext,
-  bindEnv: Env
-): Env {
-  if (restParam === null) {
-    if (args.length !== params.length) {
-      throw new EvaluationError(
-        `Arguments length mismatch: fn accepts ${params.length} arguments, but ${args.length} were provided`,
-        { params, args, outerEnv }
-      )
-    }
-  } else {
-    if (args.length < params.length) {
-      throw new EvaluationError(
-        `Arguments length mismatch: fn expects at least ${params.length} arguments, but ${args.length} were provided`,
-        { params, args, outerEnv }
-      )
-    }
-  }
-
-  const allPairs: [string, CljValue][] = []
-
-  for (let i = 0; i < params.length; i++) {
-    allPairs.push(...destructureBindings(params[i], args[i], ctx, bindEnv))
-  }
-
-  if (restParam !== null) {
-    const restArgs = args.slice(params.length)
-    let restValue: CljValue
-    if (is.map(restParam) && restArgs.length > 0) {
-      const entries: [CljValue, CljValue][] = []
-      for (let i = 0; i < restArgs.length; i += 2) {
-        entries.push([restArgs[i], restArgs[i + 1] ?? v.nil()])
-      }
-      restValue = v.map(entries)
-    } else {
-      restValue = restArgs.length > 0 ? v.list(restArgs) : v.nil()
-    }
-    allPairs.push(...destructureBindings(restParam, restValue, ctx, bindEnv))
-  }
-
-  return extend(
-    allPairs.map(([n]) => n),
-    allPairs.map(([, v]) => v),
-    outerEnv
-  )
+export function slotValuesForArity(
+  arity: Arity,
+  args: CljValue[]
+): CljValue[] {
+  if (arity.restParam === null) return args
+  const fixedValues = args.slice(0, arity.params.length)
+  const restArgs = args.slice(arity.params.length)
+  const restValue = restArgs.length > 0 ? v.list(restArgs) : v.nil()
+  return [...fixedValues, restValue]
 }
 
 export function resolveArity(arities: Arity[], argCount: number): Arity {

@@ -187,6 +187,11 @@ console.log('\n✓ All demos complete\n')
 // Connect with Calva → "Connect to a running nREPL server" → port in .nrepl-port
 section('9. nREPL server')
 
+if (process.env.CLJAM_EXPERIMENT_SKIP_NREPL === '1') {
+  console.log('Skipping nREPL server startup for smoke test.')
+  process.exit(0)
+}
+
 startNreplServer({
   session,
   importModule: (specifier: string) => import(specifier),

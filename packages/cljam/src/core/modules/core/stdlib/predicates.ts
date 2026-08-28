@@ -316,6 +316,17 @@ export const predicateFunctions: Record<string, CljValue> = {
         docGroup: DocGroup,
       }),
     ]),
+  'ifn?': v
+    .nativeFn('ifn?', function ifnPredImpl(x: CljValue) {
+      return v.boolean(x !== undefined && is.callable(x))
+    })
+    .withMeta([
+      ...docMeta({
+        doc: 'Returns true if x implements the callable function interface, false otherwise.',
+        arglists: [['x']],
+        docGroup: DocGroup,
+      }),
+    ]),
   'coll?': v
     .nativeFn('coll?', function collPredImpl(x: CljValue) {
       return v.boolean(x !== undefined && is.collection(x))
@@ -432,11 +443,29 @@ export const predicateFunctions: Record<string, CljValue> = {
         docGroup: DocGroup,
       }),
     ]),
+  'seq?': v
+    .nativeFn('seq?', function seqPredImpl(x: CljValue) {
+      return v.boolean(
+        x !== undefined &&
+          (is.list(x) || is.cons(x) || is.lazySeq(x) || is.indexedSeq(x))
+      )
+    })
+    .withMeta([
+      ...docMeta({
+        doc: 'Returns true if x is a sequence, false otherwise.',
+        arglists: [['x']],
+        docGroup: DocGroup,
+      }),
+    ]),
   'sequential?': v
     .nativeFn('sequential?', function sequentialPredImpl(x: CljValue) {
       return v.boolean(
         x !== undefined &&
-          (is.list(x) || is.vector(x) || is.lazySeq(x) || is.cons(x))
+          (is.list(x) ||
+            is.vector(x) ||
+            is.lazySeq(x) ||
+            is.cons(x) ||
+            is.indexedSeq(x))
       )
     })
     .withMeta([
@@ -486,6 +515,36 @@ export const predicateFunctions: Record<string, CljValue> = {
     .withMeta([
       ...docMeta({
         doc: 'Return true if x is a fixed precision integer.',
+        arglists: [['x']],
+        docGroup: DocGroup,
+      }),
+    ]),
+  'integer?': v
+    .nativeFn('integer?', function integerPredImpl(x: CljValue) {
+      return v.boolean(
+        x !== undefined &&
+          is.number(x) &&
+          Number.isInteger((x as CljNumber).value)
+      )
+    })
+    .withMeta([
+      ...docMeta({
+        doc: 'Return true if x is an integer.',
+        arglists: [['x']],
+        docGroup: DocGroup,
+      }),
+    ]),
+  'float?': v
+    .nativeFn('float?', function floatPredImpl(x: CljValue) {
+      return v.boolean(
+        x !== undefined &&
+          is.number(x) &&
+          !Number.isInteger((x as CljNumber).value)
+      )
+    })
+    .withMeta([
+      ...docMeta({
+        doc: 'Return true if x is a floating point number.',
         arglists: [['x']],
         docGroup: DocGroup,
       }),

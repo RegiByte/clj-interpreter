@@ -738,7 +738,26 @@ export function createMcpServer(options: McpServerOptions = {}): Server {
 // startMcpServer — wires stdio transport and connects
 // ---------------------------------------------------------------------------
 
+/**
+ * Verify the @regibyte/cljam dependency is not just importable but usable before
+ * we advertise tools to the client. The dynamic import in `bin/cljam-mcp.ts`
+ * catches "failed to link"; this catches the subtler "linked, but the surface we
+ * depend on is missing" — e.g. a partial/half-built dist, or an API drift across
+ * a version bump. Failing here, loudly, beats accepting a tool call and crashing
+ * mid-request where the client only sees a dropped connection.
+ */
+function preflightCljam(): void {
+  if (typeof printString !== 'function') {
+    throw new Error(
+      'cljam preflight failed: @regibyte/cljam loaded but did not export a callable ' +
+        '`printString`. The dependency is likely partially built or version-mismatched. ' +
+        'Run `bun install` from the repo root and ensure cljam is built if consumed as dist.',
+    )
+  }
+}
+
 export async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
+  preflightCljam()
   const server = createMcpServer(options)
   const transport = new StdioServerTransport()
   await server.connect(transport)

@@ -8,6 +8,12 @@ import { EvaluationError } from '../../../errors'
 import { DocGroups, docMeta, v } from '../../../factories'
 import { printString } from '../../../printer'
 import { toSeq } from '../../../transformations'
+import {
+  vectorCount,
+  vectorPeek,
+  vectorPop,
+  vectorSlice,
+} from '../../../persistent/vector-helpers'
 import { type CljValue } from '../../../types'
 
 export const vectorFunctions: Record<string, CljValue> = {
@@ -66,17 +72,15 @@ export const vectorFunctions: Record<string, CljValue> = {
           )
         }
         const s = start.value
-        const e =
-          end !== undefined && is.number(end)
-            ? end.value
-            : vector.value.length
-        if (s < 0 || e > vector.value.length || s > e) {
+        const len = vectorCount(vector)
+        const e = end !== undefined && is.number(end) ? end.value : len
+        if (s < 0 || e > len || s > e) {
           throw new EvaluationError(
-            `subvec index out of bounds: start=${s}, end=${e}, length=${vector.value.length}`,
+            `subvec index out of bounds: start=${s}, end=${e}, length=${len}`,
             { v: vector, start, end }
           )
         }
-        return v.vector(vector.value.slice(s, e))
+        return v.vector(vectorSlice(vector, s, e))
       }
     )
     .withMeta([
@@ -94,9 +98,7 @@ export const vectorFunctions: Record<string, CljValue> = {
     .nativeFn('peek', function peekImpl(coll: CljValue) {
       if (coll === undefined || is.nil(coll)) return v.nil()
       if (is.vector(coll)) {
-        return coll.value.length === 0
-          ? v.nil()
-          : coll.value[coll.value.length - 1]
+        return vectorCount(coll) === 0 ? v.nil() : vectorPeek(coll)
       }
       if (is.list(coll)) {
         return coll.value.length === 0 ? v.nil() : coll.value[0]
@@ -121,9 +123,9 @@ export const vectorFunctions: Record<string, CljValue> = {
         throw EvaluationError.atArg("Can't pop empty list", { coll }, 0)
       }
       if (is.vector(coll)) {
-        if (coll.value.length === 0)
+        if (vectorCount(coll) === 0)
           throw EvaluationError.atArg("Can't pop empty vector", { coll }, 0)
-        return v.vector(coll.value.slice(0, -1))
+        return vectorPop(coll)
       }
       if (is.list(coll)) {
         if (coll.value.length === 0)

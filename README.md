@@ -9,20 +9,21 @@ A Clojure interpreter written in TypeScript. Runs as a standalone CLI on Node.js
 
 ***
 
-## Disclaimer
+## Project status
 
-I am a Web developer with 12 years of experience, however, this is my first attempt at creating a language runtime. I do not recommend using this for anything serious yet. This is a learning project and I am not a Clojure expert.
+**Complete, not actively maintained.** cljam reached its design goal — a Clojure interpreter with an analyzer front-end, a tree-walking reference engine, and a bytecode VM kept in exact agreement by a differential test harness — and development stopped there at version 0.1.0. Issues and pull requests are welcome and will be reviewed, but no further features are planned.
 
-If even knowing this, you still want to use this, feel free to contact me and I will help you with your use case.
-Or even better, contribute to the project, open an issue or a pull request and I'll review it and merge if it's good.
+This was a learning project by a web developer with no prior language-runtime experience. It is not recommended for production use. The [conformance page](https://regibyte.github.io/cljam/guide/conformance) records exactly what matches JVM Clojure and what does not.
+
+***
 
 ## What it is
 
-Cljam is an **interpreter**. Source code is read, macro-expanded, and evaluated at runtime. There is no compilation step and no bytecode — the evaluator walks the AST directly.
+Cljam is an **interpreter** with a real compiler front-end. Source code is read, macro-expanded, and **analyzed**: a resolver pass turns every form into a resolved AST — lexical slots, closure capture sets, tail positions — and rejects malformed forms with precise, positioned errors before anything runs.
+
+Evaluation is a tree walk over that resolved AST. A bytecode VM shares the same front-end: function bodies can additionally be compiled to bytecode and run on the VM, and a differential test harness keeps both engines in exact semantic agreement across the whole test suite. There is no Clojure → JavaScript file output; both engines are internal to the runtime.
 
 It is designed to be embedded. The core session API is a plain TypeScript object: create a session, inject host functions, evaluate strings. The CLI and nREPL server are thin wrappers around the same session.
-
-An incremental compiler is built in — hot-path forms compile to native closures at definition time, giving a meaningful speed-up over pure tree-walking. There is no Clojure → JavaScript file output today; the compiler is an internal optimization, not a code generator.
 
 ***
 
@@ -30,7 +31,7 @@ An incremental compiler is built in — hot-path forms compile to native closure
 
 ### Language
 
-* Immutable collections (no structural sharing): vectors, maps, sets, lists
+* Immutable persistent collections with structural sharing: vectors (32-way trie), maps (HAMT), sets, lists, lazy sequences
 * Namespaces with `ns`, `require`, `refer`, `alias`
 * Multi-arity and variadic functions
 * Sequential and associative destructuring, including nested patterns, `:keys`, `:syms`, `:strs`, qualified keys, and `& {:keys [...]}` kwargs
@@ -43,7 +44,7 @@ An incremental compiler is built in — hot-path forms compile to native closure
 
 ### Standard Library
 
-`clojure.core` and `clojure.string` are implemented in Clojure itself and loaded at session startup. This means the standard library is readable, forkable, and patchable without touching TypeScript.
+`clojure.core`, `clojure.string`, `clojure.edn`, `clojure.math`, and `clojure.test` are implemented in Clojure itself and loaded at session startup. This means the standard library is readable, forkable, and patchable without touching TypeScript.
 
 ### Error Handling
 
@@ -87,6 +88,52 @@ An incremental compiler is built in — hot-path forms compile to native closure
     {:msg (ex-message e) :data (ex-data e)}))
 ```
 
+### Async
+
+`(async body)` evaluates its body asynchronously and immediately returns a **pending value** — cljam's promise. Inside an `async` block, `@` (`deref`) on a pending value awaits it, exactly like `await`:
+
+```clojure
+(async
+  (let [user @(fetch-user 42)]        ; awaits
+    (str "hello, " (:name user))))    ; => pending of "hello, ..."
+```
+
+```js
+(async () => {
+  const user = await fetchUser(42)    // awaits
+  return `hello, ${user.name}`        // => Promise of "hello, ..."
+})()
+```
+
+**Async is a lexical boundary, and closures never inherit it** — the JavaScript model. `@` awaits only in code written literally inside the `(async ...)` form. A `fn` defined inside an async block has a sync body: `@` there is a sync deref and throws a teaching error, the same way `await` inside a plain callback is a syntax error in JS:
+
+```clojure
+(async (mapv (fn [x] @(fetch x)) xs))       ; ✗ fn body is sync — throws
+```
+
+```js
+async () => xs.map((x) => await fetch(x))    // ✗ SyntaxError in JS
+```
+
+Give each callback its own async context instead — a collection of pendings, like an array of Promises — and gather with `all`:
+
+```clojure
+(async
+  (let [ps (mapv (fn [x] (async @(fetch x))) xs)]  ; each call returns a pending
+    @(all ps)))                                     ; like Promise.all
+```
+
+Pendings also compose without an `async` block, and `deref` takes the JVM's 3-arg timeout form:
+
+```clojure
+(then p (fn [x] (* x 10)))          ; like p.then(...)
+(catch* p (fn [e] :recovered))      ; like p.catch(...) — e is the error value
+(deref p 100 :timed-out)            ; JVM parity: timeout-ms + timeout-val
+(pending? p)                        ; predicate
+```
+
+`try`/`catch`/`finally` work inside `async` bodies across await points, and a rejected pending awaited with `@` throws the same catchable value sync code would see. At the top level, the REPL and `session.evaluateAsync` resolve a returned pending before printing.
+
 ### nREPL Server
 
 Full TCP nREPL server with bencode transport. Supports `eval`, `load-file`, `complete`, `clone`, `close`, `describe`, and `interrupt`. Namespace switching after `load-file` is handled automatically.
@@ -117,21 +164,20 @@ Call any JavaScript value from Clojure using the `js/` namespace. Host values cr
 
 ***
 
-## Key Differences from JVM Clojure
+## Differences from JVM Clojure
 
-Cljam is semantically close to Clojure but runs on a JavaScript host. The following are not implemented and are not planned for the interpreter phase:
+cljam runs on a JavaScript host and makes a few deliberate departures from JVM Clojure:
 
-| JVM Clojure | Cljam |
+| JVM Clojure | cljam |
 |---|---|
-| Java interop (`.method`, `new Foo`, `java.lang.*`) | Not available |
-| `deftype` | Not available — `defrecord` covers most use cases |
-| `gen-class` | Not available |
-| `future`, `promise`, `agent`, `ref`, STM | Not available — use `atom` |
-| `Long`, `BigDecimal`, ratio literals (`1/3`) | Numbers are JS floats |
-| Class-based `catch` (`catch Exception e`) | Predicate-based catch only |
-| `import`, Java class hierarchy | Not available |
+| Java interop, `import`, `gen-class`, `deftype`, `reify` | Not available — `js/` interop and `defrecord` instead |
+| `future`, `agent`, `ref`, STM | Not available — `atom` for state, `(async ...)` + pending values for concurrency |
+| `Long`, `BigInt`, `BigDecimal`, ratios | One IEEE-754 number type; `(= 1 1.0)` is `true` |
+| Class-based `catch` (`catch Exception e`) | Keyword / predicate discriminators; class symbols never match |
+| Chars from string traversal | `(first "a")` is a 1-char string, not `\a` |
+| `sorted-map`, `sorted-set`, `prefer-method`, `##Inf` literals | Not implemented |
 
-The core data model, namespace system, macro system, and standard library semantics match Clojure closely. Code that avoids Java interop and JVM-specific types will generally run without modification.
+Beyond the design differences, a black-box review against JVM Clojure 1.12.1 catalogued every observable divergence — silent value differences, errors where the JVM succeeds, printing differences, and missing API — with the areas that matched byte-for-byte. Read it before porting code: **[Conformance with JVM Clojure](https://regibyte.github.io/cljam/guide/conformance)** ([source](packages/docs/guide/conformance.md)).
 
 ***
 
@@ -249,19 +295,47 @@ If no config is found, it falls back to the current working directory. Source ro
 
 ***
 
-## Roadmap
+## Testing
 
-### REPL UX
+```bash
+bun install
+bun run test            # all packages
+cd packages/cljam && bun run test && bun run typecheck
+```
 
-Multiline input with bracket-depth tracking (continuation prompt `...=>`), ANSI color output, and persistent history.
+`packages/cljam` carries 134 spec files (~4800 assertions): TypeScript unit tests for the reader, analyzer, VM, printer, and namespace loader; a Clojure-language semantic suite in `clojure.test` (21 files, several mirroring the [jank](https://github.com/jank-lang/jank) suite); and a differential harness that evaluates every suite form on both the AST walker and the bytecode VM and asserts identical results, thrown values included.
 
-### nREPL Completeness
+***
 
-Full bencode op coverage: symbol info, docstring lookup, source location, cross-namespace navigation. The goal is feature parity with what Calva and CIDER expect from a production nREPL server.
+## Packages
 
-### Compiler
+| Package | Purpose |
+|---|---|
+| [`@regibyte/cljam`](packages/cljam) | Interpreter, CLI, nREPL server, Vite plugin |
+| [`@regibyte/cljam-schema`](packages/cljam-schema) | Data validation (Malli-style schemas) |
+| [`@regibyte/cljam-date`](packages/cljam-date) | Date/time utilities over the host `Date` |
+| [`@regibyte/cljam-integrant`](packages/cljam-integrant) | System lifecycle management (Integrant port) |
+| [`@regibyte/cljam-ring`](packages/cljam-ring) | Ring-style HTTP request/response handling |
+| [`@regibyte/cljam-mcp`](packages/cljam-mcp) | MCP server exposing a persistent cljam REPL to LLM agents |
 
-An incremental compiler covering all hot-path forms is already built in. The long-term goal is a self-hosting compiler: the compiler written in cljam and compiled with itself.
+The satellite packages are written in Clojure and compiled into their npm bundle with `gen-library-sources`; each requires `@regibyte/cljam >= 0.1.0`.
+
+***
+
+## Repository layout
+
+```text
+packages/cljam/src/core/analyzer/    resolver + context passes → resolved AST
+packages/cljam/src/core/walker/      AST walker (reference engine) + async twin
+packages/cljam/src/core/vm/          ir-compiler.ts + vm.ts (bytecode backend)
+packages/cljam/src/core/evaluator/   shared runtime services (arity, apply, defs, interop, …)
+packages/cljam/src/core/loader/      namespace loader / linker
+packages/cljam/src/clojure/          clojure.core, clojure.string, … in Clojure
+packages/cljam/src/nrepl/            bencode nREPL server
+packages/cljam/src/cli/              cljam CLI
+packages/docs/                       VitePress site + browser playground
+experiments/benchmark-suite/         benchmark harness and findings
+```
 
 ## License
 

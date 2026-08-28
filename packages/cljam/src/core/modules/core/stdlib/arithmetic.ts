@@ -1,6 +1,7 @@
 import { is } from '../../../assertions'
 import { EvaluationError } from '../../../errors'
 import { DocGroups, docMeta, v } from '../../../factories'
+import { hashCljValue } from '../../../persistent/hash'
 import { printString } from '../../../printer'
 import { toSeq } from '../../../transformations'
 import type { CljList, CljNumber, CljValue, CljVector } from '../../../types'
@@ -157,6 +158,11 @@ export const arithmeticFunctions: Record<string, CljValue> = {
           { args: nums },
           0
         )
+      if (nums.length === 1) {
+        if ((nums[0] as CljNumber).value === 0)
+          throw EvaluationError.atArg('division by zero', { args: nums }, 0)
+        return v.number(1 / (nums[0] as CljNumber).value)
+      }
       if (nums.length === 2) {
         if (!is.number(nums[1]))
           throw EvaluationError.atArg(
@@ -528,11 +534,10 @@ export const arithmeticFunctions: Record<string, CljValue> = {
         err.data = { argIndex: 1 }
         throw err
       }
-      // Clojure mod always returns non-negative when divisor is positive
-      const result = (n as CljNumber).value % (d as CljNumber).value
-      return v.number(
-        result < 0 ? result + Math.abs((d as CljNumber).value) : result
-      )
+      // Floor modulo: result has the same sign as the divisor (unlike rem/%)
+      const nVal = (n as CljNumber).value
+      const dVal = (d as CljNumber).value
+      return v.number(nVal - dVal * Math.floor(nVal / dVal))
     })
     .withMeta([
       ...docMeta({
@@ -768,14 +773,19 @@ export const arithmeticFunctions: Record<string, CljValue> = {
 
   'rand-nth': v
     .nativeFn('rand-nth', function randNthImpl(coll: CljValue) {
-      if (coll === undefined || (!is.list(coll) && !is.vector(coll))) {
+      if (
+        coll === undefined ||
+        (!is.list(coll) && !is.vector(coll) && !is.indexedSeq(coll))
+      ) {
         throw EvaluationError.atArg(
           `rand-nth expects a list or vector`,
           { coll },
           0
         )
       }
-      const items = (coll as CljList | CljVector).value
+      const items = is.indexedSeq(coll)
+        ? coll.array.slice(coll.offset)
+        : (coll as CljList | CljVector).value
       if (items.length === 0) {
         throw EvaluationError.atArg(
           'rand-nth called on empty collection',
@@ -1053,13 +1063,10 @@ export const arithmeticFunctions: Record<string, CljValue> = {
   // ── Hashing ───────────────────────────────────────────────────────────────
   hash: v
     .nativeFn('hash', function hashImpl(x: CljValue) {
-      // Simple hash — consistent within a session, not cryptographic
-      const s = printString(x)
-      let h = 0
-      for (let i = 0; i < s.length; i++) {
-        h = (Math.imul(31, h) + s.charCodeAt(i)) | 0
-      }
-      return v.number(h)
+      // Structural hash shared with set/map-key hashing, so the
+      // (= a b) → (= (hash a) (hash b)) contract holds. The previous
+      // printString-based hash was insertion-order-sensitive for maps/records.
+      return v.number(hashCljValue(x))
     })
     .withMeta([
       ...docMeta({

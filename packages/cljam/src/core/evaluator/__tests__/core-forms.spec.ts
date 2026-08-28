@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { v } from '../../factories'
+import { setValues } from '../../persistent/map-helpers'
+import type { CljSet } from '../../types'
 import { expectError, freshSession, toCljValue } from './evaluator-test-utils'
 
 describe('keywords', () => {
@@ -127,8 +129,8 @@ describe('macros', () => {
       const s = freshSession()
       const result = s.evaluate('`#{:a :b :c}')
       expect(result).toMatchObject({ kind: 'set' })
-      expect((result as any).values).toHaveLength(3)
-      expect((result as any).values).toEqual(
+      expect(setValues(result as CljSet)).toHaveLength(3)
+      expect(setValues(result as CljSet)).toEqual(
         expect.arrayContaining([v.keyword(':a'), v.keyword(':b'), v.keyword(':c')])
       )
     })
@@ -137,8 +139,8 @@ describe('macros', () => {
       const s = freshSession()
       const result = s.evaluate('(let [x 42] `#{1 ~x 3})')
       expect(result).toMatchObject({ kind: 'set' })
-      expect((result as any).values).toHaveLength(3)
-      expect((result as any).values).toEqual(
+      expect(setValues(result as CljSet)).toHaveLength(3)
+      expect(setValues(result as CljSet)).toEqual(
         expect.arrayContaining([v.number(1), v.number(42), v.number(3)])
       )
     })
@@ -147,8 +149,8 @@ describe('macros', () => {
       const s = freshSession()
       const result = s.evaluate('(let [xs [1 2]] `#{~@xs 3})')
       expect(result).toMatchObject({ kind: 'set' })
-      expect((result as any).values).toHaveLength(3)
-      expect((result as any).values).toEqual(
+      expect(setValues(result as CljSet)).toHaveLength(3)
+      expect(setValues(result as CljSet)).toEqual(
         expect.arrayContaining([v.number(1), v.number(2), v.number(3)])
       )
     })

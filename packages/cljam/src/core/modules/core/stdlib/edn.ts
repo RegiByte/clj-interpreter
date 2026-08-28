@@ -2,7 +2,7 @@
 // The public API (read-string, pr-str) lives in src/clojure/edn.clj.
 // These natives are registered in clojure.core and called from that namespace.
 
-import { EvaluationError } from '../../../errors'
+import { EvaluationError, asRuntimeReadError } from '../../../errors'
 import { DocGroups, docMeta, v } from '../../../factories'
 import { is } from '../../../assertions'
 import { derefValue, lookupVar } from '../../../env'
@@ -165,15 +165,20 @@ export const ednFunctions = {
 
         const { readers, defaultFn } = buildDataReaders(optsArg, callEnv, ctx)
 
-        const tokens = tokenize(sourceArg.value)
-        const forms = readFormsEdn(
-          tokens,
-          {
-            dataReaders: readers,
-            defaultDataReader: defaultFn,
-          },
-          sourceArg.value
-        )
+        let forms: CljValue[]
+        try {
+          const tokens = tokenize(sourceArg.value)
+          forms = readFormsEdn(
+            tokens,
+            {
+              dataReaders: readers,
+              defaultDataReader: defaultFn,
+            },
+            sourceArg.value
+          )
+        } catch (e) {
+          throw asRuntimeReadError(e)
+        }
 
         if (forms.length === 0) {
           throw new EvaluationError('edn-read-string*: empty input', {})

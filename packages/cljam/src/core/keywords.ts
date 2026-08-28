@@ -18,8 +18,6 @@ export const specialFormKeywords = {
   binding: 'binding',
   'set!': 'set!',
   'letfn*': 'letfn*',
-  // Lazy forms
-  'lazy-seq': 'lazy-seq',
   async: 'async',
   // JS INTEROP
   '.': '.',
@@ -52,6 +50,7 @@ export const valueKeywords = {
   // Exotic values
   cons: 'cons',
   lazySeq: 'lazy-seq',
+  indexedSeq: 'indexed-seq',
   reduced: 'reduced',
   // Async value
   pending: 'pending',
@@ -63,6 +62,14 @@ export const valueKeywords = {
   protocol: 'protocol',
   record: 'record',
 } as const
+
+type ReverseMap<T extends Record<string, string>> = {
+  [Key in keyof T as T[Key]]: Key
+} & {}
+export const valueKindKeywords = Object.fromEntries(
+  Object.entries(valueKeywords).map(([k, v]) => [v, k])
+) as ReverseMap<typeof valueKeywords>
+
 /** Tokens */
 export const tokenKeywords = {
   LParen: 'LParen',

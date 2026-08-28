@@ -1,0 +1,17 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "benchmark-suite",
+      "devDependencies": {
+        "nbb": "^1.4.207",
+      },
+    },
+  },
+  "packages": {
+    "import-meta-resolve": ["import-meta-resolve@4.2.0", "", {}, "sha512-Iqv2fzaTQN28s/FwZAoFq0ZSs/7hMAHJVX+w8PZl3cY19Pxk6jFFalxQoIfW2826i/fDLXv8IiEZRIT0lDuWcg=="],
+
+    "nbb": ["nbb@1.4.207", "", { "dependencies": { "import-meta-resolve": "^4.1.0" }, "bin": { "nbb": "cli.js", "nbbun": "nbbun.js" } }, "sha512-LNbMcFiMHkj7HEP5gOC2KI2hXTVZDuppTxElv10mJ1Zory5x9s85pyaRJWEsOD5U7UZPwLObCeP3uXcnRD4XUA=="],
+  }
+}

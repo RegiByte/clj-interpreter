@@ -359,9 +359,12 @@ export function wireNsCore(
       .nativeFnCtx('require', (ctx, _callEnv, ...args: CljValue[]) => {
         const currentEnv = registry.get(getCurrentNs())!
         for (const arg of args) {
-          processRequireSpec(arg, currentEnv, registry, (nsName) =>
+          const changed = processRequireSpec(arg, currentEnv, registry, (nsName) =>
             resolveNamespace(nsName, ctx)
           )
+          if (changed && currentEnv.ns) {
+            ctx.touchNamespace?.(currentEnv.ns, 'require')
+          }
         }
         return v.nil()
       })

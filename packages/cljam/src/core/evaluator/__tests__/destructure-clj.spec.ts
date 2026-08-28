@@ -59,12 +59,12 @@ describe('destructure (clojure/core.clj)', () => {
       expectTrue("(vector? (destructure '[[a b] v]))")
     })
 
-    it('[a b] expands to 6 elements: gvec v a (nth gvec 0 nil) b (nth gvec 1 nil)', () => {
-      expect(evalCount("(count (destructure '[[a b] v]))")).toBe(6)
+    it('[a b] expands to 8 elements: graw v gvec (guard) a (nth gvec 0 nil) b (nth gvec 1 nil)', () => {
+      expect(evalCount("(count (destructure '[[a b] v]))")).toBe(8)
     })
 
-    it('[a b c] expands to 8 elements', () => {
-      expect(evalCount("(count (destructure '[[a b c] v]))")).toBe(8)
+    it('[a b c] expands to 10 elements', () => {
+      expect(evalCount("(count (destructure '[[a b c] v]))")).toBe(10)
     })
 
     it('user-visible symbol a appears in the result', () => {
@@ -84,9 +84,9 @@ describe('destructure (clojure/core.clj)', () => {
       expectTrue("(contains? (set (filter symbol? (destructure '[[a b :as whole] v]))) 'whole)")
     })
 
-    it('[a b :as whole] expands to 8 elements', () => {
-      // gvec v, a (nth 0), b (nth 1), whole gvec
-      expect(evalCount("(count (destructure '[[a b :as whole] v]))")).toBe(8)
+    it('[a b :as whole] expands to 10 elements', () => {
+      // graw v, gvec (guard), a (nth 0), b (nth 1), whole gvec
+      expect(evalCount("(count (destructure '[[a b :as whole] v]))")).toBe(10)
     })
 
     it('& rest — more appears in the result', () => {
@@ -235,14 +235,14 @@ describe('destructure (clojure/core.clj)', () => {
     })
 
     it('mixed — simple binding passes through, vector expands', () => {
-      // [a 1 [b c] v] → [a 1 gvec v b (nth gvec 0 nil) c (nth gvec 1 nil)]
-      // = 2 + 6 = 8 elements
-      expect(evalCount("(count (destructure '[a 1 [b c] v]))")).toBe(8)
+      // [a 1 [b c] v] → [a 1 graw v gvec (guard) b (nth gvec 0 nil) c (nth gvec 1 nil)]
+      // = 2 + 8 = 10 elements
+      expect(evalCount("(count (destructure '[a 1 [b c] v]))")).toBe(10)
     })
 
     it('two vector patterns expand independently', () => {
-      // [[a b] v1 [c d] v2] → 6 + 6 = 12 elements
-      expect(evalCount("(count (destructure '[[a b] v1 [c d] v2]))")).toBe(12)
+      // [[a b] v1 [c d] v2] → 8 + 8 = 16 elements
+      expect(evalCount("(count (destructure '[[a b] v1 [c d] v2]))")).toBe(16)
     })
 
     it('all four user symbols appear in result', () => {

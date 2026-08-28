@@ -1,7 +1,8 @@
 import { is, isList, isSymbol, isVector } from '../core/assertions'
+import { v } from '../core/factories'
 import { readForms } from '../core/reader'
 import { tokenize } from '../core/tokenizer'
-import type { Arity, CljList, CljMap, CljValue, DestructurePattern } from '../core/types'
+import type { Arity, CljList, CljMap, CljSymbol, CljValue } from '../core/types'
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -116,17 +117,17 @@ function parseArityClause(clause: CljList): Arity {
 }
 
 function vectorToArity(paramVec: { value: CljValue[] }): Arity {
-  const params: DestructurePattern[] = []
-  let restParam: DestructurePattern | null = null
+  const params: CljSymbol[] = []
+  let restParam: CljSymbol | null = null
 
   for (let i = 0; i < paramVec.value.length; i++) {
     const p = paramVec.value[i]
     if (isSymbol(p) && p.name === '&') {
       const next = paramVec.value[i + 1]
-      if (next) restParam = next as DestructurePattern
+      if (next) restParam = isSymbol(next) ? next : v.symbol('rest')
       break
     }
-    params.push(p as DestructurePattern)
+    params.push(isSymbol(p) ? p : v.symbol(`arg${params.length}`))
   }
 
   return { params, restParam, body: [] }

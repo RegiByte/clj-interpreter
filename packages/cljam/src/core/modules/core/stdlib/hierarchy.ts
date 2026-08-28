@@ -1,6 +1,16 @@
 import { is } from '../../../assertions'
 import { EvaluationError } from '../../../errors'
 import { DocGroups, docMeta, v } from '../../../factories'
+import {
+  mapGet,
+  mapDissoc,
+  mapAssoc,
+  NOT_FOUND,
+  setContains,
+  setConj,
+  setCount,
+  setValues,
+} from '../../../persistent/map-helpers'
 import { printString } from '../../../printer'
 import type {
   CljMap,
@@ -19,8 +29,8 @@ import type {
  */
 function getSubMap(h: CljMap, key: string): CljMap {
   const kw = v.kw(key)
-  const entry = h.entries.find(([k]) => is.equal(k, kw))
-  return entry && is.map(entry[1]) ? (entry[1] as CljMap) : v.map([])
+  const val = mapGet(h, kw)
+  return val !== NOT_FOUND && is.map(val) ? (val as CljMap) : v.map([])
 }
 
 /**
@@ -28,8 +38,8 @@ function getSubMap(h: CljMap, key: string): CljMap {
  * Returns an empty set if the node is absent.
  */
 function getNodeSet(subMap: CljMap, node: CljValue): CljSet {
-  const entry = subMap.entries.find(([k]) => is.equal(k, node))
-  return entry && is.set(entry[1]) ? (entry[1] as CljSet) : v.set([])
+  const val = mapGet(subMap, node)
+  return val !== NOT_FOUND && is.set(val) ? (val as CljSet) : v.set([])
 }
 
 /**
@@ -37,23 +47,17 @@ function getNodeSet(subMap: CljMap, node: CljValue): CljSet {
  * If the set is empty, the node is removed from the map entirely.
  */
 function setNodeSet(subMap: CljMap, node: CljValue, set: CljSet): CljMap {
-  const filtered = subMap.entries.filter(([k]) => !is.equal(k, node))
-  if (set.values.length > 0) filtered.push([node, set])
-  return v.map(filtered)
+  if (setCount(set) > 0) return mapAssoc(subMap, node, set)
+  return mapDissoc(subMap, node)
 }
 
 /** Return a new set that is the union of a and b (deduplicating by is.equal). */
 function unionSets(a: CljSet, b: CljSet): CljSet {
-  const combined = [...a.values]
-  for (const val of b.values) {
-    if (!combined.some((x) => is.equal(x, val))) combined.push(val)
+  let result = a
+  for (const val of setValues(b)) {
+    result = setConj(result, val)
   }
-  return v.set(combined)
-}
-
-/** Return true if val is a member of set. */
-function setContains(set: CljSet, val: CljValue): boolean {
-  return set.values.some((x) => is.equal(x, val))
+  return result
 }
 
 /**
@@ -62,13 +66,13 @@ function setContains(set: CljSet, val: CljValue): boolean {
  */
 function computeAncestors(parentsMap: CljMap, node: CljValue): CljSet {
   const visited: CljValue[] = []
-  const frontier: CljValue[] = [...getNodeSet(parentsMap, node).values]
+  const frontier: CljValue[] = [...setValues(getNodeSet(parentsMap, node))]
 
   while (frontier.length > 0) {
     const current = frontier.shift()!
     if (visited.some((x) => is.equal(x, current))) continue
     visited.push(current)
-    for (const p of getNodeSet(parentsMap, current).values) {
+    for (const p of setValues(getNodeSet(parentsMap, current))) {
       if (!visited.some((x) => is.equal(x, p))) frontier.push(p)
     }
   }
@@ -85,7 +89,7 @@ function rebuildFromParents(parentsMap: CljMap): CljMap {
   for (const [child, parents] of parentsMap.entries) {
     if (!allNodes.some((n) => is.equal(n, child))) allNodes.push(child)
     if (is.set(parents)) {
-      for (const p of (parents as CljSet).values) {
+      for (const p of setValues(parents as CljSet)) {
         if (!allNodes.some((n) => is.equal(n, p))) allNodes.push(p)
       }
     }
@@ -95,7 +99,7 @@ function rebuildFromParents(parentsMap: CljMap): CljMap {
   const ancestorEntries: [CljValue, CljValue][] = []
   for (const node of allNodes) {
     const ancs = computeAncestors(parentsMap, node)
-    if (ancs.values.length > 0) ancestorEntries.push([node, ancs])
+    if (setCount(ancs) > 0) ancestorEntries.push([node, ancs])
   }
   const ancestorsMap = v.map(ancestorEntries)
 
@@ -103,7 +107,7 @@ function rebuildFromParents(parentsMap: CljMap): CljMap {
   const descMap = new Map<string, { key: CljValue; values: CljValue[] }>()
   for (const [node, ancsVal] of ancestorEntries) {
     if (!is.set(ancsVal)) continue
-    for (const anc of (ancsVal as CljSet).values) {
+    for (const anc of setValues(ancsVal as CljSet)) {
       const key = printString(anc)
       if (!descMap.has(key)) descMap.set(key, { key: anc, values: [] })
       descMap.get(key)!.values.push(node)
@@ -159,7 +163,7 @@ export function hierarchyDerive(
   // child + all current descendants of child
   const descendantsMap = getSubMap(h, ':descendants')
   const childDescs = getNodeSet(descendantsMap, child)
-  const childAndDescs: CljValue[] = [child, ...childDescs.values]
+  const childAndDescs: CljValue[] = [child, ...setValues(childDescs)]
 
   // Update :ancestors for child and all descendants
   let newAncestorsMap = ancestorsMap
@@ -176,7 +180,7 @@ export function hierarchyDerive(
   const newDescSet = v.set(childAndDescs)
 
   // parent + all current ancestors of parent
-  const parentAndAncs: CljValue[] = [parent, ...parentAncs.values]
+  const parentAndAncs: CljValue[] = [parent, ...setValues(parentAncs)]
 
   // Update :descendants for parent and all of parent's ancestors
   let newDescendantsMap = descendantsMap
@@ -231,7 +235,7 @@ export function hierarchyUnderive(
   const parentsMap = getSubMap(h, ':parents')
   const existingParents = getNodeSet(parentsMap, child)
   const newParentSet = v.set(
-    existingParents.values.filter((p) => !is.equal(p, parent))
+    setValues(existingParents).filter((p) => !is.equal(p, parent))
   )
   const newParentsMap = setNodeSet(parentsMap, child, newParentSet)
   return rebuildFromParents(newParentsMap)
@@ -242,7 +246,7 @@ export function hierarchyUnderive(
 /**
  * Find the session-specific *hierarchy* CljVar using the runtime registry.
  * Uses ctx.allNamespaces() which always returns per-session data, bypassing
- * the snapshot env captured in bootstrap-compiled function closures.
+ * the snapshot env captured by bootstrap-loaded function values.
  */
 function getSessionHierarchyVar(ctx: EvaluationContext): CljVar | null {
   const coreNs = ctx.allNamespaces().find((ns) => ns.name === 'clojure.core')
@@ -347,7 +351,7 @@ export const hierarchyFunctions: Record<string, CljValue> = {
 
   // ─── Session-aware global *hierarchy* functions ───────────────────────────
   // These use ctx.allNamespaces() to find the per-session *hierarchy* CljVar,
-  // bypassing the snapshot env captured in bootstrap-compiled closures.
+  // bypassing the snapshot env captured by bootstrap-loaded function values.
 
   'hierarchy-derive-global!': v
     .nativeFnCtx(
@@ -461,7 +465,7 @@ export const hierarchyFunctions: Record<string, CljValue> = {
         const h = readHierarchyValue(hVar)
         if (!h) return v.nil()
         const parentSet = getNodeSet(getSubMap(h, ':parents'), tag)
-        return parentSet.values.length > 0 ? parentSet : v.nil()
+        return setCount(parentSet) > 0 ? parentSet : v.nil()
       }
     )
     .withMeta([
@@ -486,7 +490,7 @@ export const hierarchyFunctions: Record<string, CljValue> = {
         const h = readHierarchyValue(hVar)
         if (!h) return v.nil()
         const ancSet = getNodeSet(getSubMap(h, ':ancestors'), tag)
-        return ancSet.values.length > 0 ? ancSet : v.nil()
+        return setCount(ancSet) > 0 ? ancSet : v.nil()
       }
     )
     .withMeta([
@@ -510,7 +514,7 @@ export const hierarchyFunctions: Record<string, CljValue> = {
         const h = readHierarchyValue(hVar)
         if (!h) return v.nil()
         const descSet = getNodeSet(getSubMap(h, ':descendants'), tag)
-        return descSet.values.length > 0 ? descSet : v.nil()
+        return setCount(descSet) > 0 ? descSet : v.nil()
       }
     )
     .withMeta([

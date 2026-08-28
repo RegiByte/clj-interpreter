@@ -12,6 +12,7 @@
     "test": "bun run test:cljam && bun run test:cljam-date && bun run test:cljam-integrant && bun run test:cljam-schema && bun run test:cljam-ring",
     "build": "bun run --filter '@regibyte/cljam' build-vite-plugin",
     "build:libraries": "bun run --filter '@regibyte/cljam' build-npm-library && bun run --filter '@regibyte/cljam-schema' build && bun run --filter '@regibyte/cljam-integrant' build && bun run --filter '@regibyte/cljam-date' build && bun run --filter '@regibyte/cljam-ring' build",
+    "smoke:package-exports": "bun run --cwd experiments/node-js-interop smoke:exports && bun run --cwd experiments/vite-js-interop build",
     "dev": "bun run --filter 'playground' dev",
     "repl": "bun run --filter 'cljam' repl",
     "nrepl": "bun run --filter 'cljam' nrepl",

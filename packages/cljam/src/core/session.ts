@@ -2,20 +2,34 @@ import { builtInNamespaceSources } from '../clojure/generated/builtin-namespace-
 import { cljToJs as _cljToJs } from './conversions'
 import { internVar, makeEnv } from './env'
 import { CljThrownSignal, EvaluationError, ReaderError } from './errors'
-import { createEvaluationContext, RecurSignal } from './evaluator'
+import {
+  createEvaluationContext,
+  DEFAULT_VM_EXECUTION_MODE,
+  RecurSignal,
+} from './evaluator'
 import { jsToClj } from './evaluator/js-interop'
 import { v } from './factories'
 import { is } from './assertions'
 import type { CljamLibrary } from './library'
 import type { RuntimeModule } from './module'
-import { extractAliasMapFromTokens, extractNsNameFromTokens } from './ns-forms'
+import {
+  extractAliasMapFromTokens,
+  extractNsNameFromTokens,
+  isNsForm,
+} from './ns-forms'
 import { formatErrorContext, formatFrames } from './positions'
 import { printString } from './printer'
 import { readForms } from './reader'
 import type { Runtime, RuntimeSnapshot } from './runtime'
 import { createRuntime, restoreRuntime } from './runtime'
 import { tokenize } from './tokenizer'
-import type { CljNamespace, CljValue, Env } from './types'
+import type {
+  CljNamespace,
+  CljValue,
+  Env,
+  EvalEvent,
+  VmExecutionMode,
+} from './types'
 
 // Extract the :message from an ex-info value. Only applies to maps that were
 // created via (ex-info ...) — identified by having both :message and :data keys.
@@ -24,7 +38,9 @@ function extractExMessage(val: CljValue): string | null {
   if (!is.map(val)) return null
   const hasData = val.entries.some(([k]) => is.keyword(k) && k.name === ':data')
   if (!hasData) return null
-  const msgEntry = val.entries.find(([k]) => is.keyword(k) && k.name === ':message')
+  const msgEntry = val.entries.find(
+    ([k]) => is.keyword(k) && k.name === ':message'
+  )
   return msgEntry && is.string(msgEntry[1]) ? msgEntry[1].value : null
 }
 
@@ -84,6 +100,18 @@ export type SessionOptions = {
    *   Example: ['node:path', 'node:url'] allows only those two modules.
    */
   allowedHostModules?: string[] | 'all'
+  /**
+   * Controls VM participation for this session, including bootstrap source
+   * loading when provided at createSession time.
+   */
+  vmExecutionMode?: VmExecutionMode
+  /**
+   * Optional execution/compile decision sink. When provided at createSession
+   * time it also observes clojure.core bootstrap loading.
+   */
+  instrumentation?: {
+    onEvent: (event: EvalEvent) => void
+  }
   /**
    * Initial working directory for this session. Defaults to process.cwd() in
    * Node/Bun environments; "/" in browser/embedded contexts. Exposed via `pwd`
@@ -176,7 +204,8 @@ function buildSessionFacade(
   options?: SessionOptions
 ): Session {
   let currentNs = initialNs
-  let currentDir = options?.workDir ?? (typeof process !== 'undefined' ? process.cwd() : '/')
+  let currentDir =
+    options?.workDir ?? (typeof process !== 'undefined' ? process.cwd() : '/')
 
   // One shared evaluation context for the lifetime of this session.
   const ctx = createEvaluationContext()
@@ -195,6 +224,19 @@ function buildSessionFacade(
   ctx.importModule = options?.importModule
   ctx.allowedPackages = options?.allowedPackages ?? 'all'
   ctx.allowedHostModules = options?.allowedHostModules ?? 'all'
+  ctx.vmExecutionMode = options?.vmExecutionMode ?? DEFAULT_VM_EXECUTION_MODE
+  ctx.instrumentation = options?.instrumentation
+  ctx.allocateEvalIdentity = (nsName) => runtime.allocateEvalIdentity(nsName)
+  ctx.allocateFunctionIdentity = (input) =>
+    runtime.allocateFunctionIdentity({
+      ...input,
+      evalIdentity: ctx.currentEvalIdentity,
+    })
+  ctx.allocateChunkIdentity = (chunk) => runtime.allocateChunkIdentity(chunk)
+  ctx.getCachedTopLevelVmChunk = (key) => runtime.getCachedTopLevelVmChunk(key)
+  ctx.setCachedTopLevelVmChunk = (key, chunk) =>
+    runtime.setCachedTopLevelVmChunk(key, chunk)
+  ctx.touchNamespace = (ns) => runtime.touchNamespace(ns)
   ctx.setCurrentNs = (name: string) => {
     runtime.ensureNamespace(name)
     currentNs = name
@@ -263,18 +305,19 @@ function buildSessionFacade(
       nsName?: string,
       filePath?: string
     ): Promise<string> {
-      // If there is no ns declaration in the source, pre-set the namespace from
-      // the hint so the forms evaluate in the right context.
-      if (nsName) {
-        const tokens = tokenize(source)
-        if (!extractNsNameFromTokens(tokens)) {
-          runtime.ensureNamespace(nsName)
-          currentNs = nsName
-          runtime.syncNsVar(nsName)
-        }
-      }
-      await session.evaluateAsync(source, { file: filePath })
-      return currentNs
+      // Graph-aware async file loading (S3). The runtime loader owns the G1
+      // multi-ns guard (via parseDescriptor), the transitive dependency closure,
+      // host imports, link wiring, and body execution — it no longer delegates to
+      // evaluateAsync. On success, switch the session to the loaded namespace.
+      const loadedNs = await runtime.loadFileAsync(
+        source,
+        nsName,
+        filePath,
+        ctx
+      )
+      currentNs = loadedNs
+      runtime.syncNsVar(loadedNs)
+      return loadedNs
     },
 
     addSourceRoot(path: string): void {
@@ -309,12 +352,35 @@ function buildSessionFacade(
         env.ns?.readerAliases.forEach((nsName, alias) => {
           aliasMap.set(alias, nsName)
         })
-        const forms = readForms(tokens, currentNs, aliasMap, source, ctx.currentLineOffset, ctx.currentColOffset)
+        const forms = readForms(
+          tokens,
+          currentNs,
+          aliasMap,
+          source,
+          ctx.currentLineOffset,
+          ctx.currentColOffset
+        )
+        const nsForms = forms.filter(isNsForm)
+        const leadingNs = forms.length > 0 && isNsForm(forms[0])
+        if (nsForms.length > 1 || (nsForms.length === 1 && !leadingNs)) {
+          const err = new EvaluationError(
+            'ns form must be the first form in an evaluation. ' +
+              'To switch namespaces use (in-ns \'name); to load a .clj file use (load "path").',
+            {}
+          )
+          err.code = 'namespace/ns-in-repl'
+          throw err
+        }
         runtime.processNsRequires(forms, env, ctx)
         let result: CljValue = v.nil()
         for (const form of forms) {
-          const expanded = ctx.expandAll(form, env)
-          result = ctx.evaluate(expanded, env)
+          const evalIdentity = ctx.allocateEvalIdentity?.(currentNs)
+          ctx.currentEvalIdentity = evalIdentity
+          try {
+            result = ctx.evaluate(form, env)
+          } finally {
+            ctx.currentEvalIdentity = undefined
+          }
         }
         return result
       } catch (e) {
@@ -333,9 +399,13 @@ function buildSessionFacade(
         if (e instanceof EvaluationError || e instanceof ReaderError) {
           // e.pos carries its own source string (Option B). Use it directly when
           // available; fall back to the length guard for synthetic/legacy positions.
-          const pos = (e.pos != null && (e.pos.source != null || e.pos.start < source.length))
-            ? e.pos
-            : (e instanceof EvaluationError ? e.frames?.[0]?.pos : undefined)
+          const pos =
+            e.pos != null &&
+            (e.pos.source != null || e.pos.start < source.length)
+              ? e.pos
+              : e instanceof EvaluationError
+                ? e.frames?.[0]?.pos
+                : undefined
           if (pos) {
             e.message += formatErrorContext(source, pos, {
               lineOffset: ctx.currentLineOffset,
@@ -389,12 +459,35 @@ function buildSessionFacade(
         env.ns?.readerAliases.forEach((nsName, alias) => {
           aliasMap.set(alias, nsName)
         })
-        const forms = readForms(tokens, currentNs, aliasMap, source, ctx.currentLineOffset, ctx.currentColOffset)
+        const forms = readForms(
+          tokens,
+          currentNs,
+          aliasMap,
+          source,
+          ctx.currentLineOffset,
+          ctx.currentColOffset
+        )
+        const nsForms = forms.filter(isNsForm)
+        const leadingNs = forms.length > 0 && isNsForm(forms[0])
+        if (nsForms.length > 1 || (nsForms.length === 1 && !leadingNs)) {
+          const err = new EvaluationError(
+            'ns form must be the first form in an evaluation. ' +
+              'To switch namespaces use (in-ns \'name); to load a .clj file use (load "path").',
+            {}
+          )
+          err.code = 'namespace/ns-in-repl'
+          throw err
+        }
         await runtime.processNsRequiresAsync(forms, env, ctx)
         let result: CljValue = v.nil()
         for (const form of forms) {
-          const expanded = ctx.expandAll(form, env)
-          result = ctx.evaluate(expanded, env)
+          const evalIdentity = ctx.allocateEvalIdentity?.(currentNs)
+          ctx.currentEvalIdentity = evalIdentity
+          try {
+            result = ctx.evaluate(form, env)
+          } finally {
+            ctx.currentEvalIdentity = undefined
+          }
         }
         if (!is.pending(result)) return result
         try {
@@ -422,9 +515,13 @@ function buildSessionFacade(
           })
         }
         if (e instanceof EvaluationError || e instanceof ReaderError) {
-          const pos = (e.pos != null && (e.pos.source != null || e.pos.start < source.length))
-            ? e.pos
-            : (e instanceof EvaluationError ? e.frames?.[0]?.pos : undefined)
+          const pos =
+            e.pos != null &&
+            (e.pos.source != null || e.pos.start < source.length)
+              ? e.pos
+              : e instanceof EvaluationError
+                ? e.frames?.[0]?.pos
+                : undefined
           if (pos) {
             e.message += formatErrorContext(source, pos, {
               lineOffset: ctx.currentLineOffset,
@@ -461,8 +558,13 @@ function buildSessionFacade(
         const env = runtime.getNamespaceEnv(currentNs)!
         let result: CljValue = v.nil()
         for (const form of forms) {
-          const expanded = ctx.expandAll(form, env)
-          result = ctx.evaluate(expanded, env)
+          const evalIdentity = ctx.allocateEvalIdentity?.(currentNs)
+          ctx.currentEvalIdentity = evalIdentity
+          try {
+            result = ctx.evaluate(form, env)
+          } finally {
+            ctx.currentEvalIdentity = undefined
+          }
         }
         return result
       } catch (e) {
@@ -527,7 +629,8 @@ export function createSession(options?: SessionOptions): Session {
   const runtime = createRuntime({
     sourceRoots: options?.sourceRoots,
     readFile: options?.readFile,
-    registeredSources: registeredSources.size > 0 ? registeredSources : undefined,
+    registeredSources:
+      registeredSources.size > 0 ? registeredSources : undefined,
   })
 
   const session = buildSessionFacade(runtime, 'user', options)
@@ -544,7 +647,9 @@ export function createSession(options?: SessionOptions): Session {
   }
 
   // Install library native modules (after user modules — libraries are additive)
-  const libraryModules = libraries.flatMap((lib) => (lib.module ? [lib.module] : []))
+  const libraryModules = libraries.flatMap((lib) =>
+    lib.module ? [lib.module] : []
+  )
   if (libraryModules.length > 0) {
     session.runtime.installModules(libraryModules)
   }
@@ -602,10 +707,7 @@ export function createSessionFromSnapshot(
   options?: SessionOptions
 ): Session {
   // Merge snapshot libraries with any caller-supplied libraries (caller wins on conflict)
-  const libraries = [
-    ...snapshot.libraries,
-    ...(options?.libraries ?? []),
-  ]
+  const libraries = [...snapshot.libraries, ...(options?.libraries ?? [])]
 
   // Re-build registeredSources from the library set
   const registeredSources = new Map<string, string>()
@@ -618,11 +720,14 @@ export function createSessionFromSnapshot(
   const runtime = restoreRuntime(snapshot.runtimeSnapshot, {
     sourceRoots: options?.sourceRoots,
     readFile: options?.readFile,
-    registeredSources: registeredSources.size > 0 ? registeredSources : undefined,
+    registeredSources:
+      registeredSources.size > 0 ? registeredSources : undefined,
   })
 
   // Re-install native library modules into the restored runtime
-  const libraryModules = libraries.flatMap((lib) => (lib.module ? [lib.module] : []))
+  const libraryModules = libraries.flatMap((lib) =>
+    lib.module ? [lib.module] : []
+  )
   if (libraryModules.length > 0) {
     runtime.installModules(libraryModules)
   }

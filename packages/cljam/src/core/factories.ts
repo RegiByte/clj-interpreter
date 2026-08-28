@@ -8,12 +8,14 @@ import type {
   CljCons,
   CljDelay,
   CljFunction,
+  CljIndexedSeq,
   CljJsValue,
   CljKeyword,
   CljLazySeq,
   CljList,
   CljMacro,
   CljMap,
+  CljMapEntry,
   CljMultiMethod,
   CljNamespace,
   CljNativeFunction,
@@ -32,10 +34,18 @@ import type {
   CljVar,
   CljVector,
   CljVolatile,
-  DestructurePattern,
   Env,
   EvaluationContext,
 } from './types'
+import {
+  cljMap as _cljMap,
+  makeCljMap,
+  makeCljSet,
+} from './persistent/map-helpers'
+import {
+  cljVector as _cljVector,
+  makeCljVector,
+} from './persistent/vector-helpers'
 
 export const cljNumber = <T extends number>(value: T) =>
   ({ kind: 'number', value }) as const satisfies CljNumber
@@ -60,14 +70,38 @@ export const cljSymbol = <T extends string>(name: T) =>
   ({ kind: 'symbol', name }) as const satisfies CljSymbol
 export const cljList = <T extends CljValue[]>(value: T) =>
   ({ kind: 'list', value }) as const satisfies CljList
-export const cljSet = (values: CljValue[]): CljSet => ({ kind: 'set', values })
-export const cljVector = <T extends CljValue[]>(value: T) =>
-  ({ kind: 'vector', value }) as const satisfies CljVector
-export const cljMap = <T extends [CljValue, CljValue][]>(entries: T) =>
-  ({ kind: 'map', entries }) as const satisfies CljMap
+export const cljSet = (values: CljValue[]): CljSet => makeCljSet(values)
+export const cljVector = (value: CljValue[]): CljVector => _cljVector(value)
+export const cljMapEntry = (key: CljValue, value: CljValue): CljMapEntry =>
+  // Map entries are always length-2 → array rep (gotchas.md #2); carry the marker.
+  makeCljVector({ kind: 'array', items: [key, value] }, undefined, true) as CljMapEntry
+
+// ─── CljMap factory (implementation lives in persistent/map-helpers.ts) ───────
+
+export { makeCljMap }
+
+/** Returns a new value with the given metadata attached.
+ *  CljMap and CljVector are handled specially because their compatibility getters
+ *  (`entries` / `value`) live on the prototype — object-spread would strip them.
+ *  All other IMeta types are plain objects where `{ ...val, meta }` is safe. */
+export function cljWithMeta(
+  val: CljValue,
+  meta: CljMap | undefined
+): CljValue {
+  if (val.kind === 'map') {
+    return makeCljMap((val as CljMap)._data, meta)
+  }
+  if (val.kind === 'vector') {
+    const vec = val as CljVector
+    return makeCljVector(vec._data, meta, vec.__cljamMapEntry)
+  }
+  return { ...val, meta } as CljValue
+}
+
+export const cljMap = _cljMap
 export const cljFunction = (
-  params: DestructurePattern[],
-  restParam: DestructurePattern | null,
+  params: CljSymbol[],
+  restParam: CljSymbol | null,
   body: CljValue[],
   env: Env
 ): CljFunction => ({
@@ -115,8 +149,8 @@ export const cljNativeFunctionWithContext = <
   }) as const satisfies CljNativeFunction
 
 export const cljMacro = (
-  params: DestructurePattern[],
-  restParam: DestructurePattern | null,
+  params: CljSymbol[],
+  restParam: CljSymbol | null,
   body: CljValue[],
   env: Env
 ): CljMacro => ({
@@ -152,24 +186,48 @@ export const cljVolatile = (value: CljValue): CljVolatile => ({
   kind: 'volatile',
   value,
 })
-export const cljDelay = (thunk: () => CljValue): CljDelay => ({
+export const cljDelay = (
+  thunk: () => CljValue,
+  thunkFn?: CljValue,
+  callEnv?: Env
+): CljDelay => ({
   kind: 'delay',
   thunk,
+  thunkFn,
+  callEnv,
   realized: false,
+  value: undefined,
 })
-export const cljLazySeq = (thunk: () => CljValue): CljLazySeq => ({
+export const cljLazySeq = (
+  thunk: () => CljValue,
+  thunkFn?: CljValue,
+  callEnv?: Env
+): CljLazySeq => ({
   kind: 'lazy-seq',
   thunk,
+  thunkFn,
+  callEnv,
   realized: false,
+  value: undefined,
 })
 export const cljCons = (head: CljValue, tail: CljValue): CljCons => ({
   kind: 'cons',
   head,
   tail,
 })
+// The SOLE constructor for an indexed-seq view. Normalizes an empty/exhausted
+// view → nil so the "a seq is never empty" invariant holds by construction.
+export const cljIndexedSeq = (
+  array: CljValue[],
+  offset = 0
+): CljIndexedSeq | CljNil =>
+  offset >= array.length
+    ? cljNil()
+    : { kind: 'indexed-seq', array, offset }
 export const cljNamespace = (name: string): CljNamespace => ({
   kind: 'namespace',
   name,
+  version: 0,
   vars: new Map(),
   aliases: new Map(),
   readerAliases: new Map(),
@@ -197,19 +255,27 @@ export const cljProtocol = (
 export const cljRecord = (
   recordType: string,
   ns: string,
-  fields: [CljValue, CljValue][]
+  fields: [CljValue, CljValue][],
+  basis: string[]
 ): CljRecord => ({
   kind: 'record',
   recordType,
   ns,
   fields,
+  basis,
 })
 
 // --- ASYNC (experimental) ---
 export const cljPending = (promise: Promise<CljValue>): CljPending => {
-  const pending: CljPending = { kind: 'pending', promise }
+  // Adopt pending resolutions (JS thenable-flattening parity): a pending never
+  // resolves to another pending, so double-@ traps are unrepresentable. Inner
+  // pendings were themselves built here, so one unwrap flattens any depth.
+  const flattened = promise.then((value) =>
+    value.kind === 'pending' ? (value as CljPending).promise : value
+  )
+  const pending: CljPending = { kind: 'pending', promise: flattened }
   // Track fulfillment so the printer can show #<Pending @val> when already settled.
-  promise.then(
+  flattened.then(
     (v) => {
       pending.resolved = true
       pending.resolvedValue = v
@@ -364,9 +430,11 @@ export const v = {
   // collections
   list: cljList,
   vector: cljVector,
+  mapEntry: cljMapEntry,
   map: cljMap,
   set: cljSet,
   cons: cljCons,
+  indexedSeq: cljIndexedSeq,
 
   // callables
   function: cljFunction,

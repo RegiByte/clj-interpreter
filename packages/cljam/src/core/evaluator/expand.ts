@@ -52,11 +52,13 @@ export function macroExpandAllWithContext(
       : v.map(expanded)
   }
 
-  // Cons cells and lazy seqs (e.g. from macro output using `cons`/`list*`): materialize
-  // as a proper list so the expander and evaluator can treat them as code forms.
-  // In Clojure, any ISeq can appear in code position; CljCons/CljLazySeq are the
-  // Conjure-JS equivalents that macros like `fn` produce via `cons`/`list*`.
-  if (is.cons(form) || is.lazySeq(form)) {
+  // Cons cells, lazy seqs, and indexed-seq views (e.g. from macro output using
+  // `cons`/`list*`/`rest`): materialize as a proper list so the expander and evaluator
+  // can treat them as code forms. In Clojure, any ISeq can appear in code position;
+  // CljCons/CljLazySeq/CljIndexedSeq are the cljam equivalents a macro can return as a
+  // runtime seq. This is the macro-output guard — it keeps a producer-flipped `seq`/
+  // `rest` (Phase C) from leaking an indexed-seq into the compiler.
+  if (is.cons(form) || is.lazySeq(form) || is.indexedSeq(form)) {
     return macroExpandAllWithContext(v.list(toSeq(form)), env, ctx)
   }
 

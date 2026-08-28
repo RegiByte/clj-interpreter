@@ -4,7 +4,8 @@ import { EvaluationError } from '../errors'
 import { v } from '../factories'
 import { makeGensym } from '../gensym'
 import { specialFormKeywords, valueKeywords } from '../keywords'
-import { type CljValue, type Env } from '../types'
+import { setValues } from '../persistent/map-helpers'
+import { type CljSet, type CljValue, type Env } from '../types'
 
 /**
  * Symbols that must NEVER be auto-qualified in quasiquote templates.
@@ -184,14 +185,15 @@ export function expandQuasiquote(
     }
 
     case valueKeywords.set: {
-      const hasSplice = form.values.some(isUnquoteSplicing)
+      const formValues = setValues(form as CljSet)
+      const hasSplice = formValues.some(isUnquoteSplicing)
       if (!hasSplice) {
         return v.list([
           v.symbol('hash-set'),
-          ...form.values.map((e) => expandQuasiquote(e, autoGensyms, env)),
+          ...formValues.map((e) => expandQuasiquote(e, autoGensyms, env)),
         ])
       }
-      const segs = buildConcatSegments(form.values, autoGensyms, env)
+      const segs = buildConcatSegments(formValues, autoGensyms, env)
       return v.list([
         v.symbol('apply'),
         v.symbol('hash-set'),

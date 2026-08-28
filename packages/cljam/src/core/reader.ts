@@ -1,5 +1,5 @@
 import { ReaderError } from './errors'
-import { v } from './factories'
+import { v, cljWithMeta } from './factories'
 import { is } from './assertions'
 import { makeTokenScanner, type TokenScanner } from './scanners'
 import { getTokenValue } from './tokenizer'
@@ -285,11 +285,9 @@ const readMeta = (ctx: ReaderCtx): CljValue => {
     is.map(target)
   ) {
     const existingEntries = target.meta ? target.meta.entries : []
-    const result = {
-      ...target,
-      meta: v.map([...existingEntries, ...metaEntries]),
-    }
-    // Spread drops non-enumerable properties like _pos — re-attach it.
+    const newMeta = v.map([...existingEntries, ...metaEntries])
+    const result = cljWithMeta(target, newMeta)
+    // cljWithMeta may create a new object — re-attach source position.
     const pos = getPos(target)
     if (pos) setPos(result, pos)
     return result
@@ -405,7 +403,10 @@ const collectionReader = (valueType: 'list' | 'vector', closeToken: string) => {
         scanner.peek()
       )
     }
-    const result: CljValue = { kind: valueType, value: values }
+    const result: CljValue =
+      valueType === 'vector'
+        ? v.vector(values)
+        : { kind: 'list', value: values }
     if (closingEnd !== undefined) {
       setPos(result, { start: startToken.start.offset, end: closingEnd, source: ctx.source, lineOffset: ctx.lineOffset, colOffset: ctx.colOffset })
     }
@@ -560,7 +561,7 @@ const readMap = (ctx: ReaderCtx) => {
       scanner.peek()
     )
   }
-  const result: CljValue = { kind: valueKeywords.map, entries }
+  const result: CljValue = v.map(entries)
   if (closingEnd !== undefined) {
     setPos(result, { start: startToken.start.offset, end: closingEnd, source: ctx.source, lineOffset: ctx.lineOffset, colOffset: ctx.colOffset })
   }

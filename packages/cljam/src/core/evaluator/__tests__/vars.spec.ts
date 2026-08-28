@@ -33,6 +33,34 @@ describe('Var system', () => {
     expect((s.evaluate('x') as any).value).toBe(10)
   })
 
+  it('value-bearing def returns the interned Var', () => {
+    const s = mkSession()
+    const result = s.evaluate('(def x 1)')
+    expect(result.kind).toBe('var')
+    expect(printString(result)).toBe("#'user/x")
+  })
+
+  it('var-get can consume the Var returned by def', () => {
+    const s = mkSession()
+    expect((s.evaluate('(var-get (def x 1))') as any).value).toBe(1)
+  })
+
+  it('redef returns the same Var identity', () => {
+    const s = mkSession()
+    const original = s.evaluate('(def x 1)')
+    const redefined = s.evaluate('(def x 2)')
+    expect(redefined).toBe(original)
+    expect(s.evaluate("#'x")).toBe(original)
+    expect((s.evaluate('x') as any).value).toBe(2)
+  })
+
+  it('bare def declaration remains a no-op', () => {
+    const s = mkSession()
+    const result = s.evaluate('(def native-shim)')
+    expect(result).toMatchObject({ kind: 'nil', value: null })
+    expect(s.getNs('user')?.vars.has('native-shim')).toBe(false)
+  })
+
   it('var? on a Var returns true', () => {
     const s = mkSession()
     s.evaluate('(def x 5)')
@@ -172,9 +200,38 @@ describe('Dynamic vars and binding form', () => {
     const s = mkSession()
     expect(() => s.evaluate('(binding [no-such-var 1] nil)')).toThrow()
   })
+
+  it('binding cleans up earlier pushes when a later compiled binding setup fails', () => {
+    const s = mkSession()
+    s.evaluate('(def ^:dynamic *a* :root)')
+    s.evaluate('(def b :not-dynamic)')
+
+    expect(() => s.evaluate('(binding [*a* :bound b :bad] nil)')).toThrow(
+      /non-dynamic/
+    )
+    expect((s.evaluate('*a*') as any).name).toBe(':root')
+  })
+
+  it('binding cleans up earlier pushes when interpreter fallback setup fails', () => {
+    const s = mkSession()
+    s.evaluate('(def ^:dynamic *a* :root)')
+    s.evaluate('(def b :not-dynamic)')
+
+    expect(() =>
+      s.evaluate('(binding [*a* :bound b (quote :bad)] nil)')
+    ).toThrow(/non-dynamic/)
+    expect((s.evaluate('*a*') as any).name).toBe(':root')
+  })
 })
 
 describe('defmacro and defmulti as Vars', () => {
+  it('defmacro returns the interned Var', () => {
+    const s = mkSession()
+    const result = s.evaluate('(defmacro returned-macro [] 1)')
+    expect(result.kind).toBe('var')
+    expect(printString(result)).toBe("#'user/returned-macro")
+  })
+
   it('defmacro interns macro into ns.vars', () => {
     const s = mkSession()
     s.evaluate('(defmacro my-macro [x] `(inc ~x))')
@@ -190,6 +247,26 @@ describe('defmacro and defmulti as Vars', () => {
     const v = s.evaluate("#'add1")
     expect(v.kind).toBe('var')
     expect((v as any).value.kind).toBe('macro')
+  })
+
+  it('var-get can consume the Var returned by defmacro', () => {
+    const s = mkSession()
+    const macro = s.evaluate(
+      '(var-get (defmacro returned-add1 [x] `(+ ~x 1)))'
+    )
+    expect(macro.kind).toBe('macro')
+  })
+
+  it('redefining a macro preserves Var identity', () => {
+    const s = mkSession()
+    const original = s.evaluate('(defmacro redefined-macro [] 1)')
+    const redefined = s.evaluate('(defmacro redefined-macro [] 2)')
+    expect(redefined).toBe(original)
+    expect(s.evaluate("#'redefined-macro")).toBe(original)
+    expect(s.evaluate('(redefined-macro)')).toMatchObject({
+      kind: 'number',
+      value: 2,
+    })
   })
 
   it('defmulti interns multimethod into ns.vars', () => {
@@ -366,7 +443,7 @@ describe('set!', () => {
     const s = mkSession()
     s.evaluate('(def x 1)')
     expect(() => s.evaluate('(binding [] (set! x 2))')).toThrow(
-      /not dynamic|Cannot set!/
+      /not dynamic|non-dynamic|Cannot set!/
     )
   })
 
